@@ -17,7 +17,13 @@ export default function App() {
 
   useEffect(() => { setTimeout(() => setReady(true), 3200); }, []);
 
-  const pages = { dashboard: Dashboard, trades: Trades, signals: Signals, history: History, settings: Settings };
+  const pages = {
+    dashboard: Dashboard,
+    trades: Trades,
+    signals: Signals,
+    history: History,
+    settings: Settings
+  };
   const PageComponent = pages[page];
 
   return (
