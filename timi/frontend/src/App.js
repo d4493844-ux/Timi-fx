@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import Dashboard from "./components/Dashboard";
 import Trades from "./components/Trades";
 import Signals from "./components/Signals";
 import History from "./components/History";
 import Settings from "./components/Settings";
+import Backtest from "./components/Backtest";
+import Growth from "./components/Growth";
 import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
 import useDerivWS from "./hooks/useDerivWS";
@@ -17,14 +19,8 @@ export default function App() {
 
   useEffect(() => { setTimeout(() => setReady(true), 3200); }, []);
 
-  const pages = {
-    dashboard: Dashboard,
-    trades: Trades,
-    signals: Signals,
-    history: History,
-    settings: Settings
-  };
-  const PageComponent = pages[page];
+  const pages = { dashboard: Dashboard, trades: Trades, signals: Signals, history: History, settings: Settings, backtest: Backtest, growth: Growth };
+  const PageComponent = pages[page] || Dashboard;
 
   return (
     <>

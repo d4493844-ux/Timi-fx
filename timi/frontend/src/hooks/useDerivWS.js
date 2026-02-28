@@ -2,6 +2,11 @@ import { useState, useEffect, useRef } from "react";
 
 const APP_ID = "1089";
 const MAX_TRADES = 3;
+// Risk params loaded from localStorage
+function loadRiskParams() {
+  try { return JSON.parse(localStorage.getItem("timi_risk")) || { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5 }; }
+  catch { return { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5 }; }
+}
 
 // ══════════════════════════════════════════════
 // TECHNICAL INDICATORS
