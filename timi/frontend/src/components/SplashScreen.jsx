@@ -48,7 +48,7 @@ export default function SplashScreen() {
         transition={{ delay: 0.8 }}
         style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:11, color:"#3a6080", letterSpacing:4, marginTop:8, zIndex:2 }}
       >
-        AI TRADING SYSTEM
+        Technical Indicator Market Intelligence
       </motion.div>
 
       {/* Progress bar */}

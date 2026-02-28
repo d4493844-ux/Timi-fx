@@ -188,3 +188,4 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
   );
 }
 // Phase 4 exports updated in App.js
+// Voice UI injected via App
