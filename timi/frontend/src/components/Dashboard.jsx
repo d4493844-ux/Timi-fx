@@ -187,3 +187,4 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
     </motion.div>
   );
 }
+// Phase 4 exports updated in App.js

@@ -53,3 +53,4 @@ export default function Signals({ signals = {} }) {
     </div>
   );
 }
+// Phase 4 - signals now include reasons from 7 indicators
