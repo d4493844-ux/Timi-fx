@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 
 const APP_ID = "1089";
-const MAX_RISK = 0.02;
 const MAX_TRADES = 3;
 
+// ══════════════════════════════════════════════
+// TECHNICAL INDICATORS
+// ══════════════════════════════════════════════
 function calcEMA(prices, period) {
   const k = 2 / (period + 1);
   let ema = prices[0];
@@ -24,13 +26,14 @@ function calcMACD(prices) {
   const ema12 = calcEMA(prices.slice(-26), 12);
   const ema26 = calcEMA(prices.slice(-26), 26);
   const macd = ema12 - ema26;
-  return { macd, signal: calcEMA([macd], 9), hist: macd - calcEMA([macd], 9) };
+  const signal = calcEMA([macd], 9);
+  return { macd, signal, hist: macd - signal };
 }
 function calcBB(prices, period = 20) {
   const sl = prices.slice(-period);
   const mean = sl.reduce((a, b) => a + b, 0) / period;
   const std = Math.sqrt(sl.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period);
-  return { upper: mean + 2 * std, lower: mean - 2 * std, mid: mean };
+  return { upper: mean + 2 * std, lower: mean - 2 * std, mid: mean, std };
 }
 function calcStoch(candles, period = 14) {
   if (candles.length < period) return 50;
@@ -40,54 +43,234 @@ function calcStoch(candles, period = 14) {
   const low = Math.min(...sl.map(c => parseFloat(c.low)));
   return ((close - low) / (high - low || 1)) * 100;
 }
-function getSignal(candles1m, candles5m) {
-  if (!candles1m || candles1m.length < 30) return { action: "HOLD", confidence: 0, reasons: [] };
-  const closes = candles1m.map(c => parseFloat(c.close));
-  const ema9 = calcEMA(closes, 9), ema21 = calcEMA(closes, 21), ema50 = calcEMA(closes.slice(-60), 50);
-  const rsi = calcRSI(closes), bb = calcBB(closes), macd = calcMACD(closes), stoch = calcStoch(candles1m);
-  const price = closes[closes.length - 1], prev = closes[closes.length - 2];
-  let score = 0; const reasons = [];
-  if (ema9 > ema21 && ema21 > ema50) { score += 2; reasons.push("EMA bullish"); }
-  else if (ema9 < ema21 && ema21 < ema50) { score -= 2; reasons.push("EMA bearish"); }
-  if (prev < ema9 && price > ema9 && ema9 > ema21) { score += 2; reasons.push("EMA cross up"); }
-  if (prev > ema9 && price < ema9 && ema9 < ema21) { score -= 2; reasons.push("EMA cross down"); }
-  if (rsi < 30) { score += 2; reasons.push("RSI oversold"); } else if (rsi > 70) { score -= 2; reasons.push("RSI overbought"); }
-  if (macd.hist > 0) { score += 1.5; reasons.push("MACD bullish"); } else { score -= 1.5; reasons.push("MACD bearish"); }
-  if (price < bb.lower) { score += 1.5; reasons.push("Below BB"); } else if (price > bb.upper) { score -= 1.5; reasons.push("Above BB"); }
-  if (stoch < 20) { score += 1; reasons.push("Stoch oversold"); } else if (stoch > 80) { score -= 1; reasons.push("Stoch overbought"); }
-  if (candles5m && candles5m.length >= 20) {
-    const c5 = candles5m.map(c => parseFloat(c.close));
-    calcEMA(c5, 9) > calcEMA(c5, 21) ? (score += 1, reasons.push("5M bullish")) : (score -= 1, reasons.push("5M bearish"));
-  }
-  const confidence = Math.min(Math.round(Math.abs(score) / 11 * 100), 99);
-  return { action: score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD", confidence, reasons, score: +score.toFixed(2) };
+function calcATR(candles, period = 14) {
+  if (candles.length < period) return 0;
+  const trs = candles.slice(-period).map((c, i, arr) => {
+    if (i === 0) return parseFloat(c.high) - parseFloat(c.low);
+    return Math.max(
+      parseFloat(c.high) - parseFloat(c.low),
+      Math.abs(parseFloat(c.high) - parseFloat(arr[i-1].close)),
+      Math.abs(parseFloat(c.low) - parseFloat(arr[i-1].close))
+    );
+  });
+  return trs.reduce((a, b) => a + b, 0) / period;
 }
 
-// ── MULTI-ACCOUNT MANAGER ──────────────────────────────
-class AccountManager {
-  constructor() {
-    this.accounts = this.load();
-    this.connections = {};
+// ══════════════════════════════════════════════
+// CANDLESTICK PATTERN RECOGNITION
+// ══════════════════════════════════════════════
+function detectPatterns(candles) {
+  if (candles.length < 3) return [];
+  const patterns = [];
+  const c = candles[candles.length - 1];
+  const p = candles[candles.length - 2];
+  const p2 = candles[candles.length - 3];
+
+  const open = parseFloat(c.open), close = parseFloat(c.close);
+  const high = parseFloat(c.high), low = parseFloat(c.low);
+  const pOpen = parseFloat(p.open), pClose = parseFloat(p.close);
+  const body = Math.abs(close - open);
+  const pBody = Math.abs(pClose - pOpen);
+  const range = high - low;
+  const upperWick = high - Math.max(open, close);
+  const lowerWick = Math.min(open, close) - low;
+
+  // Doji
+  if (body < range * 0.1) patterns.push({ name: "Doji", type: "neutral", strength: 1 });
+
+  // Hammer (bullish reversal)
+  if (lowerWick > body * 2 && upperWick < body * 0.5 && close > open)
+    patterns.push({ name: "Hammer", type: "bullish", strength: 2 });
+
+  // Shooting Star (bearish reversal)
+  if (upperWick > body * 2 && lowerWick < body * 0.5 && close < open)
+    patterns.push({ name: "Shooting Star", type: "bearish", strength: 2 });
+
+  // Bullish Engulfing
+  if (close > pOpen && open < pClose && pClose < pOpen && body > pBody * 1.5)
+    patterns.push({ name: "Bullish Engulfing", type: "bullish", strength: 3 });
+
+  // Bearish Engulfing
+  if (close < pOpen && open > pClose && pClose > pOpen && body > pBody * 1.5)
+    patterns.push({ name: "Bearish Engulfing", type: "bearish", strength: 3 });
+
+  // Morning Star (bullish)
+  const p2Close = parseFloat(p2.close), p2Open = parseFloat(p2.open);
+  if (p2Close < p2Open && pBody < p2Close * 0.01 && close > open && close > (p2Open + p2Close) / 2)
+    patterns.push({ name: "Morning Star", type: "bullish", strength: 3 });
+
+  // Evening Star (bearish)
+  if (p2Close > p2Open && pBody < p2Open * 0.01 && close < open && close < (p2Open + p2Close) / 2)
+    patterns.push({ name: "Evening Star", type: "bearish", strength: 3 });
+
+  // Three White Soldiers (bullish)
+  const p3 = candles[candles.length - 4];
+  if (p3 && close > open && pClose > pOpen && p2Close > p2Open &&
+      close > pClose && pClose > p2Close && p2Close > parseFloat(p3.close))
+    patterns.push({ name: "3 White Soldiers", type: "bullish", strength: 4 });
+
+  // Three Black Crows (bearish)
+  if (p3 && close < open && pClose < pOpen && p2Close < p2Open &&
+      close < pClose && pClose < p2Close && p2Close < parseFloat(p3.close))
+    patterns.push({ name: "3 Black Crows", type: "bearish", strength: 4 });
+
+  return patterns;
+}
+
+// ══════════════════════════════════════════════
+// SUPPORT & RESISTANCE
+// ══════════════════════════════════════════════
+function findSRLevels(candles, lookback = 30) {
+  if (candles.length < lookback) return { support: [], resistance: [] };
+  const recent = candles.slice(-lookback);
+  const highs = recent.map(c => parseFloat(c.high));
+  const lows = recent.map(c => parseFloat(c.low));
+  const price = parseFloat(candles[candles.length - 1].close);
+
+  const resistance = highs
+    .filter((h, i) => h > highs[i-1] && h > highs[i+1] && h > price)
+    .sort((a, b) => a - b).slice(0, 3);
+  const support = lows
+    .filter((l, i) => l < lows[i-1] && l < lows[i+1] && l < price)
+    .sort((a, b) => b - a).slice(0, 3);
+
+  return { support, resistance };
+}
+
+// ══════════════════════════════════════════════
+// SESSION AWARENESS
+// ══════════════════════════════════════════════
+function getTradingSession() {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const sessions = {
+    sydney:  { start: 21, end: 6,  strength: 1 },
+    tokyo:   { start: 0,  end: 9,  strength: 2 },
+    london:  { start: 8,  end: 16, strength: 4 },
+    newYork: { start: 13, end: 22, strength: 4 },
+  };
+
+  const active = [];
+  Object.entries(sessions).forEach(([name, s]) => {
+    const inSession = s.start < s.end
+      ? utcHour >= s.start && utcHour < s.end
+      : utcHour >= s.start || utcHour < s.end;
+    if (inSession) active.push({ name, strength: s.strength });
+  });
+
+  const overlap = active.length > 1;
+  const maxStrength = active.reduce((m, s) => Math.max(m, s.strength), 0);
+  return { active, overlap, strength: maxStrength, names: active.map(s => s.name).join("+") };
+}
+
+// ══════════════════════════════════════════════
+// MARTINGALE / ANTI-MARTINGALE ENGINE
+// ══════════════════════════════════════════════
+function getMartingaleStake(baseStake, tradeHistory, mode = "anti") {
+  if (tradeHistory.length === 0) return baseStake;
+  const last = tradeHistory[0];
+  if (mode === "martingale") {
+    // Double after loss to recover
+    if (last.result === "LOSS") return Math.min(baseStake * 2, baseStake * 4);
+    return baseStake;
+  } else {
+    // Anti-martingale: increase after win, reduce after loss
+    if (last.result === "WIN") return baseStake * 1.5;
+    if (last.result === "LOSS") return baseStake * 0.75;
+    return baseStake;
   }
-  load() {
-    try { return JSON.parse(localStorage.getItem("timi_accounts")) || []; } catch { return []; }
+}
+
+// ══════════════════════════════════════════════
+// MASTER SIGNAL ENGINE
+// ══════════════════════════════════════════════
+function getSignal(candles1m, candles5m) {
+  if (!candles1m || candles1m.length < 30) return { action: "HOLD", confidence: 0, reasons: [], patterns: [] };
+
+  const closes = candles1m.map(c => parseFloat(c.close));
+  const ema9 = calcEMA(closes, 9);
+  const ema21 = calcEMA(closes, 21);
+  const ema50 = calcEMA(closes.slice(-60), 50);
+  const rsi = calcRSI(closes);
+  const bb = calcBB(closes);
+  const macd = calcMACD(closes);
+  const stoch = calcStoch(candles1m);
+  const atr = calcATR(candles1m);
+  const price = closes[closes.length - 1];
+  const prev = closes[closes.length - 2];
+  const patterns = detectPatterns(candles1m);
+  const sr = findSRLevels(candles1m);
+  const session = getTradingSession();
+
+  let score = 0;
+  const reasons = [];
+
+  // 1. EMA trend
+  if (ema9 > ema21 && ema21 > ema50) { score += 2; reasons.push("EMA bullish stack"); }
+  else if (ema9 < ema21 && ema21 < ema50) { score -= 2; reasons.push("EMA bearish stack"); }
+
+  // 2. EMA crossover
+  if (prev < ema9 && price > ema9 && ema9 > ema21) { score += 2; reasons.push("EMA9 cross UP"); }
+  else if (prev > ema9 && price < ema9 && ema9 < ema21) { score -= 2; reasons.push("EMA9 cross DOWN"); }
+
+  // 3. RSI
+  if (rsi < 30) { score += 2.5; reasons.push("RSI oversold " + rsi.toFixed(0)); }
+  else if (rsi < 45) { score += 1; reasons.push("RSI bullish zone"); }
+  else if (rsi > 70) { score -= 2.5; reasons.push("RSI overbought " + rsi.toFixed(0)); }
+  else if (rsi > 55) { score -= 1; reasons.push("RSI bearish zone"); }
+
+  // 4. MACD
+  if (macd.hist > 0 && macd.macd > macd.signal) { score += 1.5; reasons.push("MACD bullish"); }
+  else if (macd.hist < 0 && macd.macd < macd.signal) { score -= 1.5; reasons.push("MACD bearish"); }
+
+  // 5. Bollinger Bands
+  if (price < bb.lower) { score += 2; reasons.push("Price below BB"); }
+  else if (price > bb.upper) { score -= 2; reasons.push("Price above BB"); }
+  else if (price > bb.mid) { score += 0.5; }
+  else { score -= 0.5; }
+
+  // 6. Stochastic
+  if (stoch < 20) { score += 1.5; reasons.push("Stoch oversold"); }
+  else if (stoch > 80) { score -= 1.5; reasons.push("Stoch overbought"); }
+
+  // 7. Candlestick patterns
+  patterns.forEach(p => {
+    if (p.type === "bullish") { score += p.strength * 0.5; reasons.push(p.name + " 🕯"); }
+    else if (p.type === "bearish") { score -= p.strength * 0.5; reasons.push(p.name + " 🕯"); }
+  });
+
+  // 8. S/R levels — avoid if near resistance when buying
+  if (score > 0 && sr.resistance.length > 0) {
+    const nearResistance = sr.resistance.some(r => Math.abs(r - price) / price < 0.002);
+    if (nearResistance) { score *= 0.6; reasons.push("Near resistance — caution"); }
   }
-  save() { localStorage.setItem("timi_accounts", JSON.stringify(this.accounts)); }
-  add(name, token) {
-    const id = Date.now().toString();
-    this.accounts.push({ id, name, token, active: true, balance: "---", currency: "USD" });
-    this.save();
-    return id;
+  if (score < 0 && sr.support.length > 0) {
+    const nearSupport = sr.support.some(s => Math.abs(s - price) / price < 0.002);
+    if (nearSupport) { score *= 0.6; reasons.push("Near support — caution"); }
   }
-  remove(id) { this.accounts = this.accounts.filter(a => a.id !== id); this.save(); }
-  toggle(id) {
-    const a = this.accounts.find(a => a.id === id);
-    if (a) { a.active = !a.active; this.save(); }
+
+  // 9. Multi-timeframe 5M
+  if (candles5m && candles5m.length >= 20) {
+    const c5 = candles5m.map(c => parseFloat(c.close));
+    const trend5m = calcEMA(c5, 9) > calcEMA(c5, 21);
+    if (trend5m && score > 0) { score += 1; reasons.push("5M confirms BUY"); }
+    else if (!trend5m && score < 0) { score += 1; reasons.push("5M confirms SELL"); }
+    else { score *= 0.8; reasons.push("5M divergence"); }
   }
-  updateBalance(id, balance, currency) {
-    const a = this.accounts.find(a => a.id === id);
-    if (a) { a.balance = balance; a.currency = currency; this.save(); }
-  }
+
+  // 10. Session boost — higher confidence during London/NY
+  if (session.overlap) { score *= 1.2; reasons.push("Session overlap boost"); }
+  else if (session.strength < 2) { score *= 0.8; reasons.push("Low session — reduced"); }
+
+  // 11. Volatility filter
+  const bbWidth = (bb.upper - bb.lower) / bb.mid;
+  if (bbWidth > 0.06) { score *= 0.7; reasons.push("High volatility filter"); }
+
+  const maxScore = 16;
+  const confidence = Math.min(Math.round(Math.abs(score) / maxScore * 100), 99);
+  const action = score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD";
+
+  return { action, confidence, reasons, patterns, score: +score.toFixed(2), rsi: +rsi.toFixed(1), atr: +atr.toFixed(5), session, sr };
 }
 
 export default function useDerivWS() {
@@ -100,13 +283,13 @@ export default function useDerivWS() {
   const [autoTrade, setAutoTrade] = useState(true);
   const [takeProfitTarget, setTakeProfitTarget] = useState(0);
   const [dailyPnl, setDailyPnl] = useState(0);
+  const [martingaleMode, setMartingaleMode] = useState("anti"); // "anti" | "martingale" | "fixed"
+  const [session, setSession] = useState(getTradingSession());
   const [accounts, setAccounts] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("timi_accounts")) || [];
-      // Always ensure primary token is first
       const primary = { id: "primary", name: "Primary", token: "03WRbkfQGjbZWTH", active: true, balance: "---", currency: "USD" };
-      if (!saved.find(a => a.id === "primary")) return [primary, ...saved];
-      return saved;
+      return saved.find(a => a.id === "primary") ? saved : [primary, ...saved];
     } catch { return [{ id: "primary", name: "Primary", token: "03WRbkfQGjbZWTH", active: true, balance: "---", currency: "USD" }]; }
   });
   const [activeSymbols, setActiveSymbols] = useState(() => {
@@ -123,12 +306,14 @@ export default function useDerivWS() {
   const tradeHistoryRef = useRef([]);
   const dailyPnlRef = useRef(0);
   const takeProfitRef = useRef(0);
-  const wsConnections = useRef({});  // accountId -> websocket
+  const martingaleRef = useRef("anti");
+  const wsConnections = useRef({});
 
   useEffect(() => { autoTradeRef.current = autoTrade; }, [autoTrade]);
   useEffect(() => { openTradesRef.current = openTrades; }, [openTrades]);
   useEffect(() => { tradeHistoryRef.current = tradeHistory; }, [tradeHistory]);
   useEffect(() => { takeProfitRef.current = takeProfitTarget; }, [takeProfitTarget]);
+  useEffect(() => { martingaleRef.current = martingaleMode; }, [martingaleMode]);
   useEffect(() => {
     activeSymbolsRef.current = activeSymbols;
     localStorage.setItem("timi_symbols", JSON.stringify(activeSymbols));
@@ -141,51 +326,41 @@ export default function useDerivWS() {
     const ws = wsConnections.current[accountId];
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   };
-
   const send = (obj) => sendTo("primary", obj);
 
-  // Manual trade execution
   const manualTrade = (sym, direction, stake = null) => {
     const bal = parseFloat(balanceRef.current?.balance || 0);
-    const tradeStake = stake || Math.max(1, parseFloat((bal * MAX_RISK).toFixed(2)));
+    const tradeStake = stake || Math.max(1, parseFloat((bal * 0.02).toFixed(2)));
+    accounts.filter(a => a.active).forEach(acc => {
+      sendTo(acc.id, { proposal: 1, amount: tradeStake, basis: "stake", contract_type: direction === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 5, duration_unit: "m", symbol: sym });
+    });
     setTimiStatus("Manual " + direction + " on " + sym + " $" + tradeStake);
-    // Send to all active accounts
-    Object.keys(wsConnections.current).forEach(accId => {
-      sendTo(accId, {
-        proposal: 1, amount: tradeStake, basis: "stake",
-        contract_type: direction === "BUY" ? "CALL" : "PUT",
-        currency: "USD", duration: 5, duration_unit: "m", symbol: sym
-      });
-    });
   };
 
-  // Close single trade
   const closeTrade = (contractId) => {
-    setTimiStatus("Closing trade " + contractId + "...");
-    Object.keys(wsConnections.current).forEach(accId => {
-      sendTo(accId, { sell: contractId, price: 0 });
-    });
+    Object.keys(wsConnections.current).forEach(id => sendTo(id, { sell: contractId, price: 0 }));
   };
 
-  // Close ALL trades
   const closeAllTrades = () => {
-    setTimiStatus("🛑 Closing all trades...");
     openTradesRef.current.forEach(t => {
-      Object.keys(wsConnections.current).forEach(accId => {
-        sendTo(accId, { sell: t.contractId, price: 0 });
-      });
+      Object.keys(wsConnections.current).forEach(id => sendTo(id, { sell: t.contractId, price: 0 }));
     });
-    if (window.timiNotify) window.timiNotify("🛑 TIMI", "Closing all open trades", "alert");
+    setTimiStatus("🛑 Closing all trades...");
+    if (window.timiNotify) window.timiNotify("🛑 TIMI", "Closing all trades", "alert");
   };
 
   const runAnalysis = () => {
-    // Check take profit target
+    // Update session
+    const currentSession = getTradingSession();
+    setSession(currentSession);
+
+    // Take profit check
     if (takeProfitRef.current > 0 && dailyPnlRef.current >= takeProfitRef.current) {
       if (autoTradeRef.current) {
         setAutoTrade(false);
         autoTradeRef.current = false;
-        setTimiStatus("🎯 Take profit target $" + takeProfitRef.current + " reached! Auto-trade paused.");
-        if (window.timiNotify) window.timiNotify("🎯 Take Profit Hit!", "Target $" + takeProfitRef.current + " reached. Trading paused.", "profit");
+        setTimiStatus("🎯 Target $" + takeProfitRef.current + " hit! Trading paused.");
+        if (window.timiNotify) window.timiNotify("🎯 Take Profit!", "Daily target hit. Trading stopped.", "profit");
       }
       return;
     }
@@ -193,6 +368,7 @@ export default function useDerivWS() {
     const syms = activeSymbolsRef.current;
     const newSigs = {};
     let best = null;
+
     syms.forEach(sym => {
       const c1 = candles1m.current[sym];
       if (!c1 || c1.length < 30) return;
@@ -201,8 +377,8 @@ export default function useDerivWS() {
       if (sig.action !== "HOLD" && sig.confidence >= 45)
         if (!best || sig.confidence > best.sig.confidence) best = { sym, sig };
     });
-    setSignals({ ...newSigs });
 
+    setSignals({ ...newSigs });
     if (!autoTradeRef.current || !best) return;
     if (openTradesRef.current.length >= MAX_TRADES) return;
     if (openTradesRef.current.find(t => t.symbol === best.sym)) return;
@@ -210,36 +386,22 @@ export default function useDerivWS() {
     const bal = parseFloat(balanceRef.current?.balance || 0);
     if (!bal || bal < 1) return;
 
-    // ML stake adjustment
-    const recent = tradeHistoryRef.current.slice(0, 10);
-    const winRate = recent.length ? recent.filter(t => t.result === "WIN").length / recent.length : 0.5;
-    const multiplier = winRate >= 0.7 ? 1.3 : winRate >= 0.5 ? 1.0 : winRate >= 0.3 ? 0.7 : 0.5;
-    const stake = Math.max(1, Math.min(parseFloat((bal * MAX_RISK * multiplier).toFixed(2)), bal * 0.05));
+    const baseStake = Math.max(1, parseFloat((bal * 0.02).toFixed(2)));
+    const rawStake = getMartingaleStake(baseStake, tradeHistoryRef.current, martingaleRef.current);
+    const stake = Math.min(parseFloat(rawStake.toFixed(2)), bal * 0.05);
 
-    setTimiStatus(best.sig.action + " " + best.sym + " @ " + best.sig.confidence + "% | WR: " + Math.round(winRate * 100) + "%");
-
-    // Trade on ALL active accounts
+    setTimiStatus(best.sig.action + " " + best.sym + " " + best.sig.confidence + "% | " + (currentSession.names || "off-session"));
     accounts.filter(a => a.active).forEach(acc => {
-      sendTo(acc.id, {
-        proposal: 1, amount: stake, basis: "stake",
-        contract_type: best.sig.action === "BUY" ? "CALL" : "PUT",
-        currency: "USD", duration: 5, duration_unit: "m", symbol: best.sym
-      });
+      sendTo(acc.id, { proposal: 1, amount: stake, basis: "stake", contract_type: best.sig.action === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 5, duration_unit: "m", symbol: best.sym });
     });
   };
 
   const connectAccount = (account) => {
-    if (wsConnections.current[account.id]) {
-      wsConnections.current[account.id].close();
-    }
-
+    wsConnections.current[account.id]?.close();
     const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=" + APP_ID);
     wsConnections.current[account.id] = ws;
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ authorize: account.token }));
-      if (account.id === "primary") setTimiStatus("Authorizing primary account...");
-    };
+    ws.onopen = () => ws.send(JSON.stringify({ authorize: account.token }));
 
     ws.onmessage = (e) => {
       const d = JSON.parse(e.data);
@@ -247,7 +409,7 @@ export default function useDerivWS() {
       if (d.msg_type === "authorize" && !d.error) {
         ws.send(JSON.stringify({ balance: 1, account: "current", subscribe: 1 }));
         if (account.id === "primary") {
-          setTimiStatus("Authorized! Loading candles...");
+          setTimiStatus("Authorized! Loading data...");
           activeSymbolsRef.current.forEach(sym => {
             ws.send(JSON.stringify({ ticks: sym, subscribe: 1 }));
             ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 100, end: "latest", granularity: 60, style: "candles" }));
@@ -271,7 +433,7 @@ export default function useDerivWS() {
         if (sym) {
           if (gran === 60) candles1m.current[sym] = d.candles;
           else if (gran === 300) candles5m.current[sym] = d.candles;
-          setTimiStatus("Loaded: " + sym + " " + (gran === 60 ? "1M" : "5M"));
+          setTimiStatus("Loaded " + sym + " " + (gran === 60 ? "1M" : "5M") + " candles");
           setTimeout(runAnalysis, 500);
         }
       }
@@ -289,7 +451,7 @@ export default function useDerivWS() {
         openTradesRef.current = [...openTradesRef.current, trade];
         setOpenTrades([...openTradesRef.current]);
         setTimiStatus("✅ [" + account.name + "] " + trade.type + " " + trade.symbol + " $" + trade.stake);
-        if (window.timiNotify) window.timiNotify("🤖 Trade Opened", "[" + account.name + "] " + trade.type + " " + trade.symbol, "trade");
+        if (window.timiNotify) window.timiNotify("🤖 Trade Open", "[" + account.name + "] " + trade.type + " " + trade.symbol, "trade");
         ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: trade.contractId, subscribe: 1 }));
       }
 
@@ -304,10 +466,10 @@ export default function useDerivWS() {
           openTradesRef.current = openTradesRef.current.filter(t => t.contractId !== poc.contract_id);
           setOpenTrades([...openTradesRef.current]);
           dailyPnlRef.current += pnl;
-          setDailyPnl(d => d + pnl);
-          const newHist = [{ symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL", pnl, result: pnl > 0 ? "WIN" : "LOSS", date: new Date().toLocaleTimeString(), account: account.name }, ...tradeHistoryRef.current.slice(0, 49)];
-          tradeHistoryRef.current = newHist;
-          setTradeHistory(newHist);
+          setDailyPnl(p => +(p + pnl).toFixed(2));
+          const hist = [{ symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL", pnl, result: pnl > 0 ? "WIN" : "LOSS", date: new Date().toLocaleTimeString(), account: account.name }, ...tradeHistoryRef.current.slice(0, 99)];
+          tradeHistoryRef.current = hist;
+          setTradeHistory(hist);
           setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2) + " [" + account.name + "]");
           if (window.timiNotify) window.timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");
           ws.send(JSON.stringify({ balance: 1, account: "current" }));
@@ -318,46 +480,33 @@ export default function useDerivWS() {
         setTimiStatus("⚠️ [" + account.name + "] " + d.error.message);
     };
 
-    ws.onclose = () => {
-      if (account.id === "primary") setTimiStatus("Reconnecting...");
-      setTimeout(() => connectAccount(account), 5000);
-    };
+    ws.onclose = () => setTimeout(() => connectAccount(account), 5000);
   };
 
   useEffect(() => {
     accounts.forEach(acc => connectAccount(acc));
     const iv = setInterval(runAnalysis, 30000);
-    return () => {
-      clearInterval(iv);
-      Object.values(wsConnections.current).forEach(ws => ws.close());
-    };
+    const sessIv = setInterval(() => setSession(getTradingSession()), 60000);
+    return () => { clearInterval(iv); clearInterval(sessIv); Object.values(wsConnections.current).forEach(ws => ws.close()); };
   }, []); // eslint-disable-line
 
   const addAccount = (name, token) => {
-    const newAcc = { id: Date.now().toString(), name, token, active: true, balance: "---", currency: "USD" };
-    setAccounts(prev => [...prev, newAcc]);
-    connectAccount(newAcc);
-    setTimiStatus("Added account: " + name);
+    const acc = { id: Date.now().toString(), name, token, active: true, balance: "---", currency: "USD" };
+    setAccounts(prev => [...prev, acc]);
+    connectAccount(acc);
   };
-
   const removeAccount = (id) => {
     if (id === "primary") return;
     wsConnections.current[id]?.close();
     delete wsConnections.current[id];
     setAccounts(prev => prev.filter(a => a.id !== id));
   };
-
-  const toggleAccount = (id) => {
-    setAccounts(prev => prev.map(a => a.id === id ? { ...a, active: !a.active } : a));
-  };
-
-  const updateToken = (id, newToken) => {
-    setAccounts(prev => prev.map(a => a.id === id ? { ...a, token: newToken } : a));
+  const toggleAccount = (id) => setAccounts(prev => prev.map(a => a.id === id ? { ...a, active: !a.active } : a));
+  const updateToken = (id, token) => {
+    setAccounts(prev => prev.map(a => a.id === id ? { ...a, token } : a));
     const acc = accounts.find(a => a.id === id);
-    if (acc) connectAccount({ ...acc, token: newToken });
-    setTimiStatus("Token updated for account " + id);
+    if (acc) connectAccount({ ...acc, token });
   };
-
   const updateSymbols = (syms) => {
     activeSymbolsRef.current = syms;
     setActiveSymbols(syms);
@@ -376,6 +525,7 @@ export default function useDerivWS() {
     autoTrade, setAutoTrade, activeSymbols, updateSymbols,
     accounts, addAccount, removeAccount, toggleAccount, updateToken,
     manualTrade, closeTrade, closeAllTrades,
-    takeProfitTarget, setTakeProfitTarget, dailyPnl
+    takeProfitTarget, setTakeProfitTarget, dailyPnl,
+    martingaleMode, setMartingaleMode, session
   };
 }

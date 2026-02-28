@@ -39,7 +39,7 @@ const s = {
 
 const GROUPS = ["Synthetic","Forex","Crypto"];
 
-export default function Settings({ autoTrade, setAutoTrade, activeSymbols = [], updateSymbols }) {
+export default function Settings({ autoTrade, martingaleMode, setMartingaleMode, session, setAutoTrade, activeSymbols = [], updateSymbols }) {
   const toggle = (id) => {
     const updated = activeSymbols.includes(id)
       ? activeSymbols.filter(s => s !== id)
