@@ -379,7 +379,8 @@ export default function useDerivWS() {
       if (!c1 || c1.length < 30) return;
       const sig = getSignal(c1, candles5m.current[sym]);
       newSigs[sym] = sig;
-      if (sig.action !== "HOLD" && sig.confidence >= 45)
+      const minConf = (() => { try { return JSON.parse(localStorage.getItem("timi_risk"))?.minConfidence || 45; } catch { return 45; } })();
+      if (sig.action !== "HOLD" && sig.confidence >= minConf)
         if (!best || sig.confidence > best.sig.confidence) best = { sym, sig };
     });
 
@@ -391,7 +392,9 @@ export default function useDerivWS() {
     const bal = parseFloat(balanceRef.current?.balance || 0);
     if (!bal || bal < 1) return;
 
-    const baseStake = Math.max(1, parseFloat((bal * 0.02).toFixed(2)));
+    const risk = (() => { try { return JSON.parse(localStorage.getItem("timi_risk")) || {}; } catch { return {}; } })();
+    const riskPct = (risk.riskPct || 2) / 100;
+    const baseStake = Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
     const rawStake = getMartingaleStake(baseStake, tradeHistoryRef.current, martingaleRef.current);
     const stake = Math.min(parseFloat(rawStake.toFixed(2)), bal * 0.05);
 

@@ -91,7 +91,7 @@ export default function useVoice({ balance, signals, autoTrade, setAutoTrade, ma
           awakeRef.current = false;
           setAwake(false);
         }, 8000);
-        speak("Yes, I'm here. How can I help?");
+        speak("Yes, I am here. How can I help you?");
         setResponse("Listening...");
         return;
       }
@@ -133,7 +133,7 @@ export default function useVoice({ balance, signals, autoTrade, setAutoTrade, ma
     else if (COMMANDS.status.some(w => text.includes(w))) {
       const sigEntries = Object.entries(signals || {});
       const best = sigEntries.sort((a, b) => b[1].confidence - a[1].confidence)[0];
-      reply = `T I M I is ${autoTrade ? "actively trading" : "paused"}. Balance is ${bal} ${currency}. `;
+      reply = `TIMI is ${autoTrade ? "actively trading" : "paused"}. Balance is ${bal} ${currency}. `;
       if (best) reply += `Strongest signal is ${SYMBOL_NAMES[best[0]] || best[0]} at ${best[1].confidence} percent confidence, ${best[1].action}.`;
     }
     // Signals
@@ -197,7 +197,7 @@ export default function useVoice({ balance, signals, autoTrade, setAutoTrade, ma
     }
     // Unknown
     else {
-      reply = "I didn't quite catch that. Try saying: hey T I M I, what's my balance, or hey T I M I, what's the signal.";
+      reply = "I didn't quite catch that. Try saying: hey TIMI, what's my balance, or hey TIMI, what's the signal.";
     }
 
     setResponse(reply);
@@ -209,7 +209,7 @@ export default function useVoice({ balance, signals, autoTrade, setAutoTrade, ma
     try {
       recognitionRef.current?.start();
       setListening(true);
-      speak("T I M I voice activated. Say hey T I M I to wake me up.");
+      speak("TIMI voice activated. Say hey TIMI to wake me up.");
     } catch (e) { console.log(e); }
   };
 

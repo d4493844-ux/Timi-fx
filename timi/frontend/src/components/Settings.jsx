@@ -16,7 +16,7 @@ const ALL_SYMBOLS = [
   {id:"cryETHUSD",label:"ETH/USD",group:"Crypto",hours:"24/7"},
 ];
 
-export default function Settings({
+export default function Settings({ riskParams={}, updateRisk,
   autoTrade, setAutoTrade,
   activeSymbols=[], updateSymbols,
   accounts=[], addAccount, removeAccount, toggleAccount, updateToken,
@@ -174,12 +174,67 @@ export default function Settings({
       {/* ── RISK PARAMS ── */}
       <div style={c.card}>
         <div style={c.ct}>RISK PARAMETERS</div>
-        {[{l:"Max Risk Per Trade",v:"2%"},{l:"Max Open Positions",v:"3"},{l:"Min Confidence",v:"45%"},{l:"Trade Duration",v:"5 min"}].map((r,i,arr)=>(
-          <div key={r.l} style={i===arr.length-1?c.rowLast:c.row}>
-            <div style={c.lbl}>{r.l}</div>
-            <div style={{fontFamily:"'Orbitron',monospace",fontSize:13,color:"#00d4ff"}}>{r.v}</div>
+
+        {/* RR Info */}
+        <div style={{background:"rgba(0,212,255,0.06)",border:"1px solid rgba(0,212,255,0.15)",borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontFamily:"'Orbitron',monospace",fontSize:10,color:"#00d4ff",marginBottom:6}}>RISK:REWARD RATIO</div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+            <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#3a6080"}}>Win payout</span>
+            <span style={{fontFamily:"'Orbitron',monospace",fontSize:12,color:"#00ff9d",fontWeight:700}}>85%</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+            <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#3a6080"}}>Loss</span>
+            <span style={{fontFamily:"'Orbitron',monospace",fontSize:12,color:"#ff3366",fontWeight:700}}>100%</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+            <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#3a6080"}}>Break-even win rate</span>
+            <span style={{fontFamily:"'Orbitron',monospace",fontSize:12,color:"#ffcc00",fontWeight:700}}>54.1%</span>
+          </div>
+          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginTop:6}}>
+            TIMI targets 60%+ win rate — positive EV above break-even
+          </div>
+        </div>
+
+        {[
+          {key:"riskPct",l:"Risk Per Trade (%)",min:0.5,max:10,step:0.5,suffix:"%",desc:"% of balance per trade"},
+          {key:"maxTrades",l:"Max Open Trades",min:1,max:10,step:1,suffix:"",desc:"Max simultaneous positions"},
+          {key:"minConfidence",l:"Min Signal Confidence",min:30,max:90,step:5,suffix:"%",desc:"Min confidence to enter trade"},
+          {key:"duration",l:"Trade Duration",min:1,max:60,step:1,suffix:" min",desc:"How long each trade runs"},
+        ].map(param => (
+          <div key={param.key} style={{marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={c.lbl}>{param.l}</div>
+                <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginTop:2}}>{param.desc}</div>
+              </div>
+              <div style={{fontFamily:"'Orbitron',monospace",fontSize:16,color:"#00d4ff",fontWeight:700,minWidth:50,textAlign:"right"}}>
+                {riskParams?.[param.key]||param.min}{param.suffix}
+              </div>
+            </div>
+            <input type="range" min={param.min} max={param.max} step={param.step}
+              value={riskParams?.[param.key]||param.min}
+              onChange={e=>updateRisk&&updateRisk(param.key,e.target.value)}
+              style={{width:"100%",accentColor:"#00d4ff",marginTop:6}}
+            />
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080"}}>{param.min}{param.suffix}</span>
+              <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080"}}>{param.max}{param.suffix}</span>
+            </div>
           </div>
         ))}
+
+        {/* Balance-based stake preview */}
+        <div style={{background:"rgba(0,255,157,0.06)",border:"1px solid rgba(0,255,157,0.15)",borderRadius:10,padding:"10px 12px",marginTop:4}}>
+          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:10,color:"#3a6080",marginBottom:6}}>STAKE PREVIEW BY BALANCE</div>
+          {[10,100,500,1000,5000].map(bal => (
+            <div key={bal} style={{display:"flex",justifyContent:"space-between",padding:"3px 0"}}>
+              <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:10,color:"#3a6080"}}>${bal} account</span>
+              <span style={{fontFamily:"'Orbitron',monospace",fontSize:11,color:"#00ff9d",fontWeight:700}}>
+                ${Math.max(1,(bal*(riskParams?.riskPct||2)/100)).toFixed(2)} stake
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
 import VoiceButton from "./components/VoiceButton";
 import useDerivWS from "./hooks/useDerivWS";
+import useRisk from "./hooks/useRisk";
 import useVoice from "./hooks/useVoice";
 import "./index.css";
 
@@ -18,6 +19,7 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [ready, setReady] = useState(false);
   const derivData = useDerivWS();
+  const { riskParams, updateRisk, calcStake, rrStats } = useRisk();
   const voice = useVoice({
     balance: derivData.balance,
     signals: derivData.signals,
@@ -40,7 +42,7 @@ export default function App() {
       <AnimatePresence>{!ready && <SplashScreen />}</AnimatePresence>
       {ready && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <PageComponent {...derivData} />
+          <PageComponent {...derivData} riskParams={riskParams} updateRisk={updateRisk} calcStake={calcStake} rrStats={rrStats} />
           <VoiceButton {...voice} />
           <BottomNav page={page} setPage={setPage} />
         </motion.div>
