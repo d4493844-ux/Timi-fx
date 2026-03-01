@@ -2,7 +2,7 @@ const tabs = [
   { id: "dashboard", icon: "◈", label: "DASH" },
   { id: "trades", icon: "◆", label: "TRADES" },
   { id: "signals", icon: "◉", label: "SIGNALS" },
-  { id: "backtest", icon: "⏮", label: "BACKTEST" },
+  { id: "ai", icon: "🧠", label: "AI" },
   { id: "growth", icon: "📈", label: "GROWTH" },
   { id: "history", icon: "✕", label: "HISTORY" },
   { id: "settings", icon: "✛", label: "SETTINGS" },

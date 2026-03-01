@@ -275,7 +275,20 @@ function getSignal(candles1m, candles5m) {
   const confidence = Math.min(Math.round(Math.abs(score) / maxScore * 100), 99);
   const action = score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD";
 
-  return { action, confidence, reasons, patterns, score: +score.toFixed(2), rsi: +rsi.toFixed(1), atr: +atr.toFixed(5), session, sr };
+  // Track which indicators were active for AI learning
+  const activeIndicators = [];
+  if (ema9 > ema21) activeIndicators.push("ema_stack");
+  if (Math.abs(price - ema9) / ema9 < 0.001) activeIndicators.push("ema_crossover");
+  if (rsi < 35 || rsi > 65) activeIndicators.push("rsi");
+  if (Math.abs(macd.hist) > 0) activeIndicators.push("macd");
+  if (price < bb.lower || price > bb.upper) activeIndicators.push("bollinger");
+  if (stoch < 25 || stoch > 75) activeIndicators.push("stochastic");
+  if (patterns.length > 0) activeIndicators.push("candlestick_patterns");
+  if (session.overlap) activeIndicators.push("session_boost");
+
+  const bbPosition = price < bb.lower ? "below" : price > bb.upper ? "above" : "mid";
+
+  return { action, confidence, reasons, patterns, score: +score.toFixed(2), rsi: +rsi.toFixed(1), atr: +atr.toFixed(5), session, sr, activeIndicators, macd_hist: +macd.hist.toFixed(6), stoch: +stoch.toFixed(1), bb_position: bbPosition, ema_stack: ema9 > ema21 ? "bullish" : "bearish" };
 }
 
 // ── Browser Notifications ──
@@ -296,7 +309,7 @@ function timiNotify(title, body, type = "info") {
   }
 }
 
-export default function useDerivWS() {
+export default function useDerivWS({ ai } = {}) {
   const [balance, setBalance] = useState({ balance: "---", currency: "USD" });
   const [ticks, setTicks] = useState({});
   const [signals, setSignals] = useState({});
@@ -343,6 +356,7 @@ export default function useDerivWS() {
   const takeProfitRef = useRef(0);
   const martingaleRef = useRef("anti");
   const wsConnections = useRef({});
+  const signalsRef = useRef({});
   const runAnalysisRef = useRef(null);
 
   useEffect(() => { autoTradeRef.current = autoTrade; }, [autoTrade]);
@@ -390,6 +404,7 @@ export default function useDerivWS() {
     timiNotify("🛑 TIMI", "Closing all trades", "alert");
   };
 
+  const updateSignalsRef = (sigs) => { signalsRef.current = sigs; };
   const runAnalysis = () => {
     // Update session
     const currentSession = getTradingSession();
@@ -420,6 +435,26 @@ export default function useDerivWS() {
         if (!best || sig.confidence > best.sig.confidence) best = { sym, sig };
     });
 
+    // Apply AI multipliers to signals
+    if (ai?.getAIMultiplier) {
+      Object.entries(newSigs).forEach(([sym, sig]) => {
+        const { multiplier, reasons: aiReasons } = ai.getAIMultiplier({
+          activeIndicators: sig.activeIndicators || [],
+          session: sig.session?.names || "unknown",
+          symbol: sym,
+        });
+        newSigs[sym] = {
+          ...sig,
+          aiMultiplier: multiplier,
+          confidence: Math.min(99, Math.round(sig.confidence * multiplier)),
+          reasons: [...(sig.reasons || []), ...(aiReasons || [])],
+        };
+        if (sig.action !== "HOLD" && newSigs[sym].confidence >= 45)
+          if (!best || newSigs[sym].confidence > (best.sig.confidence || 0)) best = { sym, sig: newSigs[sym] };
+      });
+    }
+
+    updateSignalsRef(newSigs);
     setSignals({ ...newSigs });
     if (!autoTradeRef.current || !best) return;
     if (openTradesRef.current.length >= MAX_TRADES) return;
@@ -456,7 +491,17 @@ export default function useDerivWS() {
 
     const baseStake = Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
     const rawStake = getMartingaleStake(baseStake, tradeHistoryRef.current, martingaleRef.current);
-    const stake = Math.min(parseFloat(rawStake.toFixed(2)), bal * 0.05);
+
+    // AI stake sizing — growth-aware + streak protection
+    const growthConfig = (() => { try { return JSON.parse(localStorage.getItem("timi_compounding")) || {}; } catch { return {}; } })();
+    const aiStakeResult = ai?.getAIStake
+      ? ai.getAIStake(rawStake, bal, dailyPnlRef.current, tradeHistoryRef.current, growthConfig)
+      : { stake: rawStake, reasons: [] };
+
+    const stake = Math.min(aiStakeResult.stake, bal * 0.05);
+    if (aiStakeResult.reasons?.length > 0) {
+      setTimiStatus("💡 AI: " + aiStakeResult.reasons[0]);
+    }
 
     setTimiStatus(best.sig.action + " " + best.sym + " " + best.sig.confidence + "% | " + (currentSession.names || "off-session"));
     accounts.filter(a => a.active).forEach(acc => {
@@ -545,6 +590,32 @@ export default function useDerivWS() {
           tradeHistoryRef.current = hist;
           setTradeHistory(hist);
           localStorage.setItem("timi_trade_history", JSON.stringify(hist));
+
+          // Send to AI for learning
+          if (ai?.recordTrade) {
+            const lastSignal = Object.values(signalsRef?.current || {}).find(s => s);
+            ai.recordTrade({
+              symbol: poc.underlying,
+              type: poc.contract_type === "CALL" ? "BUY" : "SELL",
+              stake: poc.buy_price || 0,
+              pnl,
+              result: pnl > 0 ? "WIN" : "LOSS",
+              session: currentSess,
+              confidence: lastSignal?.confidence || 0,
+              score: lastSignal?.score || 0,
+              rsi: lastSignal?.rsi || 0,
+              macd_hist: lastSignal?.macd_hist || 0,
+              ema_stack: lastSignal?.ema_stack || "unknown",
+              bb_position: lastSignal?.bb_position || "mid",
+              stoch: lastSignal?.stoch || 50,
+              patterns: lastSignal?.patterns || [],
+              atr: lastSignal?.atr || 0,
+              duration: 5,
+              account: account.name,
+              activeIndicators: lastSignal?.activeIndicators || [],
+              indicatorSignals: Object.fromEntries((lastSignal?.activeIndicators || []).map(i => [i, true])),
+            });
+          }
           setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2) + " [" + account.name + "]");
           timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");
           ws.send(JSON.stringify({ balance: 1, account: "current" }));

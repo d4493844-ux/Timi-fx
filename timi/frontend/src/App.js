@@ -7,20 +7,22 @@ import History from "./components/History";
 import Settings from "./components/Settings";
 import Backtest from "./components/Backtest";
 import Growth from "./components/Growth";
+import AIBrain from "./components/AIBrain";
 import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
 import VoiceButton from "./components/VoiceButton";
 import NotificationToast from "./components/NotificationToast";
 import useDerivWS from "./hooks/useDerivWS";
-import useRisk from "./hooks/useRisk";
 import useVoice from "./hooks/useVoice";
+import useAI from "./hooks/useAI";
 import "./index.css";
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
   const [ready, setReady] = useState(false);
-  const derivData = useDerivWS();
-  const { riskParams, updateRisk, calcStake, rrStats } = useRisk();
+
+  const ai = useAI();
+  const derivData = useDerivWS({ ai });
   const voice = useVoice({
     balance: derivData.balance,
     signals: derivData.signals,
@@ -34,7 +36,8 @@ export default function App() {
 
   const pages = {
     dashboard: Dashboard, trades: Trades, signals: Signals,
-    history: History, settings: Settings, backtest: Backtest, growth: Growth
+    history: History, settings: Settings, backtest: Backtest,
+    growth: Growth, ai: AIBrain,
   };
   const PageComponent = pages[page] || Dashboard;
 
@@ -43,7 +46,7 @@ export default function App() {
       <AnimatePresence>{!ready && <SplashScreen />}</AnimatePresence>
       {ready && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <PageComponent {...derivData} riskParams={riskParams} updateRisk={updateRisk} calcStake={calcStake} rrStats={rrStats} />
+          <PageComponent {...derivData} {...ai} />
           <NotificationToast />
           <VoiceButton {...voice} />
           <BottomNav page={page} setPage={setPage} />
