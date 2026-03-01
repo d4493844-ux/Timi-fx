@@ -357,7 +357,6 @@ export default function useDerivWS({ ai } = {}) {
   const martingaleRef = useRef("anti");
   const wsConnections = useRef({});
   const signalsRef = useRef({});
-  const signalsRef = useRef({});
   const runAnalysisRef = useRef(null);
 
   useEffect(() => { autoTradeRef.current = autoTrade; }, [autoTrade]);
