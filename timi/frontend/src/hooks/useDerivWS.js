@@ -385,7 +385,7 @@ export default function useDerivWS({ ai } = {}) {
 
   const manualTrade = (sym, direction, stake = null) => {
     const bal = parseFloat(balanceRef.current?.balance || 0);
-    const tradeStake = stake || Math.max(1, parseFloat((bal * 0.02).toFixed(2)));
+    const tradeStake = stake || Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
     accounts.filter(a => a.active).forEach(acc => {
       sendTo(acc.id, { proposal: 1, amount: tradeStake, basis: "stake", contract_type: direction === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 5, duration_unit: "m", symbol: sym });
     });

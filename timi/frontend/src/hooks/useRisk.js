@@ -1,42 +1,46 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
-const DEFAULT = {
+const DEFAULTS = {
   riskPct: 2,
   maxTrades: 3,
   minConfidence: 45,
   duration: 5,
-  rrRatio: 1.5, // Risk:Reward — win pays 85%, so RR = 0.85:1 on Deriv binary
 };
+
+const KEY = "timi_risk";
 
 export default function useRisk() {
   const [riskParams, setRiskParams] = useState(() => {
-    try { return { ...DEFAULT, ...JSON.parse(localStorage.getItem("timi_risk")) }; }
-    catch { return DEFAULT; }
+    try {
+      const saved = JSON.parse(localStorage.getItem(KEY));
+      return saved ? { ...DEFAULTS, ...saved } : { ...DEFAULTS };
+    } catch {
+      return { ...DEFAULTS };
+    }
   });
 
+  // Save every time params change
   useEffect(() => {
-    localStorage.setItem("timi_risk", JSON.stringify(riskParams));
+    try {
+      localStorage.setItem(KEY, JSON.stringify(riskParams));
+    } catch (e) {
+      console.error("Risk save error:", e);
+    }
   }, [riskParams]);
 
-  const updateRisk = (key, value) => {
-    setRiskParams(prev => ({ ...prev, [key]: parseFloat(value) }));
-  };
+  const updateRisk = useCallback((key, value) => {
+    setRiskParams(prev => {
+      const updated = { ...prev, [key]: parseFloat(value) };
+      // Also save immediately (belt + suspenders)
+      try { localStorage.setItem(KEY, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
+  }, []);
 
-  // Calculate stake based on balance
-  const calcStake = (balance) => {
+  const calcStake = useCallback((balance) => {
     const stake = parseFloat(balance) * (riskParams.riskPct / 100);
     return Math.max(1, +stake.toFixed(2));
-  };
+  }, [riskParams.riskPct]);
 
-  // RR explanation for binary options
-  // On Deriv: win = stake * 0.85, loss = stake * 1.0
-  // So RR = 0.85:1 — need >54% win rate to break even
-  const rrStats = {
-    winPayout: 0.85,
-    lossPayout: 1.0,
-    breakEvenWinRate: +(1 / (1 + 0.85) * 100).toFixed(1), // 54.1%
-    expectedValue: (wr) => +((wr / 100 * 0.85) - ((100 - wr) / 100 * 1.0)).toFixed(3),
-  };
-
-  return { riskParams, updateRisk, calcStake, rrStats };
+  return { riskParams, updateRisk, calcStake };
 }
