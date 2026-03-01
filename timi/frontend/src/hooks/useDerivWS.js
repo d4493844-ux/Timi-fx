@@ -357,6 +357,7 @@ export default function useDerivWS({ ai } = {}) {
   const martingaleRef = useRef("anti");
   const wsConnections = useRef({});
   const signalsRef = useRef({});
+  const signalsRef = useRef({});
   const runAnalysisRef = useRef(null);
 
   useEffect(() => { autoTradeRef.current = autoTrade; }, [autoTrade]);
@@ -455,7 +456,31 @@ export default function useDerivWS({ ai } = {}) {
     }
 
     updateSignalsRef(newSigs);
-    setSignals({ ...newSigs });
+    signalsRef.current = newSigs;
+    // Apply AI multiplier to each signal
+    if (ai?.getAIMultiplier) {
+      best = null; // recalculate with AI
+      Object.entries(newSigs).forEach(([sym, sig]) => {
+        if (sig.action === "HOLD") return;
+        const { multiplier, reasons: aiR } = ai.getAIMultiplier({
+          activeIndicators: sig.activeIndicators || [],
+          session: sig.session?.names || "unknown",
+          symbol: sym,
+          action: sig.action,
+        });
+        newSigs[sym] = {
+          ...sig,
+          aiMultiplier: multiplier,
+          confidence: Math.min(99, Math.round(sig.confidence * multiplier)),
+          reasons: [...(sig.reasons || []), ...(aiR || [])],
+        };
+        const minConf = (() => { try { return JSON.parse(localStorage.getItem("timi_risk"))?.minConfidence || 45; } catch { return 45; } })();
+        if (newSigs[sym].confidence >= minConf)
+          if (!best || newSigs[sym].confidence > best.sig.confidence) best = { sym, sig: newSigs[sym] };
+      });
+      signalsRef.current = newSigs;
+      setSignals({ ...newSigs });
+    }
     if (!autoTradeRef.current || !best) return;
     if (openTradesRef.current.length >= MAX_TRADES) return;
     if (openTradesRef.current.find(t => t.symbol === best.sym)) return;
@@ -490,6 +515,11 @@ export default function useDerivWS({ ai } = {}) {
     }
 
     const baseStake = Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
+    const growthCfg = (() => { try { return JSON.parse(localStorage.getItem("timi_compounding")) || {}; } catch { return {}; } })();
+    const aiStake = ai?.getAIStake
+      ? ai.getAIStake(baseStake, bal, dailyPnlRef.current, tradeHistoryRef.current, growthCfg)
+      : { stake: baseStake, reasons: [] };
+    if (aiStake.reasons?.[0]) setTimiStatus("💡 " + aiStake.reasons[0]);
     const rawStake = getMartingaleStake(baseStake, tradeHistoryRef.current, martingaleRef.current);
 
     // AI stake sizing — growth-aware + streak protection
@@ -590,6 +620,25 @@ export default function useDerivWS({ ai } = {}) {
           tradeHistoryRef.current = hist;
           setTradeHistory(hist);
           localStorage.setItem("timi_trade_history", JSON.stringify(hist));
+
+          // AI learning
+          if (ai?.recordTrade) {
+            const lastSig = signalsRef.current?.[poc.underlying] || {};
+            ai.recordTrade({
+              symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL",
+              stake: poc.buy_price || 0, pnl, result: pnl > 0 ? "WIN" : "LOSS",
+              session: currentSess, confidence: lastSig.confidence || 0,
+              score: lastSig.score || 0, rsi: lastSig.rsi || 0,
+              macd_hist: lastSig.macd_hist || 0, ema_stack: lastSig.ema_stack || "unknown",
+              bb_position: lastSig.bb_position || "mid", stoch: lastSig.stoch || 50,
+              patterns: lastSig.patterns || [], atr: lastSig.atr || 0,
+              account: account.name, activeIndicators: lastSig.activeIndicators || [],
+            });
+          }
+          // Update regime detection
+          if (ai?.updateRegime && candles1m.current[poc.underlying]) {
+            ai.updateRegime(poc.underlying, candles1m.current[poc.underlying]);
+          }
 
           // Send to AI for learning
           if (ai?.recordTrade) {

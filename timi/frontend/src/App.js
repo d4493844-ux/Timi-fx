@@ -24,12 +24,9 @@ export default function App() {
   const ai = useAI();
   const derivData = useDerivWS({ ai });
   const voice = useVoice({
-    balance: derivData.balance,
-    signals: derivData.signals,
-    autoTrade: derivData.autoTrade,
-    setAutoTrade: derivData.setAutoTrade,
-    manualTrade: derivData.manualTrade,
-    closeAllTrades: derivData.closeAllTrades,
+    balance: derivData.balance, signals: derivData.signals,
+    autoTrade: derivData.autoTrade, setAutoTrade: derivData.setAutoTrade,
+    manualTrade: derivData.manualTrade, closeAllTrades: derivData.closeAllTrades,
   });
 
   useEffect(() => { setTimeout(() => setReady(true), 3200); }, []);
