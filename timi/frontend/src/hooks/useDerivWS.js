@@ -278,12 +278,33 @@ function getSignal(candles1m, candles5m) {
   return { action, confidence, reasons, patterns, score: +score.toFixed(2), rsi: +rsi.toFixed(1), atr: +atr.toFixed(5), session, sr };
 }
 
+// ── Browser Notifications ──
+function timiNotify(title, body, type = "info") {
+  // In-app toast (window event)
+  window.dispatchEvent(new CustomEvent("timi-notification", { detail: { title, body, type } }));
+  // Browser push notification if permitted
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      new Notification(title, {
+        body,
+        icon: "https://res.cloudinary.com/drefakuj9/image/upload/v1772314893/WhatsApp_Image_2026-02-28_at_10.27.28_PM_ylndjq.jpg",
+        badge: "https://res.cloudinary.com/drefakuj9/image/upload/v1772314893/WhatsApp_Image_2026-02-28_at_10.27.28_PM_ylndjq.jpg",
+        tag: type,
+        requireInteraction: type === "win" || type === "loss",
+      });
+    } catch(e) {}
+  }
+}
+
 export default function useDerivWS() {
   const [balance, setBalance] = useState({ balance: "---", currency: "USD" });
   const [ticks, setTicks] = useState({});
   const [signals, setSignals] = useState({});
   const [openTrades, setOpenTrades] = useState([]);
-  const [tradeHistory, setTradeHistory] = useState([]);
+  const [tradeHistory, setTradeHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("timi_trade_history")) || []; }
+    catch { return []; }
+  });
   const [timiStatus, setTimiStatus] = useState("Connecting...");
   const [autoTrade, setAutoTrade] = useState(true);
   const [takeProfitTarget, setTakeProfitTarget] = useState(() => {
@@ -366,7 +387,7 @@ export default function useDerivWS() {
       Object.keys(wsConnections.current).forEach(id => sendTo(id, { sell: t.contractId, price: 0 }));
     });
     setTimiStatus("🛑 Closing all trades...");
-    if (window.timiNotify) window.timiNotify("🛑 TIMI", "Closing all trades", "alert");
+    timiNotify("🛑 TIMI", "Closing all trades", "alert");
   };
 
   const runAnalysis = () => {
@@ -380,7 +401,7 @@ export default function useDerivWS() {
         setAutoTrade(false);
         autoTradeRef.current = false;
         setTimiStatus("🎯 Target $" + takeProfitRef.current + " hit! Trading paused.");
-        if (window.timiNotify) window.timiNotify("🎯 Take Profit!", "Daily target hit. Trading stopped.", "profit");
+        timiNotify("🎯 Take Profit!", "Daily target hit. Trading stopped.", "profit");
       }
       return;
     }
@@ -407,8 +428,32 @@ export default function useDerivWS() {
     const bal = parseFloat(balanceRef.current?.balance || 0);
     if (!bal || bal < 1) return;
 
+    // Growth-aware stake sizing
     const risk = (() => { try { return JSON.parse(localStorage.getItem("timi_risk")) || {}; } catch { return {}; } })();
-    const riskPct = (risk.riskPct || 2) / 100;
+    const growth = (() => { try { return JSON.parse(localStorage.getItem("timi_compounding")) || {}; } catch { return {}; } })();
+    let riskPct = (risk.riskPct || 2) / 100;
+
+    // If growth tracking is active, adjust risk based on progress
+    if (growth.startBalance && growth.dailyTarget) {
+      const startBal = parseFloat(growth.startBalance);
+      const dailyTarget = parseFloat(growth.dailyTarget) / 100;
+      const todayPnl = (() => { try { const d = JSON.parse(localStorage.getItem("timi_daily_pnl")); return d?.date === new Date().toDateString() ? d.pnl : 0; } catch { return 0; } })();
+      const dailyTargetAmt = startBal * dailyTarget;
+
+      // If already at or past daily target — reduce risk aggressively
+      if (todayPnl >= dailyTargetAmt) {
+        riskPct = riskPct * 0.3; // Only 30% of normal risk after target hit
+      }
+      // If halfway to target — slightly reduce risk (protect profits)
+      else if (todayPnl >= dailyTargetAmt * 0.6) {
+        riskPct = riskPct * 0.7;
+      }
+      // If in drawdown (negative day) — reduce risk
+      else if (todayPnl < -(dailyTargetAmt * 0.5)) {
+        riskPct = riskPct * 0.5; // Cut risk in half during drawdown
+      }
+    }
+
     const baseStake = Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
     const rawStake = getMartingaleStake(baseStake, tradeHistoryRef.current, martingaleRef.current);
     const stake = Math.min(parseFloat(rawStake.toFixed(2)), bal * 0.05);
@@ -474,7 +519,7 @@ export default function useDerivWS() {
         openTradesRef.current = [...openTradesRef.current, trade];
         setOpenTrades([...openTradesRef.current]);
         setTimiStatus("✅ [" + account.name + "] " + trade.type + " " + trade.symbol + " $" + trade.stake);
-        if (window.timiNotify) window.timiNotify("🤖 Trade Open", "[" + account.name + "] " + trade.type + " " + trade.symbol, "trade");
+        timiNotify("🤖 Trade Open", "[" + account.name + "] " + trade.type + " " + trade.symbol, "trade");
         ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: trade.contractId, subscribe: 1 }));
       }
 
@@ -495,11 +540,13 @@ export default function useDerivWS() {
             dailyPnlRef.current = newPnl;
             return newPnl;
           });
-          const hist = [{ symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL", pnl, result: pnl > 0 ? "WIN" : "LOSS", date: new Date().toLocaleTimeString(), account: account.name }, ...tradeHistoryRef.current.slice(0, 99)];
+          const currentSess = (() => { try { return getTradingSession().names || "unknown"; } catch { return "unknown"; } })();
+          const hist = [{ symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL", pnl, result: pnl > 0 ? "WIN" : "LOSS", date: new Date().toLocaleString(), account: account.name, session: currentSess, stake: poc.buy_price || 0 }, ...tradeHistoryRef.current.slice(0, 199)];
           tradeHistoryRef.current = hist;
           setTradeHistory(hist);
+          localStorage.setItem("timi_trade_history", JSON.stringify(hist));
           setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2) + " [" + account.name + "]");
-          if (window.timiNotify) window.timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");
+          timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");
           ws.send(JSON.stringify({ balance: 1, account: "current" }));
         }
       }

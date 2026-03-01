@@ -10,6 +10,7 @@ import Growth from "./components/Growth";
 import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
 import VoiceButton from "./components/VoiceButton";
+import NotificationToast from "./components/NotificationToast";
 import useDerivWS from "./hooks/useDerivWS";
 import useRisk from "./hooks/useRisk";
 import useVoice from "./hooks/useVoice";
@@ -43,6 +44,7 @@ export default function App() {
       {ready && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
           <PageComponent {...derivData} riskParams={riskParams} updateRisk={updateRisk} calcStake={calcStake} rrStats={rrStats} />
+          <NotificationToast />
           <VoiceButton {...voice} />
           <BottomNav page={page} setPage={setPage} />
         </motion.div>
