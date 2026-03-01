@@ -21,7 +21,7 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Android SDK
@@ -40,13 +40,9 @@ jobs:
         run: |
           cd timi/frontend
           npm install @capacitor/core @capacitor/cli @capacitor/android
-          # Remove old android folder if exists
           rm -rf android
-          # Add android platform fresh
           npx cap add android
-          # Sync web build into android
           npx cap sync android
-          # Verify gradlew exists
           ls android/gradlew && echo "gradlew found!" || echo "gradlew missing!"
 
       - name: Build Debug APK
