@@ -31,19 +31,29 @@ jobs:
         run: npm install
 
       - name: Build React app
-        run: cd timi/frontend && CI=false npm install && CI=false npm run build
+        run: |
+          cd timi/frontend
+          CI=false npm install
+          CI=false npm run build
 
-      - name: Install Capacitor CLI
-        run: cd timi/frontend && npm install @capacitor/core @capacitor/cli @capacitor/android
-
-      - name: Sync Capacitor
-        run: cd timi/frontend && npx cap sync android
-
-      - name: Make gradlew executable
-        run: chmod +x timi/frontend/android/gradlew
+      - name: Setup Capacitor and Android
+        run: |
+          cd timi/frontend
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          # Remove old android folder if exists
+          rm -rf android
+          # Add android platform fresh
+          npx cap add android
+          # Sync web build into android
+          npx cap sync android
+          # Verify gradlew exists
+          ls android/gradlew && echo "gradlew found!" || echo "gradlew missing!"
 
       - name: Build Debug APK
-        run: cd timi/frontend/android && ./gradlew assembleDebug --no-daemon
+        run: |
+          cd timi/frontend/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
