@@ -1,10 +1,6 @@
 {
-  "platforms": ["android"],
-  "packageManager": "npm",
-  "webDir": "timi/frontend/build",
-  "buildOptions": {
-    "android": {
-      "buildType": "debug"
-    }
-  }
+  "name": "TIMI",
+  "packageName": "com.timi.trading",
+  "platform": "android",
+  "type": "capacitor"
 }
