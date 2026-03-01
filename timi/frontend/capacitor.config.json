@@ -1,0 +1,26 @@
+{
+  "appId": "com.timi.trading",
+  "appName": "TIMI",
+  "webDir": "build",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SpeechRecognition": {
+      "language": "en-US"
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon_config_sample",
+      "iconColor": "#00d4ff",
+      "sound": "beep.wav"
+    },
+    "BackgroundRunner": {
+      "label": "com.timi.trading.background",
+      "src": "background.js",
+      "event": "timiBackground",
+      "repeat": true,
+      "interval": 1,
+      "autoStart": true
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "platforms": ["android"],
+  "packageManager": "npm",
+  "webDir": "timi/frontend/build",
+  "buildOptions": {
+    "android": {
+      "buildType": "debug"
+    }
+  }
+}
