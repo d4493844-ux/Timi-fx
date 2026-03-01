@@ -8,6 +8,7 @@ import Settings from "./components/Settings";
 import Backtest from "./components/Backtest";
 import Growth from "./components/Growth";
 import AIBrain from "./components/AIBrain";
+import RemoteControl from "./components/RemoteControl";
 import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
 import VoiceButton from "./components/VoiceButton";
