@@ -286,8 +286,17 @@ export default function useDerivWS() {
   const [tradeHistory, setTradeHistory] = useState([]);
   const [timiStatus, setTimiStatus] = useState("Connecting...");
   const [autoTrade, setAutoTrade] = useState(true);
-  const [takeProfitTarget, setTakeProfitTarget] = useState(0);
-  const [dailyPnl, setDailyPnl] = useState(0);
+  const [takeProfitTarget, setTakeProfitTarget] = useState(() => {
+    try { return parseFloat(localStorage.getItem("timi_tp")) || 0; } catch { return 0; }
+  });
+  const [dailyPnl, setDailyPnl] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("timi_daily_pnl"));
+      const today = new Date().toDateString();
+      if (saved && saved.date === today) return saved.pnl;
+      return 0;
+    } catch { return 0; }
+  });
   const [martingaleMode, setMartingaleMode] = useState("anti"); // "anti" | "martingale" | "fixed"
   const [session, setSession] = useState(getTradingSession());
   const [accounts, setAccounts] = useState(() => {
@@ -313,18 +322,24 @@ export default function useDerivWS() {
   const takeProfitRef = useRef(0);
   const martingaleRef = useRef("anti");
   const wsConnections = useRef({});
+  const runAnalysisRef = useRef(null);
 
   useEffect(() => { autoTradeRef.current = autoTrade; }, [autoTrade]);
   useEffect(() => { openTradesRef.current = openTrades; }, [openTrades]);
   useEffect(() => { tradeHistoryRef.current = tradeHistory; }, [tradeHistory]);
-  useEffect(() => { takeProfitRef.current = takeProfitTarget; }, [takeProfitTarget]);
+  useEffect(() => {
+    takeProfitRef.current = takeProfitTarget;
+    localStorage.setItem("timi_tp", takeProfitTarget);
+  }, [takeProfitTarget]);
   useEffect(() => { martingaleRef.current = martingaleMode; }, [martingaleMode]);
   useEffect(() => {
     activeSymbolsRef.current = activeSymbols;
     localStorage.setItem("timi_symbols", JSON.stringify(activeSymbols));
   }, [activeSymbols]);
   useEffect(() => {
-    localStorage.setItem("timi_accounts", JSON.stringify(accounts));
+    // Always keep primary token fresh
+    const toSave = accounts.map(a => ({ ...a }));
+    localStorage.setItem("timi_accounts", JSON.stringify(toSave));
   }, [accounts]);
 
   const sendTo = (accountId, obj) => {
@@ -474,7 +489,12 @@ export default function useDerivWS() {
           openTradesRef.current = openTradesRef.current.filter(t => t.contractId !== poc.contract_id);
           setOpenTrades([...openTradesRef.current]);
           dailyPnlRef.current += pnl;
-          setDailyPnl(p => +(p + pnl).toFixed(2));
+          setDailyPnl(p => {
+            const newPnl = +(p + pnl).toFixed(2);
+            localStorage.setItem("timi_daily_pnl", JSON.stringify({ date: new Date().toDateString(), pnl: newPnl }));
+            dailyPnlRef.current = newPnl;
+            return newPnl;
+          });
           const hist = [{ symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL", pnl, result: pnl > 0 ? "WIN" : "LOSS", date: new Date().toLocaleTimeString(), account: account.name }, ...tradeHistoryRef.current.slice(0, 99)];
           tradeHistoryRef.current = hist;
           setTradeHistory(hist);
@@ -493,7 +513,8 @@ export default function useDerivWS() {
 
   useEffect(() => {
     accounts.forEach(acc => connectAccount(acc));
-    const iv = setInterval(runAnalysis, 30000);
+    runAnalysisRef.current = runAnalysis;
+    const iv = setInterval(() => { runAnalysis(); }, 15000); // 15s fresh call
     const sessIv = setInterval(() => setSession(getTradingSession()), 60000);
     return () => { clearInterval(iv); clearInterval(sessIv); Object.values(wsConnections.current).forEach(ws => ws.close()); };
   }, []); // eslint-disable-line
