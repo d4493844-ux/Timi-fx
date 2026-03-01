@@ -45,6 +45,36 @@ jobs:
           npx cap sync android
           ls android/gradlew && echo "gradlew found!" || echo "gradlew missing!"
 
+      - name: Set TIMI App Icon
+        run: |
+          cd timi/frontend
+          # Install imagemagick for icon resizing
+          sudo apt-get install -y imagemagick wget
+          # Download TIMI logo
+          wget -O timi-logo.jpg "https://res.cloudinary.com/drefakuj9/image/upload/v1772314893/WhatsApp_Image_2026-02-28_at_10.27.28_PM_ylndjq.jpg"
+          # Generate all required Android icon sizes
+          ICON_DIR="android/app/src/main/res"
+          convert timi-logo.jpg -resize 48x48   $ICON_DIR/mipmap-mdpi/ic_launcher.png
+          convert timi-logo.jpg -resize 72x72   $ICON_DIR/mipmap-hdpi/ic_launcher.png
+          convert timi-logo.jpg -resize 96x96   $ICON_DIR/mipmap-xhdpi/ic_launcher.png
+          convert timi-logo.jpg -resize 144x144 $ICON_DIR/mipmap-xxhdpi/ic_launcher.png
+          convert timi-logo.jpg -resize 192x192 $ICON_DIR/mipmap-xxxhdpi/ic_launcher.png
+          # Round icons too
+          convert timi-logo.jpg -resize 48x48   $ICON_DIR/mipmap-mdpi/ic_launcher_round.png
+          convert timi-logo.jpg -resize 72x72   $ICON_DIR/mipmap-hdpi/ic_launcher_round.png
+          convert timi-logo.jpg -resize 96x96   $ICON_DIR/mipmap-xhdpi/ic_launcher_round.png
+          convert timi-logo.jpg -resize 144x144 $ICON_DIR/mipmap-xxhdpi/ic_launcher_round.png
+          convert timi-logo.jpg -resize 192x192 $ICON_DIR/mipmap-xxxhdpi/ic_launcher_round.png
+          echo "Icons set!"
+
+      - name: Add WakeLock Permission to AndroidManifest
+        run: |
+          cd timi/frontend/android/app/src/main
+          # Add wake lock permission
+          sed -i 's/<uses-permission android:name="android.permission.INTERNET"\/>/<uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"\/>\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"\/>/' AndroidManifest.xml
+          echo "Permissions added!"
+          cat AndroidManifest.xml | grep permission
+
       - name: Build Debug APK
         run: |
           cd timi/frontend/android
