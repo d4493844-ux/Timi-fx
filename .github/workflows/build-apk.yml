@@ -75,6 +75,31 @@ jobs:
           echo "Permissions added!"
           cat AndroidManifest.xml | grep permission
 
+      - name: Set TIMI App Icon
+        run: |
+          sudo apt-get install -y imagemagick 2>/dev/null || true
+          curl -L "https://res.cloudinary.com/drefakuj9/image/upload/v1772314893/WhatsApp_Image_2026-02-28_at_10.27.28_PM_ylndjq.jpg" -o /tmp/timi-logo.jpg
+          ICON_DIR="timi/frontend/android/app/src/main/res"
+          for SIZE_DIR in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            mkdir -p "$ICON_DIR/$SIZE_DIR"
+          done
+          convert /tmp/timi-logo.jpg -resize 48x48   "$ICON_DIR/mipmap-mdpi/ic_launcher.png"
+          convert /tmp/timi-logo.jpg -resize 72x72   "$ICON_DIR/mipmap-hdpi/ic_launcher.png"
+          convert /tmp/timi-logo.jpg -resize 96x96   "$ICON_DIR/mipmap-xhdpi/ic_launcher.png"
+          convert /tmp/timi-logo.jpg -resize 144x144 "$ICON_DIR/mipmap-xxhdpi/ic_launcher.png"
+          convert /tmp/timi-logo.jpg -resize 192x192 "$ICON_DIR/mipmap-xxxhdpi/ic_launcher.png"
+          convert /tmp/timi-logo.jpg -resize 48x48   "$ICON_DIR/mipmap-mdpi/ic_launcher_round.png"
+          convert /tmp/timi-logo.jpg -resize 72x72   "$ICON_DIR/mipmap-hdpi/ic_launcher_round.png"
+          convert /tmp/timi-logo.jpg -resize 96x96   "$ICON_DIR/mipmap-xhdpi/ic_launcher_round.png"
+          convert /tmp/timi-logo.jpg -resize 144x144 "$ICON_DIR/mipmap-xxhdpi/ic_launcher_round.png"
+          convert /tmp/timi-logo.jpg -resize 192x192 "$ICON_DIR/mipmap-xxxhdpi/ic_launcher_round.png"
+          convert /tmp/timi-logo.jpg -resize 108x108 "$ICON_DIR/mipmap-mdpi/ic_launcher_foreground.png"
+          convert /tmp/timi-logo.jpg -resize 162x162 "$ICON_DIR/mipmap-hdpi/ic_launcher_foreground.png"
+          convert /tmp/timi-logo.jpg -resize 216x216 "$ICON_DIR/mipmap-xhdpi/ic_launcher_foreground.png"
+          convert /tmp/timi-logo.jpg -resize 324x324 "$ICON_DIR/mipmap-xxhdpi/ic_launcher_foreground.png"
+          convert /tmp/timi-logo.jpg -resize 432x432 "$ICON_DIR/mipmap-xxxhdpi/ic_launcher_foreground.png"
+          echo "Icons set!"
+
       - name: Build Debug APK
         run: |
           cd timi/frontend/android
