@@ -626,6 +626,8 @@ export default function useDerivWS({ ai } = {}) {
         ));
         if (poc.is_sold || poc.status === "sold") {
           const pnl = parseFloat(poc.profit || 0);
+          // Capture trade BEFORE removing from ref
+          const closedTrade = openTradesRef.current.find(t => t.contractId === poc.contract_id) || {};
           openTradesRef.current = openTradesRef.current.filter(t => t.contractId !== poc.contract_id);
           setOpenTrades([...openTradesRef.current]);
           dailyPnlRef.current += pnl;
@@ -641,9 +643,7 @@ export default function useDerivWS({ ai } = {}) {
           setTradeHistory(hist);
           pSet("timi_trade_history", hist);
 
-          // Save trade to Supabase — get symbol from openTrades if poc.underlying is missing
-          const closedTrade = openTradesRef.current.find(t => t.contractId === poc.contract_id) ||
-                              openTradesRef.current.find(t => t.id === poc.contract_id) || {};
+          // Save trade to Supabase — closedTrade captured before removal above
           const tradeSymbol = poc.underlying || closedTrade.symbol || "UNKNOWN";
           const tradeType   = poc.contract_type === "CALL" ? "BUY" : poc.contract_type === "PUT" ? "SELL" : (closedTrade.type || "BUY");
           const tradeStakeVal = poc.buy_price || closedTrade.stake || 0;
