@@ -1,45 +1,24 @@
-// Works on both web (localStorage) and Android APK (Capacitor Preferences)
-const isCapacitor = window.Capacitor !== undefined;
+import { Preferences } from "@capacitor/preferences";
 
-let Preferences = null;
-
-async function getPreferences() {
-  if (!isCapacitor) return null;
-  try {
-    const { Preferences: P } = await import('@capacitor/preferences');
-    return P;
-  } catch { return null; }
+export async function pSet(key, value) {
+  const v = JSON.stringify(value);
+  try { await Preferences.set({ key, value: v }); } catch(e) { console.error("pSet error:", e); }
+  try { localStorage.setItem(key, v); } catch {}
 }
 
-export async function storageSet(key, value) {
+export async function pGet(key, fallback = null) {
   try {
-    const val = JSON.stringify(value);
-    localStorage.setItem(key, val);
-    const P = await getPreferences();
-    if (P) await P.set({ key, value: val });
-  } catch (e) {
-    console.error("Storage set error:", e);
-  }
-}
-
-export async function storageGet(key) {
-  try {
-    const P = await getPreferences();
-    if (P) {
-      const { value } = await P.get({ key });
-      if (value) return JSON.parse(value);
-    }
-    const local = localStorage.getItem(key);
-    return local ? JSON.parse(local) : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-export async function storageRemove(key) {
-  try {
-    localStorage.removeItem(key);
-    const P = await getPreferences();
-    if (P) await P.remove({ key });
+    const { value } = await Preferences.get({ key });
+    if (value !== null && value !== undefined) return JSON.parse(value);
   } catch {}
+  try {
+    const v = localStorage.getItem(key);
+    if (v) return JSON.parse(v);
+  } catch {}
+  return fallback;
+}
+
+export function pGetSync(key, fallback = null) {
+  try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch {}
+  return fallback;
 }

@@ -9,20 +9,24 @@
 			"*.binaryws.com",
 			"*.deriv.com",
 			"*.firebase.com",
-			"*.googleapis.com",
-			"*.firebaseapp.com"
+			"*.googleapis.com"
 		]
 	},
 	"android": {
 		"allowMixedContent": true,
 		"captureInput": true,
-		"webContentsDebuggingEnabled": true
+		"webContentsDebuggingEnabled": true,
+		"loggingBehavior": "debug"
 	},
 	"plugins": {
 		"SplashScreen": {
-			"launchShowDuration": 2000,
+			"launchShowDuration": 3000,
 			"backgroundColor": "#020810",
-			"showSpinner": false
+			"showSpinner": false,
+			"launchAutoHide": true
+		},
+		"Preferences": {
+			"group": "timi"
 		}
 	}
 }
