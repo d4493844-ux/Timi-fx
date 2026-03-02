@@ -621,20 +621,26 @@ export default function useDerivWS({ ai } = {}) {
           setTradeHistory(hist);
           localStorage.setItem("timi_trade_history", JSON.stringify(hist));
 
-          // Save trade to Supabase directly
-          const lastSig = signalsRef.current?.[poc.underlying] || {};
+          // Save trade to Supabase — get symbol from openTrades if poc.underlying is missing
+          const closedTrade = openTradesRef.current.find(t => t.contractId === poc.contract_id) ||
+                              openTradesRef.current.find(t => t.id === poc.contract_id) || {};
+          const tradeSymbol = poc.underlying || closedTrade.symbol || "UNKNOWN";
+          const tradeType   = poc.contract_type === "CALL" ? "BUY" : poc.contract_type === "PUT" ? "SELL" : (closedTrade.type || "BUY");
+          const tradeStakeVal = poc.buy_price || closedTrade.stake || 0;
+          const lastSig = signalsRef.current?.[tradeSymbol] || {};
+          console.log("💾 Saving trade:", tradeSymbol, tradeType, pnl, "acc:", account.name);
           supabase.from("trades").insert([{
-            symbol: poc.underlying,
-            type: poc.contract_type === "CALL" ? "BUY" : "SELL",
-            stake: poc.buy_price || 0,
+            symbol: tradeSymbol,
+            type: tradeType,
+            stake: tradeStakeVal,
             pnl,
             result: pnl > 0 ? "WIN" : "LOSS",
             session: currentSess,
             confidence: lastSig.confidence || 0,
             account_name: account.name,
           }]).then(({ error }) => {
-            if (error) console.error("Supabase trade save error:", error);
-            else console.log("✅ Trade saved to Supabase");
+            if (error) console.error("❌ Supabase save error:", error.message, "symbol:", tradeSymbol);
+            else console.log("✅ Trade saved:", tradeSymbol, tradeType, pnl);
           });
 
           // AI learning
