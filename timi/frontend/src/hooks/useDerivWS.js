@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { storageSet, storageGet } from "../lib/storage";
 import { useState, useEffect, useRef } from "react";
 
 const APP_ID = "1089";
@@ -336,10 +337,14 @@ export default function useDerivWS({ ai } = {}) {
   const [session, setSession] = useState(getTradingSession());
   const [accounts, setAccounts] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("timi_accounts")) || [];
-      const primary = { id: "primary", name: "Primary", token: "03WRbkfQGjbZWTH", active: true, balance: "---", currency: "USD" };
-      return saved.find(a => a.id === "primary") ? saved : [primary, ...saved];
-    } catch { return [{ id: "primary", name: "Primary", token: "03WRbkfQGjbZWTH", active: true, balance: "---", currency: "USD" }]; }
+      // Try multiple storage locations for Capacitor compatibility
+      const saved = JSON.parse(localStorage.getItem("timi_accounts") || 
+                    sessionStorage.getItem("timi_accounts") || "[]") || [];
+      const defaultToken = ""; // No hardcoded token - user must set it
+      const primary = saved.find(a => a.id === "primary") || 
+                      { id: "primary", name: "Primary", token: defaultToken, active: true, balance: "---", currency: "USD" };
+      return saved.find(a => a.id === "primary") ? saved : [primary];
+    } catch { return [{ id: "primary", name: "Primary", token: "", active: true, balance: "---", currency: "USD" }]; }
   });
   const [activeSymbols, setActiveSymbols] = useState(() => {
     try { return JSON.parse(localStorage.getItem("timi_symbols")) || ["R_75", "R_25", "BOOM1000", "CRASH1000"]; }
@@ -373,9 +378,13 @@ export default function useDerivWS({ ai } = {}) {
     localStorage.setItem("timi_symbols", JSON.stringify(activeSymbols));
   }, [activeSymbols]);
   useEffect(() => {
-    // Always keep primary token fresh
+    // Save to multiple places for Capacitor Android compatibility
     const toSave = accounts.map(a => ({ ...a }));
-    localStorage.setItem("timi_accounts", JSON.stringify(toSave));
+    const json = JSON.stringify(toSave);
+    try { localStorage.setItem("timi_accounts", json); } catch {}
+    try { sessionStorage.setItem("timi_accounts", json); } catch {}
+    // Also save to window object as last resort
+    window.__timiAccounts = toSave;
   }, [accounts]);
 
   const sendTo = (accountId, obj) => {
