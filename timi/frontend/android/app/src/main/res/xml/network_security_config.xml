@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+      <certificates src="user" />
+    </trust-anchors>
+  </base-config>
+  <domain-config cleartextTrafficPermitted="true">
+    <!-- Supabase -->
+    <domain includeSubdomains="true">supabase.co</domain>
+    <!-- Deriv WebSocket -->
+    <domain includeSubdomains="true">binaryws.com</domain>
+    <domain includeSubdomains="true">deriv.com</domain>
+    <!-- Firebase -->
+    <domain includeSubdomains="true">firebase.com</domain>
+    <domain includeSubdomains="true">googleapis.com</domain>
+    <domain includeSubdomains="true">firebaseapp.com</domain>
+    <!-- Netlify -->
+    <domain includeSubdomains="true">netlify.app</domain>
+  </domain-config>
+</network-security-config>

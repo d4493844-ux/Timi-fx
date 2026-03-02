@@ -1,0 +1,28 @@
+{
+	"appId": "com.timi.trading",
+	"appName": "TIMI",
+	"webDir": "build",
+	"server": {
+		"androidScheme": "https",
+		"allowNavigation": [
+			"*.supabase.co",
+			"*.binaryws.com",
+			"*.deriv.com",
+			"*.firebase.com",
+			"*.googleapis.com",
+			"*.firebaseapp.com"
+		]
+	},
+	"android": {
+		"allowMixedContent": true,
+		"captureInput": true,
+		"webContentsDebuggingEnabled": true
+	},
+	"plugins": {
+		"SplashScreen": {
+			"launchShowDuration": 2000,
+			"backgroundColor": "#020810",
+			"showSpinner": false
+		}
+	}
+}

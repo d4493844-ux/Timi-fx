@@ -3,12 +3,25 @@
   "appName": "TIMI",
   "webDir": "build",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "allowNavigation": [
+      "*.supabase.co",
+      "*.binaryws.com",
+      "*.deriv.com",
+      "*.firebase.com",
+      "*.googleapis.com",
+      "*.firebaseapp.com"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
   },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 2000,
-      "backgroundColor": "#0a0a1a",
+      "backgroundColor": "#020810",
       "showSpinner": false
     }
   }
