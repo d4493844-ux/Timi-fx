@@ -1,3 +1,4 @@
+import { Preferences } from "@capacitor/preferences";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import useRisk from "../hooks/useRisk";

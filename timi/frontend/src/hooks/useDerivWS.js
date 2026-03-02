@@ -356,11 +356,11 @@ export default function useDerivWS({ ai } = {}) {
     try {
       // Try multiple storage locations for Capacitor compatibility
       const saved = pGetSync("timi_accounts", []);
-      const defaultToken = ""; // No hardcoded token - user must set it
+      const FALLBACK_TOKEN = "03WRbkfQGjbZWTH";
       const primary = saved.find(a => a.id === "primary") || 
-                      { id: "primary", name: "Primary", token: defaultToken, active: true, balance: "---", currency: "USD" };
+                      { id: "primary", name: "Primary", token: FALLBACK_TOKEN, active: true, balance: "---", currency: "USD" };
       return saved.find(a => a.id === "primary") ? saved : [primary];
-    } catch { return [{ id: "primary", name: "Primary", token: "", active: true, balance: "---", currency: "USD" }]; }
+    } catch { return [{ id: "primary", name: "Primary", token: "03WRbkfQGjbZWTH", active: true, balance: "---", currency: "USD" }]; }
   });
   const [activeSymbols, setActiveSymbols] = useState(() => {
     try { return pGetSync("timi_symbols", ["R_75", "R_25", "BOOM1000", "CRASH1000"]); }
