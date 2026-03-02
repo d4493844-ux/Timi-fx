@@ -1,46 +1,31 @@
-import { useState, useEffect, useCallback } from "react";
-
-const DEFAULTS = {
-  riskPct: 2,
-  maxTrades: 3,
-  minConfidence: 45,
-  duration: 5,
-};
+import { useState, useCallback, useEffect } from "react";
+import { Preferences } from "@capacitor/preferences";
 
 const KEY = "timi_risk";
+const DEFAULTS = { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5 };
+
+async function saveRisk(data) {
+  const v = JSON.stringify(data);
+  try { await Preferences.set({ key: KEY, value: v }); } catch {}
+  try { localStorage.setItem(KEY, v); } catch {}
+}
+
+async function loadRisk() {
+  try { const { value } = await Preferences.get({ key: KEY }); if (value) return { ...DEFAULTS, ...JSON.parse(value) }; } catch {}
+  try { const v = localStorage.getItem(KEY); if (v) return { ...DEFAULTS, ...JSON.parse(v) }; } catch {}
+  return { ...DEFAULTS };
+}
 
 export default function useRisk() {
-  const [riskParams, setRiskParams] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(KEY));
-      return saved ? { ...DEFAULTS, ...saved } : { ...DEFAULTS };
-    } catch {
-      return { ...DEFAULTS };
-    }
-  });
-
-  // Save every time params change
-  useEffect(() => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(riskParams));
-    } catch (e) {
-      console.error("Risk save error:", e);
-    }
-  }, [riskParams]);
-
+  const [riskParams, setRiskParams] = useState(DEFAULTS);
+  useEffect(() => { loadRisk().then(setRiskParams); }, []);
   const updateRisk = useCallback((key, value) => {
     setRiskParams(prev => {
-      const updated = { ...prev, [key]: parseFloat(value) };
-      // Also save immediately (belt + suspenders)
-      try { localStorage.setItem(KEY, JSON.stringify(updated)); } catch {}
-      return updated;
+      const next = { ...prev, [key]: parseFloat(value) };
+      saveRisk(next);
+      return next;
     });
   }, []);
-
-  const calcStake = useCallback((balance) => {
-    const stake = parseFloat(balance) * (riskParams.riskPct / 100);
-    return Math.max(1, +stake.toFixed(2));
-  }, [riskParams.riskPct]);
-
-  return { riskParams, updateRisk, calcStake };
+  const getRiskPct = useCallback(() => (riskParams.riskPct || DEFAULTS.riskPct) / 100, [riskParams]);
+  return { riskParams, updateRisk, getRiskPct };
 }

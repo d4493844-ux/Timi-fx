@@ -1,12 +1,29 @@
 import { supabase } from "../lib/supabase";
+import { Preferences } from "@capacitor/preferences";
 import { storageSet, storageGet } from "../lib/storage";
 import { useState, useEffect, useRef } from "react";
+
+
+async function pSet(key, value) {
+  const v = JSON.stringify(value);
+  try { await Preferences.set({ key, value: v }); } catch {}
+  try { localStorage.setItem(key, v); } catch {}
+}
+async function pGet(key, fallback = null) {
+  try { const { value } = await Preferences.get({ key }); if (value != null) return JSON.parse(value); } catch {}
+  try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch {}
+  return fallback;
+}
+function pGetSync(key, fallback = null) {
+  try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch {}
+  return fallback;
+}
 
 const APP_ID = "1089";
 const MAX_TRADES = 3;
 // Risk params loaded from localStorage
 function loadRiskParams() {
-  try { return JSON.parse(localStorage.getItem("timi_risk")) || { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5 }; }
+  try { return pGetSync("timi_risk", { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5 }); }
   catch { return { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5 }; }
 }
 
@@ -317,17 +334,17 @@ export default function useDerivWS({ ai } = {}) {
   const [signals, setSignals] = useState({});
   const [openTrades, setOpenTrades] = useState([]);
   const [tradeHistory, setTradeHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("timi_trade_history")) || []; }
+    try { return pGetSync("timi_trade_history", []); }
     catch { return []; }
   });
   const [timiStatus, setTimiStatus] = useState("Connecting...");
   const [autoTrade, setAutoTrade] = useState(true);
   const [takeProfitTarget, setTakeProfitTarget] = useState(() => {
-    try { return parseFloat(localStorage.getItem("timi_tp")) || 0; } catch { return 0; }
+    try { return parseFloat(pGetSync("timi_tp", 0)); } catch { return 0; }
   });
   const [dailyPnl, setDailyPnl] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("timi_daily_pnl"));
+      const saved = pGetSync("timi_daily_pnl");
       const today = new Date().toDateString();
       if (saved && saved.date === today) return saved.pnl;
       return 0;
@@ -338,8 +355,7 @@ export default function useDerivWS({ ai } = {}) {
   const [accounts, setAccounts] = useState(() => {
     try {
       // Try multiple storage locations for Capacitor compatibility
-      const saved = JSON.parse(localStorage.getItem("timi_accounts") || 
-                    sessionStorage.getItem("timi_accounts") || "[]") || [];
+      const saved = pGetSync("timi_accounts", []);
       const defaultToken = ""; // No hardcoded token - user must set it
       const primary = saved.find(a => a.id === "primary") || 
                       { id: "primary", name: "Primary", token: defaultToken, active: true, balance: "---", currency: "USD" };
@@ -347,7 +363,7 @@ export default function useDerivWS({ ai } = {}) {
     } catch { return [{ id: "primary", name: "Primary", token: "", active: true, balance: "---", currency: "USD" }]; }
   });
   const [activeSymbols, setActiveSymbols] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("timi_symbols")) || ["R_75", "R_25", "BOOM1000", "CRASH1000"]; }
+    try { return pGetSync("timi_symbols", ["R_75", "R_25", "BOOM1000", "CRASH1000"]); }
     catch { return ["R_75", "R_25", "BOOM1000", "CRASH1000"]; }
   });
 
@@ -370,21 +386,16 @@ export default function useDerivWS({ ai } = {}) {
   useEffect(() => { tradeHistoryRef.current = tradeHistory; }, [tradeHistory]);
   useEffect(() => {
     takeProfitRef.current = takeProfitTarget;
-    localStorage.setItem("timi_tp", takeProfitTarget);
+    pSet("timi_tp", takeProfitTarget);
   }, [takeProfitTarget]);
   useEffect(() => { martingaleRef.current = martingaleMode; }, [martingaleMode]);
   useEffect(() => {
     activeSymbolsRef.current = activeSymbols;
-    localStorage.setItem("timi_symbols", JSON.stringify(activeSymbols));
+    pSet("timi_symbols", activeSymbols);
   }, [activeSymbols]);
   useEffect(() => {
     // Save to multiple places for Capacitor Android compatibility
-    const toSave = accounts.map(a => ({ ...a }));
-    const json = JSON.stringify(toSave);
-    try { localStorage.setItem("timi_accounts", json); } catch {}
-    try { sessionStorage.setItem("timi_accounts", json); } catch {}
-    // Also save to window object as last resort
-    window.__timiAccounts = toSave;
+    pSet("timi_accounts", accounts.map(a => ({ ...a })));
   }, [accounts]);
 
   const sendTo = (accountId, obj) => {
@@ -440,7 +451,7 @@ export default function useDerivWS({ ai } = {}) {
       if (!c1 || c1.length < 30) return;
       const sig = getSignal(c1, candles5m.current[sym]);
       newSigs[sym] = sig;
-      const minConf = (() => { try { return JSON.parse(localStorage.getItem("timi_risk"))?.minConfidence || 45; } catch { return 45; } })();
+      const minConf = (() => { try { return pGetSync("timi_risk")?.minConfidence || 45; } catch { return 45; } })();
       if (sig.action !== "HOLD" && sig.confidence >= minConf)
         if (!best || sig.confidence > best.sig.confidence) best = { sym, sig };
     });
@@ -483,7 +494,7 @@ export default function useDerivWS({ ai } = {}) {
           confidence: Math.min(99, Math.round(sig.confidence * multiplier)),
           reasons: [...(sig.reasons || []), ...(aiR || [])],
         };
-        const minConf = (() => { try { return JSON.parse(localStorage.getItem("timi_risk"))?.minConfidence || 45; } catch { return 45; } })();
+        const minConf = (() => { try { return pGetSync("timi_risk")?.minConfidence || 45; } catch { return 45; } })();
         if (newSigs[sym].confidence >= minConf)
           if (!best || newSigs[sym].confidence > best.sig.confidence) best = { sym, sig: newSigs[sym] };
       });
@@ -498,15 +509,15 @@ export default function useDerivWS({ ai } = {}) {
     if (!bal || bal < 1) return;
 
     // Growth-aware stake sizing
-    const risk = (() => { try { return JSON.parse(localStorage.getItem("timi_risk")) || {}; } catch { return {}; } })();
-    const growth = (() => { try { return JSON.parse(localStorage.getItem("timi_compounding")) || {}; } catch { return {}; } })();
+    const risk = (() => { try { return pGetSync("timi_risk", {}); } catch { return {}; } })();
+    const growth = (() => { try { return pGetSync("timi_compounding", {}); } catch { return {}; } })();
     let riskPct = (risk.riskPct || 2) / 100;
 
     // If growth tracking is active, adjust risk based on progress
     if (growth.startBalance && growth.dailyTarget) {
       const startBal = parseFloat(growth.startBalance);
       const dailyTarget = parseFloat(growth.dailyTarget) / 100;
-      const todayPnl = (() => { try { const d = JSON.parse(localStorage.getItem("timi_daily_pnl")); return d?.date === new Date().toDateString() ? d.pnl : 0; } catch { return 0; } })();
+      const todayPnl = (() => { try { const d = pGetSync("timi_daily_pnl"); return d?.date === new Date().toDateString() ? d.pnl : 0; } catch { return 0; } })();
       const dailyTargetAmt = startBal * dailyTarget;
 
       // If already at or past daily target — reduce risk aggressively
@@ -524,7 +535,7 @@ export default function useDerivWS({ ai } = {}) {
     }
 
     const baseStake = Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
-    const growthCfg = (() => { try { return JSON.parse(localStorage.getItem("timi_compounding")) || {}; } catch { return {}; } })();
+    const growthCfg = (() => { try { return pGetSync("timi_compounding", {}); } catch { return {}; } })();
     const aiStake = ai?.getAIStake
       ? ai.getAIStake(baseStake, bal, dailyPnlRef.current, tradeHistoryRef.current, growthCfg)
       : { stake: baseStake, reasons: [] };
@@ -532,7 +543,7 @@ export default function useDerivWS({ ai } = {}) {
     const rawStake = getMartingaleStake(baseStake, tradeHistoryRef.current, martingaleRef.current);
 
     // AI stake sizing — growth-aware + streak protection
-    const growthConfig = (() => { try { return JSON.parse(localStorage.getItem("timi_compounding")) || {}; } catch { return {}; } })();
+    const growthConfig = (() => { try { return pGetSync("timi_compounding", {}); } catch { return {}; } })();
     const aiStakeResult = ai?.getAIStake
       ? ai.getAIStake(rawStake, bal, dailyPnlRef.current, tradeHistoryRef.current, growthConfig)
       : { stake: rawStake, reasons: [] };
@@ -620,7 +631,7 @@ export default function useDerivWS({ ai } = {}) {
           dailyPnlRef.current += pnl;
           setDailyPnl(p => {
             const newPnl = +(p + pnl).toFixed(2);
-            localStorage.setItem("timi_daily_pnl", JSON.stringify({ date: new Date().toDateString(), pnl: newPnl }));
+            pSet("timi_daily_pnl", { date: new Date().toDateString(), pnl: newPnl });
             dailyPnlRef.current = newPnl;
             return newPnl;
           });
@@ -628,7 +639,7 @@ export default function useDerivWS({ ai } = {}) {
           const hist = [{ symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL", pnl, result: pnl > 0 ? "WIN" : "LOSS", date: new Date().toLocaleString(), account: account.name, session: currentSess, stake: poc.buy_price || 0 }, ...tradeHistoryRef.current.slice(0, 199)];
           tradeHistoryRef.current = hist;
           setTradeHistory(hist);
-          localStorage.setItem("timi_trade_history", JSON.stringify(hist));
+          pSet("timi_trade_history", hist);
 
           // Save trade to Supabase — get symbol from openTrades if poc.underlying is missing
           const closedTrade = openTradesRef.current.find(t => t.contractId === poc.contract_id) ||
