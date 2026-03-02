@@ -1,3 +1,4 @@
+import { supabase } from "../lib/supabase";
 import { useState, useEffect, useRef } from "react";
 
 const APP_ID = "1089";
@@ -620,49 +621,37 @@ export default function useDerivWS({ ai } = {}) {
           setTradeHistory(hist);
           localStorage.setItem("timi_trade_history", JSON.stringify(hist));
 
+          // Save trade to Supabase directly
+          const lastSig = signalsRef.current?.[poc.underlying] || {};
+          supabase.from("trades").insert([{
+            symbol: poc.underlying,
+            type: poc.contract_type === "CALL" ? "BUY" : "SELL",
+            stake: poc.buy_price || 0,
+            pnl,
+            result: pnl > 0 ? "WIN" : "LOSS",
+            session: currentSess,
+            confidence: lastSig.confidence || 0,
+            account_name: account.name,
+          }]).then(({ error }) => {
+            if (error) console.error("Supabase trade save error:", error);
+            else console.log("✅ Trade saved to Supabase");
+          });
+
           // AI learning
           if (ai?.recordTrade) {
-            const lastSig = signalsRef.current?.[poc.underlying] || {};
-            ai.recordTrade({
-              symbol: poc.underlying, type: poc.contract_type === "CALL" ? "BUY" : "SELL",
-              stake: poc.buy_price || 0, pnl, result: pnl > 0 ? "WIN" : "LOSS",
-              session: currentSess, confidence: lastSig.confidence || 0,
-              score: lastSig.score || 0, rsi: lastSig.rsi || 0,
-              macd_hist: lastSig.macd_hist || 0, ema_stack: lastSig.ema_stack || "unknown",
-              bb_position: lastSig.bb_position || "mid", stoch: lastSig.stoch || 50,
-              patterns: lastSig.patterns || [], atr: lastSig.atr || 0,
-              account: account.name, activeIndicators: lastSig.activeIndicators || [],
-            });
-          }
-          // Update regime detection
-          if (ai?.updateRegime && candles1m.current[poc.underlying]) {
-            ai.updateRegime(poc.underlying, candles1m.current[poc.underlying]);
-          }
-
-          // Send to AI for learning
-          if (ai?.recordTrade) {
-            const lastSignal = Object.values(signalsRef?.current || {}).find(s => s);
             ai.recordTrade({
               symbol: poc.underlying,
               type: poc.contract_type === "CALL" ? "BUY" : "SELL",
-              stake: poc.buy_price || 0,
-              pnl,
+              stake: poc.buy_price || 0, pnl,
               result: pnl > 0 ? "WIN" : "LOSS",
               session: currentSess,
-              confidence: lastSignal?.confidence || 0,
-              score: lastSignal?.score || 0,
-              rsi: lastSignal?.rsi || 0,
-              macd_hist: lastSignal?.macd_hist || 0,
-              ema_stack: lastSignal?.ema_stack || "unknown",
-              bb_position: lastSignal?.bb_position || "mid",
-              stoch: lastSignal?.stoch || 50,
-              patterns: lastSignal?.patterns || [],
-              atr: lastSignal?.atr || 0,
-              duration: 5,
+              confidence: lastSig.confidence || 0,
               account: account.name,
-              activeIndicators: lastSignal?.activeIndicators || [],
-              indicatorSignals: Object.fromEntries((lastSignal?.activeIndicators || []).map(i => [i, true])),
             });
+          }
+          // Update regime
+          if (ai?.updateRegime && candles1m.current[poc.underlying]) {
+            ai.updateRegime(poc.underlying, candles1m.current[poc.underlying]);
           }
           setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2) + " [" + account.name + "]");
           timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");

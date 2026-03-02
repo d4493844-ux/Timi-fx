@@ -16,40 +16,55 @@ import NotificationToast from "./components/NotificationToast";
 import useDerivWS from "./hooks/useDerivWS";
 import useVoice from "./hooks/useVoice";
 import useAI from "./hooks/useAI";
+import { requestPushPermission } from "./lib/firebase";
+import { supabase } from "./lib/supabase";
 import "./index.css";
 
 export default function App() {
-  const [page, setPage] = useState("dashboard");
   const [ready, setReady] = useState(false);
+  const [page,  setPage]  = useState("dashboard");
 
-  const ai = useAI();
+  const ai       = useAI();
   const derivData = useDerivWS({ ai });
-  const voice = useVoice({
-    balance: derivData.balance, signals: derivData.signals,
-    autoTrade: derivData.autoTrade, setAutoTrade: derivData.setAutoTrade,
-    manualTrade: derivData.manualTrade, closeAllTrades: derivData.closeAllTrades,
-  });
+  const voice    = useVoice({ derivData });
 
-  useEffect(() => { setTimeout(() => setReady(true), 3200); }, []);
+  useEffect(() => {
+    setTimeout(() => setReady(true), 3200);
+    setTimeout(() => requestPushPermission(supabase), 5000);
+  }, []);
 
   const pages = {
-    dashboard: Dashboard, trades: Trades, signals: Signals,
-    history: History, settings: Settings, backtest: Backtest,
-    growth: Growth, ai: AIBrain,
+    dashboard: Dashboard,
+    trades:    Trades,
+    signals:   Signals,
+    history:   History,
+    settings:  Settings,
+    backtest:  Backtest,
+    growth:    Growth,
+    ai:        AIBrain,
+    remote:    RemoteControl,
   };
+
   const PageComponent = pages[page] || Dashboard;
 
+  if (!ready) return <SplashScreen />;
+
   return (
-    <>
-      <AnimatePresence>{!ready && <SplashScreen />}</AnimatePresence>
-      {ready && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+    <div style={{ background: "#020810", minHeight: "100vh" }}>
+      <NotificationToast />
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={page}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.18 }}
+        >
           <PageComponent {...derivData} {...ai} />
-          <NotificationToast />
-          <VoiceButton {...voice} />
-          <BottomNav page={page} setPage={setPage} />
         </motion.div>
-      )}
-    </>
+      </AnimatePresence>
+      <VoiceButton {...voice} />
+      <BottomNav page={page} setPage={setPage} />
+    </div>
   );
 }

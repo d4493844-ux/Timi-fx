@@ -1,272 +1,189 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ── All the ways someone might say "Hey TIMI" ──
-const WAKE_VARIANTS = [
-  "timi", "timmy", "timer", "timy", "tommy", "teme",
-  "time me", "chimney", "hey tim", "tme", "tiny",
-  "tamy", "tammy", "team", "teemy", "timi", "tee me",
-  "tee mee", "tea me", "jimmy", "gimme", "timbi",
-  "hey t", "t i m i", "t.i.m.i", "ai", "hey ai",
-  "wake up", "are you there", "yo timi", "yo timi",
+const WAKE_WORDS = [
+  "hey timi","timi","timmy","timer","timy","tommy","teme",
+  "time me","hey tim","tiny","team","teemy","tee me","jimmy",
+  "wake up","are you there","hey ai","yo timi","timi trade",
 ];
 
-const SYMBOL_MAP = {
-  "vix 75": "R_75", "vix75": "R_75", "r75": "R_75", "seventy five": "R_75",
-  "vix 25": "R_25", "vix25": "R_25", "r25": "R_25", "twenty five": "R_25",
-  "vix 50": "R_50", "vix50": "R_50", "fifty": "R_50",
-  "boom 1000": "BOOM1000", "boom1000": "BOOM1000", "boom": "BOOM1000", "boom thousand": "BOOM1000",
-  "boom 500": "BOOM500", "boom500": "BOOM500", "boom five hundred": "BOOM500",
-  "crash 1000": "CRASH1000", "crash1000": "CRASH1000", "crash": "CRASH1000", "crash thousand": "CRASH1000",
-  "crash 500": "CRASH500", "crash500": "CRASH500",
-  "euro": "frxEURUSD", "eurusd": "frxEURUSD", "eur usd": "frxEURUSD", "europe": "frxEURUSD",
-  "bitcoin": "cryBTCUSD", "btc": "cryBTCUSD",
-};
-
-const SYMBOL_NAMES = {
-  R_75: "VIX 75", R_25: "VIX 25", R_50: "VIX 50",
-  BOOM1000: "BOOM 1000", BOOM500: "BOOM 500",
-  CRASH1000: "CRASH 1000", CRASH500: "CRASH 500",
-  frxEURUSD: "EUR/USD", cryBTCUSD: "Bitcoin",
-};
-
-function isWakeWord(text) {
+function matchesWakeWord(text) {
   const t = text.toLowerCase().trim();
-  return WAKE_VARIANTS.some(v => t.includes(v));
+  return WAKE_WORDS.some(w => t.includes(w));
 }
 
-function speak(text) {
-  try {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.0;
-    u.pitch = 0.95;
-    u.volume = 1.0;
-    // Try to pick a good voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v =>
-      v.name.includes("Google") || v.name.includes("Daniel") ||
-      v.name.includes("Alex") || v.name.includes("Samantha")
-    );
-    if (preferred) u.voice = preferred;
-    window.speechSynthesis.speak(u);
-  } catch (e) {
-    console.log("Speak error:", e);
-  }
-}
-
-export default function useVoice({ balance, signals, autoTrade, setAutoTrade, manualTrade, closeAllTrades }) {
+export default function useVoice({ derivData } = {}) {
   const [listening,  setListening]  = useState(false);
   const [awake,      setAwake]      = useState(false);
   const [transcript, setTranscript] = useState("");
   const [response,   setResponse]   = useState("");
-  const [supported,  setSupported]  = useState(false);
   const [micError,   setMicError]   = useState("");
+  const [supported,  setSupported]  = useState(false);
 
-  const recRef        = useRef(null);
-  const awakeRef      = useRef(false);
-  const listeningRef  = useRef(false);
-  const awakeTimer    = useRef(null);
-  const restartTimer  = useRef(null);
-  const retryCount    = useRef(0);
-
-  const scheduleRestart = useCallback((delay = 300) => {
-    if (!listeningRef.current) return;
-    clearTimeout(restartTimer.current);
-    restartTimer.current = setTimeout(() => {
-      if (!listeningRef.current) return;
-      if (retryCount.current >= 15) {
-        setMicError("Mic restarted too many times. Tap mic button to retry.");
-        listeningRef.current = false;
-        setListening(false);
-        return;
-      }
-      retryCount.current++;
-      try {
-        recRef.current?.start();
-      } catch (e) {
-        scheduleRestart(500);
-      }
-    }, delay);
-  }, []);
-
-  const processCommand = useCallback(async (text) => {
-    const t   = text.toLowerCase();
-    const bal = balance?.balance || "unknown";
-    const cur = balance?.currency || "USD";
-    let reply = "";
-
-    // Detect symbol
-    const sym = Object.entries(SYMBOL_MAP).find(([k]) => t.includes(k))?.[1] ?? null;
-    const symName = sym ? SYMBOL_NAMES[sym] : null;
-
-    if      (t.match(/balance|how much|money|funds|portfolio/))
-      reply = `Your balance is ${bal} ${cur}.`;
-
-    else if (t.match(/status|report|how are you|update/)) {
-      const best = Object.entries(signals || {})
-        .sort((a, b) => b[1].confidence - a[1].confidence)[0];
-      reply = `TIMI is ${autoTrade ? "actively trading" : "paused"}. Balance ${bal} ${cur}.`;
-      if (best) reply += ` Best signal: ${SYMBOL_NAMES[best[0]] || best[0]}, ${best[1].action} at ${best[1].confidence}% confidence.`;
-    }
-
-    else if (t.match(/signal|what should|analyse|analyze|look at/)) {
-      if (sym && signals?.[sym]) {
-        const s = signals[sym];
-        reply = `${symName}: ${s.action} at ${s.confidence}% confidence. RSI ${s.rsi}. ${s.reasons?.slice(0, 2).join(", ") || ""}`;
-      } else {
-        const best = Object.entries(signals || {})
-          .sort((a, b) => b[1].confidence - a[1].confidence)[0];
-        reply = best
-          ? `Best signal right now: ${SYMBOL_NAMES[best[0]] || best[0]}, ${best[1].action} at ${best[1].confidence}%.`
-          : "No strong signals yet. Still analysing the market.";
-      }
-    }
-
-    else if (t.match(/buy|long|call|rise|up/)) {
-      if (sym) { manualTrade?.(sym, "BUY"); reply = `Executing BUY on ${symName}.`; }
-      else reply = "Which symbol? Say the name, like VIX 75 or BOOM 1000.";
-    }
-
-    else if (t.match(/sell|short|put|fall|down/)) {
-      if (sym) { manualTrade?.(sym, "SELL"); reply = `Executing SELL on ${symName}.`; }
-      else reply = "Which symbol? Say the name, like VIX 75 or CRASH 1000.";
-    }
-
-    else if (t.match(/close all|stop all|exit all|emergency|halt/)) {
-      closeAllTrades?.();
-      reply = "Emergency stop! Closing all open trades now.";
-    }
-
-    else if (t.match(/stop trading|pause trading|pause|stop auto/)) {
-      setAutoTrade?.(false);
-      reply = "Auto trading paused.";
-    }
-
-    else if (t.match(/start trading|resume|go|trade/)) {
-      setAutoTrade?.(true);
-      reply = "Auto trading resumed. Back on the hunt.";
-    }
-
-    else if (t.match(/profit|how much did|today|pnl/))
-      reply = "Check the dashboard for today's P and L figure.";
-
-    else if (t.match(/help|what can you|commands/))
-      reply = "Say: balance, signal, buy or sell a symbol, close all trades, stop or start trading, or status report.";
-
-    else
-      reply = "Say: Hey TIMI, then your command. Like: Hey TIMI, what's the signal?";
-
-    setResponse(reply);
-    speak(reply);
-  }, [balance, signals, autoTrade, setAutoTrade, manualTrade, closeAllTrades]);
+  const recRef       = useRef(null);
+  const awakeRef     = useRef(false);
+  const awakeTimer   = useRef(null);
+  const restartTimer = useRef(null);
+  const activeRef    = useRef(false); // tracks if user wants mic on
 
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setSupported(false); return; }
-    setSupported(true);
+    setSupported(!!SR);
+  }, []);
+
+  const speak = useCallback((text) => {
+    try {
+      window.speechSynthesis?.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05; u.pitch = 1;
+      window.speechSynthesis?.speak(u);
+    } catch {}
+    setResponse(text);
+    setTimeout(() => setResponse(""), 6000);
+  }, []);
+
+  const handleCommand = useCallback((cmd) => {
+    const t = cmd.toLowerCase();
+    const d = derivData;
+    if (t.includes("balance"))         return speak(`Your balance is $${d?.balance?.toFixed(2) || "unknown"}`);
+    if (t.includes("start") || t.includes("trade on"))  { d?.setAutoTrade?.(true);  return speak("Auto trading started"); }
+    if (t.includes("stop") || t.includes("trade off"))  { d?.setAutoTrade?.(false); return speak("Auto trading stopped"); }
+    if (t.includes("profit") || t.includes("pnl"))      return speak(`Today's P&L is $${d?.dailyPnl?.toFixed(2) || "0"}`);
+    if (t.includes("win rate"))        return speak(`Win rate is ${d?.winRate || 0}%`);
+    if (t.includes("open trades"))     return speak(`${d?.activeTrades?.length || 0} trades open`);
+    speak("I heard you. How can I help? Try: balance, start trading, stop trading.");
+  }, [derivData, speak]);
+
+  const startRec = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+
+    // Clean up old instance
+    try { recRef.current?.stop(); } catch {}
+    clearTimeout(restartTimer.current);
 
     const rec = new SR();
-    rec.continuous    = true;
-    rec.interimResults = true;   // catch partial speech
-    rec.maxAlternatives = 5;     // check 5 interpretations per phrase
-    rec.lang = "en-US";
-    recRef.current = rec;
+    rec.continuous      = true;
+    rec.interimResults  = true;
+    rec.maxAlternatives = 5;
+    rec.lang            = "en-US";
 
-    rec.onresult = (event) => {
-      retryCount.current = 0; // reset on any speech
-      const results = Array.from(event.results);
+    rec.onstart = () => {
+      setListening(true);
+      setMicError("");
+    };
 
-      // Check ALL results + ALL alternatives for wake word
-      for (let i = event.resultIndex; i < results.length; i++) {
-        for (let j = 0; j < results[i].length; j++) {
-          const text = results[i][j].transcript.toLowerCase().trim();
-          if (!text) continue;
-          setTranscript(text);
+    rec.onresult = (e) => {
+      let final = "", interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
+      }
 
-          // Wake word check
-          if (isWakeWord(text) && !awakeRef.current) {
-            awakeRef.current = true;
-            setAwake(true);
-            clearTimeout(awakeTimer.current);
-            awakeTimer.current = setTimeout(() => {
-              awakeRef.current = false;
-              setAwake(false);
-            }, 12000); // 12 seconds awake window
+      const text = (final || interim).trim();
+      if (!text) return;
+      setTranscript(text);
 
-            speak("Yes, I'm here.");
-            setResponse("Listening for your command...");
+      // Check all alternatives for wake word
+      const allAlts = [];
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        for (let j = 0; j < e.results[i].length; j++) {
+          allAlts.push(e.results[i][j].transcript);
+        }
+      }
+      const woke = allAlts.some(a => matchesWakeWord(a));
 
-            // If there's a command in the same sentence, process it
-            const cmd = text
-              .replace(/hey\s*/gi, "")
-              .replace(new RegExp(WAKE_VARIANTS.join("|"), "gi"), "")
-              .trim();
-            if (cmd.length > 3) {
-              setTimeout(() => processCommand(cmd), 800);
-            }
-            return;
-          }
+      if (woke && !awakeRef.current) {
+        awakeRef.current = true;
+        setAwake(true);
+        speak("Yes? I'm listening.");
+        clearTimeout(awakeTimer.current);
+        awakeTimer.current = setTimeout(() => {
+          awakeRef.current = false;
+          setAwake(false);
+          setTranscript("");
+        }, 12000);
+        return;
+      }
 
-          // If awake, process as command
-          if (awakeRef.current && results[i].isFinal) {
-            clearTimeout(awakeTimer.current);
-            awakeTimer.current = setTimeout(() => {
-              awakeRef.current = false;
-              setAwake(false);
-            }, 12000);
-            processCommand(text);
-            return;
-          }
+      if (awakeRef.current && final) {
+        const cmd = final.replace(new RegExp(WAKE_WORDS.join("|"), "gi"), "").trim();
+        if (cmd.length > 1) {
+          clearTimeout(awakeTimer.current);
+          awakeRef.current = false;
+          setAwake(false);
+          handleCommand(cmd);
         }
       }
     };
 
     rec.onerror = (e) => {
-      console.log("Voice error:", e.error);
       if (e.error === "not-allowed") {
-        setMicError("Microphone permission denied. Please allow mic access.");
-        listeningRef.current = false;
+        setMicError("Microphone permission denied. Allow mic in browser settings.");
         setListening(false);
+        activeRef.current = false;
         return;
       }
-      scheduleRestart(600);
+      if (e.error === "no-speech" || e.error === "network" || e.error === "aborted") {
+        // Auto restart after brief pause
+        if (activeRef.current) {
+          restartTimer.current = setTimeout(() => {
+            if (activeRef.current) startRec();
+          }, 800);
+        }
+        return;
+      }
+      setMicError(`Mic error: ${e.error}`);
     };
 
     rec.onend = () => {
-      scheduleRestart(200);
+      // Auto restart if user hasn't manually stopped
+      if (activeRef.current) {
+        restartTimer.current = setTimeout(() => {
+          if (activeRef.current) startRec();
+        }, 500);
+      } else {
+        setListening(false);
+      }
     };
 
-    return () => {
-      clearTimeout(awakeTimer.current);
-      clearTimeout(restartTimer.current);
-      try { rec.stop(); } catch (e) {}
-    };
-  }, [processCommand, scheduleRestart]);
+    recRef.current = rec;
+    try {
+      rec.start();
+    } catch (e) {
+      // Already started — restart after delay
+      restartTimer.current = setTimeout(() => {
+        if (activeRef.current) startRec();
+      }, 1000);
+    }
+  }, [handleCommand, speak]);
 
   const startListening = useCallback(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-    listeningRef.current = true;
-    retryCount.current = 0;
-    setListening(true);
+    activeRef.current = true;
     setMicError("");
-    try {
-      recRef.current?.start();
-      speak("TIMI voice activated. I'm listening. Say Hey TIMI to wake me.");
-    } catch (e) {
-      scheduleRestart(300);
-    }
-  }, [scheduleRestart]);
+    startRec();
+  }, [startRec]);
 
   const stopListening = useCallback(() => {
-    listeningRef.current = false;
-    awakeRef.current = false;
-    setListening(false);
+    activeRef.current = false;
+    awakeRef.current  = false;
     setAwake(false);
+    setListening(false);
+    setTranscript("");
     clearTimeout(awakeTimer.current);
     clearTimeout(restartTimer.current);
-    try { recRef.current?.stop(); } catch (e) {}
-    speak("Voice off.");
+    try { recRef.current?.stop(); } catch {}
+    recRef.current = null;
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      activeRef.current = false;
+      clearTimeout(awakeTimer.current);
+      clearTimeout(restartTimer.current);
+      try { recRef.current?.stop(); } catch {}
+    };
   }, []);
 
   return { listening, awake, transcript, response, supported, micError, startListening, stopListening };
