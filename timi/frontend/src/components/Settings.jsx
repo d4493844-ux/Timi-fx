@@ -1,3 +1,4 @@
+import { supabase } from "../lib/supabase";
 import { Preferences } from "@capacitor/preferences";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
@@ -77,6 +78,12 @@ export default function Settings({
 
   const handleAddAccount = () => {
     if (!newAccName || !newAccToken) return;
+    // Save token to Supabase
+    supabase.from("bot_config").update({ token: newAccToken.trim() }).eq("active", true)
+      .then(({ error }) => {
+        if (error) alert("❌ Token save failed: " + error.message);
+        else alert("✅ Token saved!");
+      });
     addAccount?.(newAccName.trim(), newAccToken.trim());
     setNewAccName(""); setNewAccToken("");
   };
@@ -251,7 +258,21 @@ export default function Settings({
                 <input style={{ ...c.inp, marginTop: 0, flex: 1 }} placeholder="New token"
                   value={editTokenVal} onChange={e => setEditTokenVal(e.target.value)} />
                 <button style={{ ...c.btn, ...c.btnP, padding: "6px 10px" }}
-                  onClick={() => { updateToken?.(acc.id, editTokenVal); setEditTokenId(null); }}>✓</button>
+                  onClick={async () => {
+                    if (!editTokenVal || editTokenVal.length < 5) return;
+                    // Save to Supabase bot_config first
+                    const { error } = await supabase.from("bot_config")
+                      .update({ token: editTokenVal })
+                      .eq("active", true);
+                    if (error) {
+                      alert("❌ Save failed: " + error.message);
+                      return;
+                    }
+                    // Also update local state
+                    updateToken?.(acc.id, editTokenVal);
+                    setEditTokenId(null);
+                    alert("✅ Token saved to Supabase!");
+                  }}>✓</button>
               </div>
             ) : (
               <button style={{ ...c.btn, background: "rgba(0,212,255,0.08)", border: "1px solid rgba(0,212,255,0.2)", color: "#00d4ff", marginTop: 8, fontSize: 9 }}
