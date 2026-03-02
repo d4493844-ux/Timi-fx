@@ -19,7 +19,7 @@ function pGetSync(key, fallback = null) {
   return fallback;
 }
 
-const APP_ID = "1089";
+const APP_ID = "61331";
 const MAX_TRADES = 3;
 // Risk params loaded from localStorage
 function loadRiskParams() {
