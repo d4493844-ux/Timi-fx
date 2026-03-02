@@ -356,11 +356,11 @@ export default function useDerivWS({ ai } = {}) {
     try {
       // Try multiple storage locations for Capacitor compatibility
       const saved = pGetSync("timi_accounts", []);
-      const FALLBACK_TOKEN = "03WRbkfQGjbZWTH";
+      const FALLBACK_TOKEN = "";
       const primary = saved.find(a => a.id === "primary") || 
                       { id: "primary", name: "Primary", token: FALLBACK_TOKEN, active: true, balance: "---", currency: "USD" };
       return saved.find(a => a.id === "primary") ? saved : [primary];
-    } catch { return [{ id: "primary", name: "Primary", token: "03WRbkfQGjbZWTH", active: true, balance: "---", currency: "USD" }]; }
+    } catch { return [{ id: "primary", name: "Primary", token: "", active: true, balance: "---", currency: "USD" }]; }
   });
   const [activeSymbols, setActiveSymbols] = useState(() => {
     try { return pGetSync("timi_symbols", ["R_75", "R_25", "BOOM1000", "CRASH1000"]); }
@@ -380,6 +380,32 @@ export default function useDerivWS({ ai } = {}) {
   const wsConnections = useRef({});
   const signalsRef = useRef({});
   const runAnalysisRef = useRef(null);
+
+
+  // ── Load token from Supabase on startup ──
+  useEffect(() => {
+    async function loadTokenFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from("bot_config")
+          .select("token")
+          .eq("active", true)
+          .limit(1)
+          .single();
+        if (!error && data?.token && data.token.length > 5) {
+          console.log("✅ Token loaded from Supabase");
+          setAccounts(prev => prev.map(a => 
+            a.id === "primary" ? { ...a, token: data.token } : a
+          ));
+          // Save to local storage too
+          pSet("timi_accounts", prev => prev); // trigger save
+        }
+      } catch (e) {
+        console.error("Token load error:", e);
+      }
+    }
+    loadTokenFromSupabase();
+  }, []);
 
   useEffect(() => { autoTradeRef.current = autoTrade; }, [autoTrade]);
   useEffect(() => { openTradesRef.current = openTrades; }, [openTrades]);
