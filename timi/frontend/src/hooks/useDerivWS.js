@@ -882,11 +882,12 @@ export default function useDerivWS({ ai } = {}) {
   };
 
   useEffect(() => {
-    accounts.forEach(acc => connectAccount(acc));
+    // DO NOT connect here — token is empty at this point
+    // Connection is triggered by Supabase token loader above (line ~419)
     runAnalysisRef.current = runAnalysis;
-    const iv = setInterval(() => { runAnalysis(); }, 15000); // 15s fresh call
+    const iv = setInterval(() => { runAnalysis(); }, 15000);
     const sessIv = setInterval(() => setSession(getTradingSession()), 60000);
-    return () => { clearInterval(iv); clearInterval(sessIv); Object.values(wsConnections.current).forEach(ws => ws.close()); };
+    return () => { clearInterval(iv); clearInterval(sessIv); Object.values(wsConnections.current).forEach(ws => ws?.close()); };
   }, []); // eslint-disable-line
 
   const addAccount = (name, token) => {
