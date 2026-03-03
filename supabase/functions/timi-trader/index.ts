@@ -3,7 +3,7 @@ import { create, getNumericDate } from "https://deno.land/x/djwt@v2.8/mod.ts";
 
 const PROJECT_URL    = "https://pedbupgjxlcumidwoktc.supabase.co";
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") || "";
-const APP_ID         = "61331";
+const APP_ID         = "36544";
 const FCM_PROJECT_ID = Deno.env.get("FCM_PROJECT_ID") || "timi-fx";
 const FCM_CLIENT_EMAIL = Deno.env.get("FCM_CLIENT_EMAIL") || "";
 const FCM_PRIVATE_KEY  = (Deno.env.get("FCM_PRIVATE_KEY") || "").replace(/\\n/g, "\n");
@@ -232,7 +232,13 @@ Deno.serve(async (req: Request) => {
       if (!bestSig || sig.confidence>bestSig.confidence) bestSig = {...sig, symbol};
     }
 
-    if (!bestSig) return new Response(JSON.stringify({ status: "no_signal", checked: symbols }), { headers });
+    if (!bestSig) {
+      // Send heartbeat so user knows bot is alive
+      const fcmToken = config.fcm_token || "";
+      const now = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+      await sendPush(fcmToken, "🤖 TIMI Active", `Checked ${symbols.length} markets at ${now} — no signal yet. Watching...`);
+      return new Response(JSON.stringify({ status: "no_signal", checked: symbols }), { headers });
+    }
 
     const stake = Math.max(1, +((balance*(config.risk_pct||2)/100)*stakeMult).toFixed(2));
     console.log(`📊 TRADING: ${bestSig.action} ${bestSig.symbol} $${stake}`);
