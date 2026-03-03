@@ -19,7 +19,7 @@ function pGetSync(key, fallback = null) {
   return fallback;
 }
 
-const APP_ID = "61331";
+const APP_ID = "36544";
 const MAX_TRADES = 3;
 // Risk params loaded from localStorage
 function loadRiskParams() {
@@ -860,20 +860,24 @@ export default function useDerivWS({ ai } = {}) {
       console.error("WebSocket error:", err);
       clearInterval(pingInterval);
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       clearInterval(pingInterval);
+      console.log("WebSocket closed:", e.code, e.reason);
+      // Only reconnect if not a normal closure
+      if (e.code === 1000 || e.code === 1001) return;
       setTimeout(async () => {
-        // Always get fresh token from Supabase before reconnecting
+        // Check no active connection exists already
+        const existing = wsConnections.current[account.id];
+        if (existing && existing.readyState === WebSocket.OPEN) return;
+        // Get fresh token from Supabase
         try {
           const { data } = await supabase.from("bot_config").select("token").eq("active", true).limit(1).single();
           if (data?.token && data.token.length > 3) {
             account.token = data.token;
-            // Update accounts state too
-            setAccounts(prev => prev.map(a => a.id === account.id ? { ...a, token: data.token } : a));
           }
         } catch(e) { console.error("Token refresh error:", e); }
         connectAccount(account);
-      }, 3000);
+      }, 5000);
     };
   };
 
