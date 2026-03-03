@@ -607,7 +607,18 @@ export default function useDerivWS({ ai } = {}) {
     const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=" + APP_ID);
     wsConnections.current[account.id] = ws;
 
-    ws.onopen = () => ws.send(JSON.stringify({ authorize: account.token }));
+    let pingInterval = null;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ authorize: account.token }));
+      // Keep WebSocket alive with ping every 30 seconds
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ ping: 1 }));
+          console.log("🏓 WebSocket ping sent");
+        }
+      }, 30000);
+    };
 
     ws.onmessage = (e) => {
       const d = JSON.parse(e.data);
@@ -734,8 +745,10 @@ export default function useDerivWS({ ai } = {}) {
 
     ws.onerror = (err) => {
       console.error("WebSocket error:", err);
+      clearInterval(pingInterval);
     };
     ws.onclose = () => {
+      clearInterval(pingInterval);
       setTimeout(async () => {
         // Always get fresh token from Supabase before reconnecting
         try {
