@@ -407,6 +407,23 @@ export default function useDerivWS({ ai } = {}) {
     loadTokenFromSupabase();
   }, []);
 
+  // ── Load token from Supabase and reconnect ──
+  useEffect(() => {
+    supabase.from("bot_config").select("token").eq("active", true).limit(1).single()
+      .then(({ data }) => {
+        if (data?.token && data.token.length > 3) {
+          setAccounts(prev => {
+            const updated = prev.map(a => a.id === "primary" ? { ...a, token: data.token } : a);
+            setTimeout(() => {
+              const primary = updated.find(a => a.id === "primary");
+              if (primary) connectAccount(primary);
+            }, 500);
+            return updated;
+          });
+        }
+      });
+  }, []);
+
   useEffect(() => { autoTradeRef.current = autoTrade; }, [autoTrade]);
   useEffect(() => { openTradesRef.current = openTrades; }, [openTrades]);
   useEffect(() => { tradeHistoryRef.current = tradeHistory; }, [tradeHistory]);
@@ -715,7 +732,23 @@ export default function useDerivWS({ ai } = {}) {
         setTimiStatus("⚠️ [" + account.name + "] " + d.error.message);
     };
 
-    ws.onclose = () => setTimeout(() => connectAccount(account), 5000);
+    ws.onerror = (err) => {
+      console.error("WebSocket error:", err);
+    };
+    ws.onclose = () => {
+      setTimeout(async () => {
+        // Always get fresh token from Supabase before reconnecting
+        try {
+          const { data } = await supabase.from("bot_config").select("token").eq("active", true).limit(1).single();
+          if (data?.token && data.token.length > 3) {
+            account.token = data.token;
+            // Update accounts state too
+            setAccounts(prev => prev.map(a => a.id === account.id ? { ...a, token: data.token } : a));
+          }
+        } catch(e) { console.error("Token refresh error:", e); }
+        connectAccount(account);
+      }, 3000);
+    };
   };
 
   useEffect(() => {
