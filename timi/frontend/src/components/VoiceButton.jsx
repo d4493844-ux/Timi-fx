@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function VoiceButton({ listening, awake, transcript, response, supported, micError, startListening, stopListening }) {
+export default function VoiceButton({ listening, awake, transcript, response, supported, micError, thinking, startListening, stopListening }) {
   if (!supported) return null;
 
   const btnColor = awake
@@ -20,6 +20,7 @@ export default function VoiceButton({ listening, awake, transcript, response, su
       {/* Floating mic button */}
       <motion.button
         onClick={listening ? stopListening : startListening}
+        onPointerDown={(e) => { e.preventDefault(); listening ? stopListening() : startListening(); }}
         whileTap={{ scale: 0.88 }}
         style={{
           position: "fixed", bottom: 88, right: 18,
@@ -99,6 +100,13 @@ export default function VoiceButton({ listening, awake, transcript, response, su
             {transcript && (
               <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 11, color: "#c8e8ff", marginBottom: 8, padding: "7px 10px", background: "rgba(0,212,255,0.07)", borderRadius: 10, lineHeight: 1.5 }}>
                 🗣 "{transcript}"
+              </div>
+            )}
+
+            {/* Thinking indicator */}
+            {thinking && (
+              <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 11, color: "#ffcc00", padding: "7px 10px", background: "rgba(255,204,0,0.07)", borderRadius: 10 }}>
+                🤔 TIMI is thinking...
               </div>
             )}
 
