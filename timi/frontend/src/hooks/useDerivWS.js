@@ -730,10 +730,20 @@ export default function useDerivWS({ ai } = {}) {
         ws.send(JSON.stringify({ balance: 1, account: "current", subscribe: 1 }));
         if (account.id === "primary") {
           setTimiStatus("Authorized! Loading data...");
-          activeSymbolsRef.current.forEach(sym => {
-            ws.send(JSON.stringify({ ticks: sym, subscribe: 1 }));
-            ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 100, end: "latest", granularity: 60, style: "candles" }));
-            ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 50, end: "latest", granularity: 300, style: "candles" }));
+          // Stagger requests to avoid Deriv rate limit
+          activeSymbolsRef.current.forEach((sym, i) => {
+            setTimeout(() => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              ws.send(JSON.stringify({ ticks: sym, subscribe: 1 }));
+            }, i * 500);
+            setTimeout(() => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 100, end: "latest", granularity: 60, style: "candles" }));
+            }, i * 1500 + 1000);
+            setTimeout(() => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 50, end: "latest", granularity: 300, style: "candles" }));
+            }, i * 1500 + 2000);
           });
         }
       }
