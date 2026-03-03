@@ -143,30 +143,8 @@ export default function useAI() {
 
   // ── Core learning: called after every trade closes ──
   const recordTrade = useCallback(async (trade) => {
-    // 1. Persist to Supabase
-    try {
-      await supabase.from("trades").insert([{
-        symbol:            trade.symbol,
-        type:              trade.type,
-        stake:             trade.stake || 0,
-        pnl:               trade.pnl,
-        result:            trade.result,
-        session:           trade.session || "unknown",
-        confidence:        trade.confidence || 0,
-        score:             trade.score || 0,
-        rsi:               trade.rsi || 0,
-        macd_hist:         trade.macd_hist || 0,
-        ema_stack:         trade.ema_stack || "unknown",
-        bb_position:       trade.bb_position || "mid",
-        stoch:             trade.stoch || 50,
-        patterns:          JSON.stringify(trade.patterns || []),
-        atr:               trade.atr || 0,
-        account_name:      trade.account || "primary",
-        active_indicators: JSON.stringify(trade.activeIndicators || []),
-      }]);
-    } catch (err) { console.error("Trade save error:", err); }
-
-    // 2. Learn from it
+    // Trade is already saved to Supabase by useDerivWS
+    // Just learn from it here
     await learnFromTrade(trade);
   }, []);
 

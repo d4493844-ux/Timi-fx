@@ -681,12 +681,23 @@ export default function useDerivWS({ ai } = {}) {
               // AI learning
               if (ai?.recordTrade) {
                 ai.recordTrade({
-                  symbol: tradeSymbol, type: tradeType,
-                  stake: tradeStake, pnl,
+                  symbol: tradeSymbol,
+                  type: tradeType,
+                  stake: tradeStake,
+                  pnl,
                   result: pnl > 0 ? "WIN" : "LOSS",
                   session: currentSess,
                   confidence: lastSig.confidence || 0,
-                  account: trade.accountName,
+                  score: lastSig.score || 0,
+                  rsi: lastSig.rsi || 0,
+                  macd_hist: lastSig.macd_hist || 0,
+                  ema_stack: lastSig.ema_stack || "unknown",
+                  bb_position: lastSig.bb_position || "mid",
+                  stoch: lastSig.stoch || 50,
+                  patterns: lastSig.patterns || [],
+                  atr: lastSig.atr || 0,
+                  account: trade.accountName || "Primary",
+                  activeIndicators: lastSig.activeIndicators || [],
                 });
               }
             }
@@ -833,13 +844,23 @@ export default function useDerivWS({ ai } = {}) {
           // AI learning
           if (ai?.recordTrade) {
             ai.recordTrade({
-              symbol: poc.underlying,
-              type: poc.contract_type === "CALL" ? "BUY" : "SELL",
-              stake: poc.buy_price || 0, pnl,
+              symbol: tradeSymbol,
+              type: tradeType,
+              stake: tradeStakeVal,
+              pnl,
               result: pnl > 0 ? "WIN" : "LOSS",
               session: currentSess,
               confidence: lastSig.confidence || 0,
+              score: lastSig.score || 0,
+              rsi: lastSig.rsi || 0,
+              macd_hist: lastSig.macd_hist || 0,
+              ema_stack: lastSig.ema_stack || "unknown",
+              bb_position: lastSig.bb_position || "mid",
+              stoch: lastSig.stoch || 50,
+              patterns: lastSig.patterns || [],
+              atr: lastSig.atr || 0,
               account: account.name,
+              activeIndicators: lastSig.activeIndicators || [],
             });
           }
           // Update regime
