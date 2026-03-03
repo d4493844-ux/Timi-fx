@@ -602,6 +602,109 @@ export default function useDerivWS({ ai } = {}) {
     });
   };
 
+
+  // ── Poll open trades via REST every 60s — catches results even if WS drops ──
+  useEffect(() => {
+    const pollOpenTrades = async () => {
+      if (openTradesRef.current.length === 0) return;
+      try {
+        const { data: config } = await supabase.from("bot_config").select("token").eq("active", true).limit(1).single();
+        const token = config?.token;
+        if (!token) return;
+
+        for (const trade of [...openTradesRef.current]) {
+          try {
+            const res = await fetch(
+              `https://api.deriv.com/api/v2/proposal_open_contract?contract_id=${trade.contractId}&token=${token}`,
+              { signal: AbortSignal.timeout(10000) }
+            );
+            const data = await res.json();
+            const poc = data?.proposal_open_contract;
+            if (!poc) continue;
+
+            console.log("📊 Poll result:", trade.symbol, poc.status, poc.profit);
+
+            // Update pnl in UI
+            setOpenTrades(p => p.map(t => t.contractId === trade.contractId
+              ? { ...t, pnl: parseFloat(poc.profit || 0), status: poc.status }
+              : t
+            ));
+
+            // If trade is closed — save to Supabase
+            if (poc.is_sold || poc.status === "sold" || poc.status === "won" || poc.status === "lost") {
+              const pnl = parseFloat(poc.profit || 0);
+              const tradeSymbol = poc.underlying || trade.symbol || "UNKNOWN";
+              const tradeType = poc.contract_type === "CALL" ? "BUY" : "SELL";
+              const tradeStake = poc.buy_price || trade.stake || 0;
+              const currentSess = (() => { try { return getTradingSession().names || "unknown"; } catch { return "unknown"; } })();
+              const lastSig = signalsRef.current?.[tradeSymbol] || {};
+
+              console.log("💾 Polling saving trade:", tradeSymbol, tradeType, pnl);
+
+              // Remove from open trades
+              openTradesRef.current = openTradesRef.current.filter(t => t.contractId !== trade.contractId);
+              setOpenTrades([...openTradesRef.current]);
+
+              // Update daily pnl
+              dailyPnlRef.current += pnl;
+              setDailyPnl(p => {
+                const newPnl = +(p + pnl).toFixed(2);
+                pSet("timi_daily_pnl", { date: new Date().toDateString(), pnl: newPnl });
+                dailyPnlRef.current = newPnl;
+                return newPnl;
+              });
+
+              // Save to history
+              const hist = [{ symbol: tradeSymbol, type: tradeType, pnl, result: pnl > 0 ? "WIN" : "LOSS", date: new Date().toLocaleString(), account: trade.accountName, session: currentSess, stake: tradeStake }, ...tradeHistoryRef.current.slice(0, 199)];
+              tradeHistoryRef.current = hist;
+              setTradeHistory(hist);
+              pSet("timi_trade_history", hist);
+
+              // Save to Supabase
+              const { error } = await supabase.from("trades").insert([{
+                symbol: tradeSymbol,
+                type: tradeType,
+                stake: tradeStake,
+                pnl,
+                result: pnl > 0 ? "WIN" : "LOSS",
+                session: currentSess,
+                confidence: lastSig.confidence || 0,
+                account_name: trade.accountName || "Primary",
+              }]);
+              if (error) console.error("❌ Poll save error:", error.message);
+              else console.log("✅ Poll saved trade:", tradeSymbol, pnl > 0 ? "WIN" : "LOSS");
+
+              // Notify
+              setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2));
+              timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + tradeSymbol, pnl > 0 ? "win" : "loss");
+
+              // AI learning
+              if (ai?.recordTrade) {
+                ai.recordTrade({
+                  symbol: tradeSymbol, type: tradeType,
+                  stake: tradeStake, pnl,
+                  result: pnl > 0 ? "WIN" : "LOSS",
+                  session: currentSess,
+                  confidence: lastSig.confidence || 0,
+                  account: trade.accountName,
+                });
+              }
+            }
+          } catch(e) {
+            console.error("Poll error for trade", trade.contractId, e);
+          }
+        }
+      } catch(e) {
+        console.error("Poll loop error:", e);
+      }
+    };
+
+    // Poll every 60 seconds
+    const pollTimer = setInterval(pollOpenTrades, 60000);
+    // Also poll after 5 minutes and 6 minutes for 5min contracts
+    return () => clearInterval(pollTimer);
+  }, [ai]);
+
   const connectAccount = (account) => {
     wsConnections.current[account.id]?.close();
     const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=" + APP_ID);
