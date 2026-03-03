@@ -183,7 +183,7 @@ export default function useAI() {
       loss_count:     es.loss_count + (won ? 0 : 1),
       total_pnl:      +((es.total_pnl || 0) + pnl).toFixed(2),
       avg_confidence: Math.round(((es.avg_confidence || 0) + (trade.confidence || 0)) / 2),
-      is_blocked:     false,
+      is_active:      true,
       updated_at:     new Date().toISOString(),
     };
     const sTotal = us.win_count + us.loss_count;
