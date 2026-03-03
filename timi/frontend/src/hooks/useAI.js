@@ -189,35 +189,43 @@ export default function useAI() {
     const sTotal = us.win_count + us.loss_count;
     const sWR    = sTotal > 0 ? us.win_count / sTotal : 0.5;
     if (sTotal >= 10 && sWR < 0.38) {
-      us.is_blocked = true;
+      us.is_active = false;
       logs.push(`🚫 ${sessName} session BLOCKED — ${(sWR*100).toFixed(0)}% win rate`);
     } else if (sTotal >= 10 && sWR >= 0.62) {
+      us.is_active = true;
       logs.push(`⭐ ${sessName} session HOT — ${(sWR*100).toFixed(0)}% win rate`);
     }
     sessionStatsRef.current[sessName] = us;
     setSessionStats({ ...sessionStatsRef.current });
-    supabase.from("session_stats").upsert(us, { onConflict: "session_name" }).then(() => {});
+    supabase.from("session_stats").upsert(us, { onConflict: "session_name" }).then(({ error }) => {
+      if (error) console.error("session_stats error:", error.message);
+      else console.log("✅ session_stats saved:", sessName);
+    });
 
     // ── C. Symbol stats ──
     const sym = trade.symbol;
     const esym = symbolStatsRef.current[sym] || { win_count: 0, loss_count: 0, total_pnl: 0 };
     const usym = {
-      symbol:     sym,
-      win_count:  esym.win_count  + (won ? 1 : 0),
-      loss_count: esym.loss_count + (won ? 0 : 1),
-      total_pnl:  +((esym.total_pnl || 0) + pnl).toFixed(2),
-      is_blocked: false,
-      updated_at: new Date().toISOString(),
+      symbol:          sym,
+      win_count:       esym.win_count  + (won ? 1 : 0),
+      loss_count:      esym.loss_count + (won ? 0 : 1),
+      total_pnl:       +((esym.total_pnl || 0) + pnl).toFixed(2),
+      avg_confidence:  trade.confidence || 0,
+      is_active:       true,
+      updated_at:      new Date().toISOString(),
     };
     const symTotal = usym.win_count + usym.loss_count;
     const symWR    = symTotal > 0 ? usym.win_count / symTotal : 0.5;
     if (symTotal >= 15 && symWR < 0.38) {
-      usym.is_blocked = true;
+      usym.is_active = false;
       logs.push(`🚫 ${sym} BLOCKED — only ${(symWR*100).toFixed(0)}% win rate`);
     }
     symbolStatsRef.current[sym] = usym;
     setSymbolStats({ ...symbolStatsRef.current });
-    supabase.from("symbol_stats").upsert(usym, { onConflict: "symbol" }).then(() => {});
+    supabase.from("symbol_stats").upsert(usym, { onConflict: "symbol" }).then(({ error }) => {
+      if (error) console.error("symbol_stats error:", error.message);
+      else console.log("✅ symbol_stats saved:", sym);
+    });
 
     if (logs.length > 0)
       setLearningLog(l => [...logs.map(m => ({ msg: m, time: new Date().toLocaleTimeString() })), ...l.slice(0, 49)]);
