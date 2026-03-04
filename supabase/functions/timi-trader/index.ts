@@ -220,7 +220,20 @@ Deno.serve(async (req: Request) => {
     if ((openTrades?.length||0) >= (config.max_trades||3))
       return new Response(JSON.stringify({ status: "max_trades_reached" }), { headers });
 
-    const symbols: string[] = config.symbols || ["R_75","R_25","BOOM1000","CRASH1000"];
+    const symbols: string[] = config.symbols || [
+      // Synthetic Indices - fastest signals 24/7
+      "R_75", "R_25", "R_50", "R_100",
+      "BOOM1000", "BOOM500", "CRASH1000", "CRASH500",
+      "1HZ100V", "1HZ75V",
+      // Forex pairs - strong signals during market hours
+      "frxEURUSD", "frxGBPUSD", "frxUSDJPY",
+      "frxGBPJPY", "frxEURJPY", "frxAUDUSD",
+      "frxUSDCAD", "frxGBPAUD",
+      // Crypto - volatile, good signals
+      "cryBTCUSD", "cryETHUSD",
+      // Metals - steady trends
+      "frxXAUUSD",
+    ];
     let bestSig: any = null;
     for (const symbol of symbols) {
       const { data: symStat } = await supabase.from("symbol_stats").select("is_blocked").eq("symbol",symbol).single();
