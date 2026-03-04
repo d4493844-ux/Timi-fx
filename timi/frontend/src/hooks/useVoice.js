@@ -321,9 +321,14 @@ export default function useVoice({ derivData } = {}) {
 
   const startListening = useCallback(async () => {
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      setMicError("Microphone permission denied. Allow mic in phone settings."); return;
+      // Request mic permission - works on both web and Android
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    } catch(e) {
+      console.log("Mic permission error:", e);
+      // On Android WebView, permission might be blocked but SR still works
+      // Try starting anyway
     }
     activeRef.current = true; setMicError(""); startRec();
   }, [startRec]);

@@ -311,7 +311,7 @@ function getSignal(candles1m, candles5m) {
 }
 
 // ── Browser Notifications ──
-function timiNotify(title, body, type = "info") {
+function sendNotification(title, body, type = "info") {
   // In-app toast (window event)
   window.dispatchEvent(new CustomEvent("timi-notification", { detail: { title, body, type } }));
   // Browser push notification if permitted
@@ -465,7 +465,7 @@ export default function useDerivWS({ ai } = {}) {
       Object.keys(wsConnections.current).forEach(id => sendTo(id, { sell: t.contractId, price: 0 }));
     });
     setTimiStatus("🛑 Closing all trades...");
-    timiNotify("🛑 TIMI", "Closing all trades", "alert");
+    sendNotification("🛑 TIMI", "Closing all trades", "alert");
   };
 
   const updateSignalsRef = (sigs) => { signalsRef.current = sigs; };
@@ -480,7 +480,7 @@ export default function useDerivWS({ ai } = {}) {
         setAutoTrade(false);
         autoTradeRef.current = false;
         setTimiStatus("🎯 Target $" + takeProfitRef.current + " hit! Trading paused.");
-        timiNotify("🎯 Take Profit!", "Daily target hit. Trading stopped.", "profit");
+        sendNotification("🎯 Take Profit!", "Daily target hit. Trading stopped.", "profit");
       }
       return;
     }
@@ -676,7 +676,7 @@ export default function useDerivWS({ ai } = {}) {
 
               // Notify
               setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2));
-              timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + tradeSymbol, pnl > 0 ? "win" : "loss");
+              sendNotification(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + tradeSymbol, pnl > 0 ? "win" : "loss");
 
               // AI learning
               if (ai?.recordTrade) {
@@ -792,7 +792,7 @@ export default function useDerivWS({ ai } = {}) {
         openTradesRef.current = [...openTradesRef.current, trade];
         setOpenTrades([...openTradesRef.current]);
         setTimiStatus("✅ [" + account.name + "] " + trade.type + " " + trade.symbol + " $" + trade.stake);
-        timiNotify("🤖 Trade Open", "[" + account.name + "] " + trade.type + " " + trade.symbol, "trade");
+        sendNotification("🤖 Trade Open", "[" + account.name + "] " + trade.type + " " + trade.symbol, "trade");
         ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: trade.contractId, subscribe: 1 }));
       }
 
@@ -868,7 +868,7 @@ export default function useDerivWS({ ai } = {}) {
             ai.updateRegime(poc.underlying, candles1m.current[poc.underlying]);
           }
           setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2) + " [" + account.name + "]");
-          timiNotify(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");
+          sendNotification(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");
           ws.send(JSON.stringify({ balance: 1, account: "current" }));
         }
       }
