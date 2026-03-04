@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "../lib/supabase";
+import { Capacitor } from "@capacitor/core";
+import { SpeechRecognition } from "@capacitor-community/speech-recognition";
 
 const WAKE_WORDS = [
   "hey timi","timi","timmy","timer","timy","tommy","teme",
@@ -162,6 +164,7 @@ export default function useVoice({ derivData } = {}) {
   const [thinking,   setThinking]   = useState(false);
 
   const recRef       = useRef(null);
+  const nativeRecRef = useRef(null);
   const awakeRef     = useRef(false);
   const awakeTimer   = useRef(null);
   const restartTimer = useRef(null);
@@ -320,32 +323,105 @@ export default function useVoice({ derivData } = {}) {
   }, [handleCommand]);
 
   const startListening = useCallback(async () => {
-    try {
-      // Request mic permission - works on both web and Android
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (Capacitor.isNativePlatform()) {
+      // ── Native Android path ──
+      try {
+        const { speechRecognition } = await SpeechRecognition.requestPermissions();
+        if (speechRecognition !== "granted") {
+          setMicError("Microphone permission denied. Allow mic in phone settings.");
+          return;
+        }
+        console.log("✅ Native mic permission granted");
+
+        // Use native speech recognition
+        activeRef.current = true;
+        setMicError("");
+        setListening(true);
+
+        const startNativeRec = async () => {
+          if (!activeRef.current) return;
+          try {
+            await SpeechRecognition.start({
+              language: "en-US",
+              maxResults: 5,
+              prompt: "Say Hey TIMI to wake me up",
+              partialResults: true,
+              popup: false,
+            });
+          } catch(e) {
+            console.log("Native SR error:", e);
+            if (activeRef.current) setTimeout(startNativeRec, 1000);
+          }
+        };
+
+        // Listen for results
+        await SpeechRecognition.addListener("partialResults", (data) => {
+          const text = data.matches?.[0] || "";
+          if (!text) return;
+          setTranscript(text);
+          const woke = WAKE_WORDS.some(w => text.toLowerCase().includes(w));
+          if (woke && !awakeRef.current) {
+            awakeRef.current = true;
+            setAwake(true);
+            speak("Yes? I'm listening.");
+            setResponse("Yes? I'm listening.");
+            clearTimeout(awakeTimer.current);
+            awakeTimer.current = setTimeout(() => {
+              awakeRef.current = false; setAwake(false);
+              setTranscript(""); setResponse("");
+            }, 15000);
+          }
+        });
+
+        await SpeechRecognition.addListener("listeningState", async (state) => {
+          if (state.status === "stopped" && activeRef.current) {
+            // Process final result
+            setTimeout(startNativeRec, 300);
+          }
+        });
+
+        // Handle final results
+        nativeRecRef.current = startNativeRec;
+        await startNativeRec();
+
+      } catch(e) {
+        console.error("Native mic error:", e);
+        setMicError("Mic error: " + e.message);
       }
-    } catch(e) {
-      console.log("Mic permission error:", e);
-      // On Android WebView, permission might be blocked but SR still works
-      // Try starting anyway
+    } else {
+      // ── Web path ──
+      try {
+        if (navigator.mediaDevices?.getUserMedia) {
+          await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+      } catch(e) { console.log("Web mic permission:", e); }
+      activeRef.current = true; setMicError(""); startRec();
     }
-    activeRef.current = true; setMicError(""); startRec();
-  }, [startRec]);
+  }, [startRec, handleCommand]);
 
   const stopListening = useCallback(() => {
     activeRef.current = false; awakeRef.current = false;
     setAwake(false); setListening(false); setTranscript(""); setResponse("");
     clearTimeout(awakeTimer.current); clearTimeout(restartTimer.current);
-    try { recRef.current?.abort(); } catch {}
-    recRef.current = null;
+    if (Capacitor.isNativePlatform()) {
+      SpeechRecognition.stop().catch(() => {});
+      SpeechRecognition.removeAllListeners().catch(() => {});
+    } else {
+      try { recRef.current?.abort(); } catch {}
+      recRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
     return () => {
       activeRef.current = false;
       clearTimeout(awakeTimer.current); clearTimeout(restartTimer.current);
-      try { recRef.current?.abort(); } catch {}
+      if (Capacitor.isNativePlatform()) {
+        SpeechRecognition.stop().catch(() => {});
+        SpeechRecognition.removeAllListeners().catch(() => {});
+      } else {
+        try { recRef.current?.abort(); } catch {}
+      }
     };
   }, []);
 
