@@ -5,17 +5,38 @@ import { motion } from "framer-motion";
 import useRisk from "../hooks/useRisk";
 
 const ALL_SYMBOLS = [
-  { id:"R_75",      label:"VIX 75",     group:"Synthetic" },
-  { id:"R_25",      label:"VIX 25",     group:"Synthetic" },
-  { id:"R_50",      label:"VIX 50",     group:"Synthetic" },
-  { id:"R_100",     label:"VIX 100",    group:"Synthetic" },
-  { id:"BOOM1000",  label:"BOOM 1000",  group:"Synthetic" },
-  { id:"BOOM500",   label:"BOOM 500",   group:"Synthetic" },
-  { id:"CRASH1000", label:"CRASH 1000", group:"Synthetic" },
-  { id:"CRASH500",  label:"CRASH 500",  group:"Synthetic" },
-  { id:"frxEURUSD", label:"EUR/USD",    group:"Forex" },
-  { id:"frxGBPUSD", label:"GBP/USD",    group:"Forex" },
-  { id:"cryBTCUSD", label:"BTC/USD",    group:"Crypto" },
+  // Synthetic Indices - 24/7, fastest signals
+  { id:"R_75",      label:"VIX 75",        group:"Synthetic" },
+  { id:"R_25",      label:"VIX 25",        group:"Synthetic" },
+  { id:"R_50",      label:"VIX 50",        group:"Synthetic" },
+  { id:"R_100",     label:"VIX 100",       group:"Synthetic" },
+  { id:"1HZ100V",   label:"VIX 100 (1s)",  group:"Synthetic" },
+  { id:"1HZ75V",    label:"VIX 75 (1s)",   group:"Synthetic" },
+  { id:"BOOM1000",  label:"BOOM 1000",     group:"Synthetic" },
+  { id:"BOOM500",   label:"BOOM 500",      group:"Synthetic" },
+  { id:"CRASH1000", label:"CRASH 1000",    group:"Synthetic" },
+  { id:"CRASH500",  label:"CRASH 500",     group:"Synthetic" },
+  { id:"JD75",      label:"Jump 75",       group:"Synthetic" },
+  { id:"JD100",     label:"Jump 100",      group:"Synthetic" },
+  // Forex - strong signals London/NY sessions
+  { id:"frxEURUSD", label:"EUR/USD",       group:"Forex" },
+  { id:"frxGBPUSD", label:"GBP/USD",       group:"Forex" },
+  { id:"frxUSDJPY", label:"USD/JPY",       group:"Forex" },
+  { id:"frxGBPJPY", label:"GBP/JPY",       group:"Forex" },
+  { id:"frxEURJPY", label:"EUR/JPY",       group:"Forex" },
+  { id:"frxAUDUSD", label:"AUD/USD",       group:"Forex" },
+  { id:"frxUSDCAD", label:"USD/CAD",       group:"Forex" },
+  { id:"frxGBPAUD", label:"GBP/AUD",       group:"Forex" },
+  { id:"frxEURGBP", label:"EUR/GBP",       group:"Forex" },
+  { id:"frxAUDJPY", label:"AUD/JPY",       group:"Forex" },
+  { id:"frxNZDUSD", label:"NZD/USD",       group:"Forex" },
+  { id:"frxUSDCHF", label:"USD/CHF",       group:"Forex" },
+  // Crypto - volatile, strong signals
+  { id:"cryBTCUSD", label:"BTC/USD",       group:"Crypto" },
+  { id:"cryETHUSD", label:"ETH/USD",       group:"Crypto" },
+  // Metals - steady trends
+  { id:"frxXAUUSD", label:"Gold/USD",      group:"Metals" },
+  { id:"frxXAGUSD", label:"Silver/USD",    group:"Metals" },
 ];
 
 const c = {
