@@ -18,6 +18,7 @@ import useVoice from "./hooks/useVoice";
 import useAI from "./hooks/useAI";
 import { requestPushPermission } from "./lib/firebase";
 import { supabase } from "./lib/supabase";
+import { setupNotificationChannel, requestNotificationPermission } from "./lib/notify";
 import "./index.css";
 
 export default function App() {
@@ -30,6 +31,13 @@ export default function App() {
 
   useEffect(() => {
     setTimeout(() => setReady(true), 3200);
+    // Setup notifications immediately on app open
+    setupNotificationChannel().then(() => {
+      requestNotificationPermission().then((granted) => {
+        console.log("🔔 Notification permission:", granted ? "granted" : "denied");
+      });
+    });
+    // Web Firebase push (for web app)
     setTimeout(() => requestPushPermission(supabase), 5000);
   }, []);
 
