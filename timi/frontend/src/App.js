@@ -32,21 +32,47 @@ export default function App() {
   useEffect(() => {
     setTimeout(() => setReady(true), 3200);
 
-    // Step 1: Setup channel first (no permission needed)
-    setupNotificationChannel();
-
-    // Step 2: Request notification permission after splash
-    setTimeout(async () => {
-      const granted = await requestNotificationPermission();
-      console.log("🔔 Notification permission:", granted ? "granted" : "denied");
-
-      // Step 3: Only request Firebase push AFTER local notification permission
-      // and only on web (not APK)
-      const { Capacitor } = await import("@capacitor/core");
-      if (!Capacitor.isNativePlatform()) {
-        setTimeout(() => requestPushPermission(supabase), 2000);
+    const initNotifications = async () => {
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        
+        if (Capacitor.isNativePlatform()) {
+          // Wait for Capacitor bridge to be fully ready
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Step 1: Create channel
+          await setupNotificationChannel();
+          console.log("🔔 Channel created");
+          
+          // Step 2: Request permission
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const granted = await requestNotificationPermission();
+          console.log("🔔 Permission:", granted ? "GRANTED" : "DENIED");
+          
+          // Step 3: Send test notification to confirm it works
+          if (granted) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const { sendNotification } = await import("./lib/notify");
+            await sendNotification(
+              "🤖 TIMI Ready!",
+              "Trading bot is active and notifications are working.",
+              {}
+            );
+          }
+        } else {
+          // Web
+          await setupNotificationChannel();
+          const granted = await requestNotificationPermission();
+          console.log("🌐 Web permission:", granted ? "GRANTED" : "DENIED");
+          if (granted) setTimeout(() => requestPushPermission(supabase), 2000);
+        }
+      } catch(e) {
+        console.error("Notification init error:", e);
       }
-    }, 4000);
+    };
+
+    // Wait for splash then init notifications
+    setTimeout(initNotifications, 3500);
   }, []);
 
   const pages = {
