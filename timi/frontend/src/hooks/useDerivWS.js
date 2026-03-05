@@ -598,7 +598,19 @@ export default function useDerivWS({ ai } = {}) {
 
     setTimiStatus(best.sig.action + " " + best.sym + " " + best.sig.confidence + "% | " + (currentSession.names || "off-session"));
     accounts.filter(a => a.active).forEach(acc => {
-      sendTo(acc.id, { proposal: 1, amount: stake, basis: "stake", contract_type: best.sig.action === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 5, duration_unit: "m", symbol: best.sym });
+      const isForexOrCrypto = best.sym.startsWith("frx") || best.sym.startsWith("cry");
+      const proposal = isForexOrCrypto ? {
+        proposal: 1, amount: stake, basis: "stake",
+        contract_type: best.sig.action === "BUY" ? "MULTUP" : "MULTDOWN",
+        currency: "USD", duration: 5, duration_unit: "m",
+        symbol: best.sym, multiplier: 10,
+        limit_order: { stop_loss: stake * 0.5, take_profit: stake * 1.5 }
+      } : {
+        proposal: 1, amount: stake, basis: "stake",
+        contract_type: best.sig.action === "BUY" ? "CALL" : "PUT",
+        currency: "USD", duration: 5, duration_unit: "m", symbol: best.sym
+      };
+      sendTo(acc.id, proposal);
     });
   };
 

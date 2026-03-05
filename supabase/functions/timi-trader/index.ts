@@ -180,7 +180,44 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         const d = JSON.parse(e.data);
         if (d.error) { clearTimeout(t); try { ws.close(); } catch {} resolve({ error: d.error.message }); return; }
         if (d.msg_type === "authorize")
-          ws.send(JSON.stringify({ proposal: 1, amount: stake, basis: "stake", contract_type: action === "BUY" ? "CALL" : "PUT", currency: "USD", duration, duration_unit: "m", symbol }));
+          // Determine contract type and duration based on symbol type
+    const isForex = symbol.startsWith("frx") && !symbol.includes("XAU") && !symbol.includes("XAG") && !symbol.includes("XPD") && !symbol.includes("XPT");
+    const isCrypto = symbol.startsWith("cry");
+    const isMetal = symbol.includes("XAU") || symbol.includes("XAG");
+    const isForexOrCrypto = isForex || isCrypto || isMetal;
+
+    let proposal: any;
+    if (isForexOrCrypto) {
+      // Forex/Crypto/Metals use multipliers
+      proposal = {
+        proposal: 1,
+        amount: stake,
+        basis: "stake",
+        contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN",
+        currency: "USD",
+        duration: 5,
+        duration_unit: "m",
+        symbol,
+        multiplier: 10,
+        limit_order: {
+          stop_loss: stake * 0.5,
+          take_profit: stake * 1.5,
+        }
+      };
+    } else {
+      // Synthetics use standard Rise/Fall
+      proposal = {
+        proposal: 1,
+        amount: stake,
+        basis: "stake",
+        contract_type: action === "BUY" ? "CALL" : "PUT",
+        currency: "USD",
+        duration,
+        duration_unit: "m",
+        symbol,
+      };
+    }
+    ws.send(JSON.stringify(proposal));
         if (d.msg_type === "proposal" && d.proposal)
           ws.send(JSON.stringify({ buy: d.proposal.id, price: d.proposal.ask_price }));
         if (d.msg_type === "buy") { clearTimeout(t); try { ws.close(); } catch {} resolve({ success: true, contractId: d.buy.contract_id, buyPrice: d.buy.buy_price }); }
