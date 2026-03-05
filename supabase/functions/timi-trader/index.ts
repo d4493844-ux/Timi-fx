@@ -143,15 +143,34 @@ function getSignal(candles: any[]) {
   const confidence = Math.min(Math.round(Math.abs(score) / 9 * 100), 99);
   return { action: score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD", confidence, reasons };
 }
-async function fetchCandlesREST(symbol: string): Promise<any[]> {
-  try {
-    const res = await fetch(
-      `https://api.deriv.com/api/v2/ticks_history?ticks_history=${symbol}&adjust_start_time=1&count=100&end=latest&granularity=60&style=candles`,
-      { signal: AbortSignal.timeout(15000) }
-    );
-    const data = await res.json();
-    return data.candles || [];
-  } catch (e) { console.error(`Candles error ${symbol}:`, e); return []; }
+async function fetchCandlesWS(symbol: string): Promise<any[]> {
+  return new Promise((resolve) => {
+    try {
+      const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
+      const t = setTimeout(() => { try { ws.close(); } catch {} resolve([]); }, 12000);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          ticks_history: symbol, adjust_start_time: 1,
+          count: 100, end: "latest", granularity: 60, style: "candles"
+        }));
+      };
+      ws.onmessage = (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        if (d.candles) {
+          clearTimeout(t);
+          try { ws.close(); } catch {}
+          resolve(d.candles);
+        }
+        if (d.error) {
+          clearTimeout(t);
+          try { ws.close(); } catch {}
+          console.error(`Candles error ${symbol}:`, d.error.message);
+          resolve([]);
+        }
+      };
+      ws.onerror = () => { clearTimeout(t); resolve([]); };
+    } catch(e) { resolve([]); }
+  });
 }
 async function getBalance(token: string): Promise<number> {
   return new Promise((resolve) => {
@@ -179,45 +198,20 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
       ws.onmessage = (e: MessageEvent) => {
         const d = JSON.parse(e.data);
         if (d.error) { clearTimeout(t); try { ws.close(); } catch {} resolve({ error: d.error.message }); return; }
-        if (d.msg_type === "authorize")
-          // Determine contract type and duration based on symbol type
-    const isForex = symbol.startsWith("frx") && !symbol.includes("XAU") && !symbol.includes("XAG") && !symbol.includes("XPD") && !symbol.includes("XPT");
-    const isCrypto = symbol.startsWith("cry");
-    const isMetal = symbol.includes("XAU") || symbol.includes("XAG");
-    const isForexOrCrypto = isForex || isCrypto || isMetal;
-
-    let proposal: any;
-    if (isForexOrCrypto) {
-      // Forex/Crypto/Metals use multipliers
-      proposal = {
-        proposal: 1,
-        amount: stake,
-        basis: "stake",
-        contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN",
-        currency: "USD",
-        duration: 5,
-        duration_unit: "m",
-        symbol,
-        multiplier: 10,
-        limit_order: {
-          stop_loss: stake * 0.5,
-          take_profit: stake * 1.5,
+        if (d.msg_type === "authorize") {
+          const isForexOrCrypto = symbol.startsWith("frx") || symbol.startsWith("cry");
+          const proposal = isForexOrCrypto ? {
+            proposal: 1, amount: stake, basis: "stake",
+            contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN",
+            currency: "USD", symbol, multiplier: 100,
+            limit_order: { stop_loss: stake * 0.5, take_profit: stake * 1.5 }
+          } : {
+            proposal: 1, amount: stake, basis: "stake",
+            contract_type: action === "BUY" ? "CALL" : "PUT",
+            currency: "USD", duration, duration_unit: "m", symbol,
+          };
+          ws.send(JSON.stringify(proposal));
         }
-      };
-    } else {
-      // Synthetics use standard Rise/Fall
-      proposal = {
-        proposal: 1,
-        amount: stake,
-        basis: "stake",
-        contract_type: action === "BUY" ? "CALL" : "PUT",
-        currency: "USD",
-        duration,
-        duration_unit: "m",
-        symbol,
-      };
-    }
-    ws.send(JSON.stringify(proposal));
         if (d.msg_type === "proposal" && d.proposal)
           ws.send(JSON.stringify({ buy: d.proposal.id, price: d.proposal.ask_price }));
         if (d.msg_type === "buy") { clearTimeout(t); try { ws.close(); } catch {} resolve({ success: true, contractId: d.buy.contract_id, buyPrice: d.buy.buy_price }); }
@@ -271,15 +265,36 @@ Deno.serve(async (req: Request) => {
       // Metals - steady trends
       "frxXAUUSD",
     ];
+    const minConf = config.min_confidence || 30;
+    console.log(`🎯 Min confidence: ${minConf}%`);
+
+    // Fetch candles for all symbols in parallel - much faster
+    const results = await Promise.allSettled(
+      symbols.map(async (symbol) => {
+        try {
+          const { data: symStat } = await supabase
+            .from("symbol_stats").select("is_active").eq("symbol", symbol).single();
+          if (symStat && (symStat as any).is_active === false) return null;
+          const candles = await fetchCandlesWS(symbol);
+          const sig = getSignal(candles);
+          console.log(`${symbol}: ${sig.action} ${sig.confidence}% (need ${minConf}%)`);
+          if (sig.action === "HOLD" || sig.confidence < minConf) return null;
+          return { ...sig, symbol };
+        } catch(e) {
+          console.error(`Error processing ${symbol}:`, e);
+          return null;
+        }
+      })
+    );
+
+    // Pick best signal
     let bestSig: any = null;
-    for (const symbol of symbols) {
-      const { data: symStat } = await supabase.from("symbol_stats").select("is_blocked").eq("symbol",symbol).single();
-      if ((symStat as any)?.is_blocked) continue;
-      const candles = await fetchCandlesREST(symbol);
-      const sig = getSignal(candles);
-      console.log(`${symbol}: ${sig.action} ${sig.confidence}%`);
-      if (sig.action==="HOLD" || sig.confidence<(config.min_confidence||50)) continue;
-      if (!bestSig || sig.confidence>bestSig.confidence) bestSig = {...sig, symbol};
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value) {
+        if (!bestSig || r.value.confidence > bestSig.confidence) {
+          bestSig = r.value;
+        }
+      }
     }
 
     if (!bestSig) {
