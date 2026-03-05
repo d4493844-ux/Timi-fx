@@ -1,49 +1,40 @@
 import { Capacitor } from "@capacitor/core";
+import { LocalNotifications } from "@capacitor/local-notifications";
 
-let notifId = 100;
-let LocalNotifs = null;
-
-async function getPlugin() {
-  if (LocalNotifs) return LocalNotifs;
-  try {
-    const mod = await import("@capacitor/local-notifications");
-    LocalNotifs = mod.LocalNotifications;
-    return LocalNotifs;
-  } catch(e) {
-    console.error("LocalNotifications plugin error:", e);
-    return null;
-  }
-}
+let notifId = 1;
+let channelCreated = false;
 
 export async function setupNotificationChannel() {
   if (!Capacitor.isNativePlatform()) return;
   try {
-    const plugin = await getPlugin();
-    if (!plugin) return;
-    await plugin.createChannel({
+    await LocalNotifications.createChannel({
       id: "timi_trades",
       name: "TIMI Trade Alerts",
       importance: 5,
       vibration: true,
       sound: "default",
       lights: true,
+      lightColor: "#00ff9d",
+      visibility: 1,
     });
-    console.log("✅ Notification channel created");
+    channelCreated = true;
+    console.log("✅ Channel created");
   } catch(e) { console.error("Channel error:", e); }
 }
 
 export async function requestNotificationPermission() {
+  if (!Capacitor.isNativePlatform()) {
+    const p = await Notification.requestPermission();
+    return p === "granted";
+  }
   try {
-    if (Capacitor.isNativePlatform()) {
-      const plugin = await getPlugin();
-      if (!plugin) return false;
-      const perm = await plugin.requestPermissions();
-      console.log("📱 Notification permission:", JSON.stringify(perm));
-      return perm.display === "granted";
-    } else {
-      const perm = await Notification.requestPermission();
-      return perm === "granted";
-    }
+    // Check current permission first
+    const { display } = await LocalNotifications.checkPermissions();
+    console.log("Current permission:", display);
+    if (display === "granted") return true;
+    const result = await LocalNotifications.requestPermissions();
+    console.log("Permission result:", JSON.stringify(result));
+    return result.display === "granted";
   } catch(e) {
     console.error("Permission error:", e);
     return false;
@@ -56,37 +47,41 @@ export async function sendNotification(title, body, data = {}) {
     detail: { title, body, type: data.type || "info" }
   }));
 
-  try {
-    if (Capacitor.isNativePlatform()) {
-      const plugin = await getPlugin();
-      if (!plugin) return;
-      const id = notifId++;
-      await plugin.schedule({
-        notifications: [{
-          id,
-          title,
-          body,
-          channelId: "timi_trades",
-          smallIcon: "ic_launcher",
-          sound: "default",
-          extra: data,
-        }]
-      });
-      console.log("📱 Native notification sent:", title, "id:", id);
-    } else {
-      if (Notification.permission === "granted") {
-        new Notification(title, {
-          body,
-          icon: "/logo192.png",
-          tag: data.type || "timi",
-          requireInteraction: false,
-        });
-      }
+  if (!Capacitor.isNativePlatform()) {
+    if (Notification.permission === "granted") {
+      new Notification(title, { body, icon: "/logo192.png" });
     }
-  } catch(e) { console.error("Send notification error:", e); }
+    return;
+  }
+
+  try {
+    if (!channelCreated) await setupNotificationChannel();
+    const id = notifId++;
+    console.log("📱 Scheduling notification id:", id, title);
+    await LocalNotifications.schedule({
+      notifications: [{
+        id,
+        title,
+        body,
+        channelId: "timi_trades",
+        smallIcon: "ic_launcher",
+        iconColor: "#00ff9d",
+        sound: "default",
+        ongoing: false,
+        autoCancel: true,
+        extra: data,
+      }]
+    });
+    console.log("✅ Notification scheduled:", id);
+  } catch(e) {
+    console.error("❌ Notification failed:", e.message, e);
+  }
 }
 
 export async function sendTestNotification() {
+  console.log("🧪 sendTestNotification called, isNative:", Capacitor.isNativePlatform());
   await setupNotificationChannel();
-  await sendNotification("🤖 TIMI Active!", "Bot is running. Notifications working!", { type: "info" });
+  const perm = await requestNotificationPermission();
+  console.log("🧪 Permission granted:", perm);
+  await sendNotification("🤖 TIMI Active!", "Notifications are working!", { type: "info" });
 }
