@@ -60,6 +60,38 @@ export async function sendNotification(title, body, data = {}) {
   }
 }
 
+// Test notification - call this to verify notifications work
+export async function sendTestNotification() {
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    if (Capacitor.isNativePlatform()) {
+      const { LocalNotifications } = await import("@capacitor/local-notifications");
+      // Create channel first
+      await LocalNotifications.createChannel({
+        id: "timi_trades",
+        name: "TIMI Trade Alerts",
+        importance: 5,
+        vibration: true,
+        sound: "default",
+      });
+      // Fire immediately
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: Math.floor(Math.random() * 100000),
+          title: "🤖 TIMI is Ready!",
+          body: "Trading bot active. Notifications working!",
+          schedule: { at: new Date(Date.now() + 1000) },
+          channelId: "timi_trades",
+          smallIcon: "ic_launcher",
+        }]
+      });
+      console.log("✅ Test notification scheduled");
+    }
+  } catch(e) {
+    console.error("❌ Test notification failed:", e);
+  }
+}
+
 // Create notification channel for Android
 export async function setupNotificationChannel() {
   try {
