@@ -571,7 +571,7 @@ export default function useDerivWS({ ai } = {}) {
       }
     }
 
-    const baseStake = Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
+    const baseStake = Math.max(1, Math.round(bal * riskPct * 100) / 100);
     const growthCfg = (() => { try { return pGetSync("timi_compounding", {}); } catch { return {}; } })();
     const aiStake = ai?.getAIStake
       ? ai.getAIStake(baseStake, bal, dailyPnlRef.current, tradeHistoryRef.current, growthCfg)

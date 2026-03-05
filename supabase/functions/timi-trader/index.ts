@@ -222,7 +222,12 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
 }
 
 Deno.serve(async (req: Request) => {
-  const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+  const headers = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+  };
   if (req.method === "OPTIONS") return new Response("ok", { headers });
   try {
     console.log("🤖 TIMI Edge Function running");
@@ -305,7 +310,7 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ status: "no_signal", checked: symbols }), { headers });
     }
 
-    const stake = Math.max(1, +((balance*(config.risk_pct||2)/100)*stakeMult).toFixed(2));
+    const stake = Math.max(1, Math.round((balance*(config.risk_pct||2)/100*stakeMult) * 100) / 100);
     console.log(`📊 TRADING: ${bestSig.action} ${bestSig.symbol} $${stake}`);
 
     const result = await placeTrade(token, bestSig.symbol, bestSig.action, stake, config.duration||5);

@@ -1,115 +1,92 @@
 import { Capacitor } from "@capacitor/core";
-import { LocalNotifications } from "@capacitor/local-notifications";
 
-let notifId = 1;
+let notifId = 100;
+let LocalNotifs = null;
 
-// Request permissions on startup
+async function getPlugin() {
+  if (LocalNotifs) return LocalNotifs;
+  try {
+    const mod = await import("@capacitor/local-notifications");
+    LocalNotifs = mod.LocalNotifications;
+    return LocalNotifs;
+  } catch(e) {
+    console.error("LocalNotifications plugin error:", e);
+    return null;
+  }
+}
+
+export async function setupNotificationChannel() {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    const plugin = await getPlugin();
+    if (!plugin) return;
+    await plugin.createChannel({
+      id: "timi_trades",
+      name: "TIMI Trade Alerts",
+      importance: 5,
+      vibration: true,
+      sound: "default",
+      lights: true,
+    });
+    console.log("✅ Notification channel created");
+  } catch(e) { console.error("Channel error:", e); }
+}
+
 export async function requestNotificationPermission() {
   try {
     if (Capacitor.isNativePlatform()) {
-      // Native Android - use local notifications
-      const { display } = await LocalNotifications.requestPermissions();
-      console.log("📱 Local notification permission:", display);
-      return display === "granted";
+      const plugin = await getPlugin();
+      if (!plugin) return false;
+      const perm = await plugin.requestPermissions();
+      console.log("📱 Notification permission:", JSON.stringify(perm));
+      return perm.display === "granted";
     } else {
-      // Web - use browser notifications
       const perm = await Notification.requestPermission();
-      console.log("🌐 Web notification permission:", perm);
       return perm === "granted";
     }
   } catch(e) {
-    console.error("Notification permission error:", e);
+    console.error("Permission error:", e);
     return false;
   }
 }
 
-// Send notification - works on both APK and web
 export async function sendNotification(title, body, data = {}) {
+  // Always fire in-app toast
+  window.dispatchEvent(new CustomEvent("timi-notification", {
+    detail: { title, body, type: data.type || "info" }
+  }));
+
   try {
     if (Capacitor.isNativePlatform()) {
-      // Native Android local notification
-      await LocalNotifications.schedule({
+      const plugin = await getPlugin();
+      if (!plugin) return;
+      const id = notifId++;
+      await plugin.schedule({
         notifications: [{
-          id: notifId++,
+          id,
           title,
           body,
-          sound: "default",
-          smallIcon: "ic_launcher",
-          iconColor: "#00ff9d",
-          extra: data,
           channelId: "timi_trades",
+          smallIcon: "ic_launcher",
+          sound: "default",
+          extra: data,
         }]
       });
-      console.log("📱 Local notification sent:", title);
+      console.log("📱 Native notification sent:", title, "id:", id);
     } else {
-      // Web notification
       if (Notification.permission === "granted") {
         new Notification(title, {
           body,
           icon: "/logo192.png",
-          badge: "/logo192.png",
-          vibrate: [200, 100, 200],
-          tag: "timi-trade",
+          tag: data.type || "timi",
           requireInteraction: false,
-          silent: false,
         });
       }
     }
-  } catch(e) {
-    console.error("Notification error:", e);
-  }
+  } catch(e) { console.error("Send notification error:", e); }
 }
 
-// Test notification - call this to verify notifications work
 export async function sendTestNotification() {
-  try {
-    const { Capacitor } = await import("@capacitor/core");
-    if (Capacitor.isNativePlatform()) {
-      const { LocalNotifications } = await import("@capacitor/local-notifications");
-      // Create channel first
-      await LocalNotifications.createChannel({
-        id: "timi_trades",
-        name: "TIMI Trade Alerts",
-        importance: 5,
-        vibration: true,
-        sound: "default",
-      });
-      // Fire immediately
-      await LocalNotifications.schedule({
-        notifications: [{
-          id: Math.floor(Math.random() * 100000),
-          title: "🤖 TIMI is Ready!",
-          body: "Trading bot active. Notifications working!",
-          schedule: { at: new Date(Date.now() + 1000) },
-          channelId: "timi_trades",
-          smallIcon: "ic_launcher",
-        }]
-      });
-      console.log("✅ Test notification scheduled");
-    }
-  } catch(e) {
-    console.error("❌ Test notification failed:", e);
-  }
-}
-
-// Create notification channel for Android
-export async function setupNotificationChannel() {
-  try {
-    if (Capacitor.isNativePlatform()) {
-      await LocalNotifications.createChannel({
-        id: "timi_trades",
-        name: "TIMI Trade Alerts",
-        description: "Notifications for trade results and bot status",
-        importance: 5, // HIGH
-        visibility: 1,
-        sound: "default",
-        vibration: true,
-        lights: true,
-        lightColor: "#00ff9d",
-      });
-      console.log("✅ Notification channel created");
-    }
-  } catch(e) {
-    console.error("Channel error:", e);
-  }
+  await setupNotificationChannel();
+  await sendNotification("🤖 TIMI Active!", "Bot is running. Notifications working!", { type: "info" });
 }
