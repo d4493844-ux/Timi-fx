@@ -31,14 +31,22 @@ export default function App() {
 
   useEffect(() => {
     setTimeout(() => setReady(true), 3200);
-    // Setup notifications immediately on app open
-    setupNotificationChannel().then(() => {
-      requestNotificationPermission().then((granted) => {
-        console.log("🔔 Notification permission:", granted ? "granted" : "denied");
-      });
-    });
-    // Web Firebase push (for web app)
-    setTimeout(() => requestPushPermission(supabase), 5000);
+
+    // Step 1: Setup channel first (no permission needed)
+    setupNotificationChannel();
+
+    // Step 2: Request notification permission after splash
+    setTimeout(async () => {
+      const granted = await requestNotificationPermission();
+      console.log("🔔 Notification permission:", granted ? "granted" : "denied");
+
+      // Step 3: Only request Firebase push AFTER local notification permission
+      // and only on web (not APK)
+      const { Capacitor } = await import("@capacitor/core");
+      if (!Capacitor.isNativePlatform()) {
+        setTimeout(() => requestPushPermission(supabase), 2000);
+      }
+    }, 4000);
   }, []);
 
   const pages = {
