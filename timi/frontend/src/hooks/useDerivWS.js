@@ -1,3 +1,4 @@
+import { sendNotification as nativeSendNotification } from "../lib/notify";
 import { supabase } from "../lib/supabase";
 import { Preferences } from "@capacitor/preferences";
 import { storageSet, storageGet } from "../lib/storage";
