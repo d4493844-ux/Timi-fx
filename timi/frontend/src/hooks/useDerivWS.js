@@ -741,21 +741,41 @@ export default function useDerivWS({ ai } = {}) {
         ws.send(JSON.stringify({ balance: 1, account: "current", subscribe: 1 }));
         if (account.id === "primary") {
           setTimiStatus("Authorized! Loading data...");
-          // Stagger requests to avoid Deriv rate limit
-          activeSymbolsRef.current.forEach((sym, i) => {
+          const allSyms = activeSymbolsRef.current;
+          // Subscribe to ticks for all symbols (lightweight)
+          allSyms.forEach((sym, i) => {
             setTimeout(() => {
               if (ws.readyState !== WebSocket.OPEN) return;
               ws.send(JSON.stringify({ ticks: sym, subscribe: 1 }));
-            }, i * 500);
-            setTimeout(() => {
-              if (ws.readyState !== WebSocket.OPEN) return;
-              ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 100, end: "latest", granularity: 60, style: "candles" }));
-            }, i * 1500 + 1000);
-            setTimeout(() => {
-              if (ws.readyState !== WebSocket.OPEN) return;
-              ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 50, end: "latest", granularity: 300, style: "candles" }));
-            }, i * 1500 + 2000);
+            }, i * 300);
           });
+          // Load candles in rotating batches of 6 to avoid rate limit
+          // All symbols get candles eventually — just staggered
+          const batchSize = 6;
+          const allForCandles = [...activeSymbolsRef.current];
+          const loadBatch = (startIdx) => {
+            const batch = allForCandles.slice(startIdx, startIdx + batchSize);
+            if (batch.length === 0) return;
+            batch.forEach((sym, i) => {
+              setTimeout(() => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 100, end: "latest", granularity: 60, style: "candles" }));
+              }, i * 2500);
+              setTimeout(() => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 50, end: "latest", granularity: 300, style: "candles" }));
+              }, i * 2500 + 1200);
+            });
+            // Load next batch after this one finishes
+            const nextIdx = startIdx + batchSize;
+            if (nextIdx < allForCandles.length) {
+              setTimeout(() => loadBatch(nextIdx), batchSize * 2500 + 5000);
+            } else {
+              setTimiStatus("✅ All " + allForCandles.length + " markets loaded!");
+            }
+          };
+          // Start loading after tick subscriptions settle
+          setTimeout(() => loadBatch(0), 3000);
         }
       }
 
