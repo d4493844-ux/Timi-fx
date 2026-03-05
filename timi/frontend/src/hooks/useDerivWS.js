@@ -310,21 +310,15 @@ function getSignal(candles1m, candles5m) {
   return { action, confidence, reasons, patterns, score: +score.toFixed(2), rsi: +rsi.toFixed(1), atr: +atr.toFixed(5), session, sr, activeIndicators, macd_hist: +macd.hist.toFixed(6), stoch: +stoch.toFixed(1), bb_position: bbPosition, ema_stack: ema9 > ema21 ? "bullish" : "bearish" };
 }
 
-// ── Browser Notifications ──
-function sendNotification(title, body, type = "info") {
-  // In-app toast (window event)
+// ── Notifications - uses Capacitor LocalNotifications on Android, browser on web ──
+async function sendNotification(title, body, type = "info") {
+  // Always fire in-app toast
   window.dispatchEvent(new CustomEvent("timi-notification", { detail: { title, body, type } }));
-  // Browser push notification if permitted
-  if ("Notification" in window && Notification.permission === "granted") {
-    try {
-      new Notification(title, {
-        body,
-        icon: "https://res.cloudinary.com/drefakuj9/image/upload/v1772314893/WhatsApp_Image_2026-02-28_at_10.27.28_PM_ylndjq.jpg",
-        badge: "https://res.cloudinary.com/drefakuj9/image/upload/v1772314893/WhatsApp_Image_2026-02-28_at_10.27.28_PM_ylndjq.jpg",
-        tag: type,
-        requireInteraction: type === "win" || type === "loss",
-      });
-    } catch(e) {}
+  // Native notification via notify.js (works on Android APK)
+  try {
+    await nativeSendNotification(title, body, { type });
+  } catch(e) {
+    console.error("Notification error:", e);
   }
 }
 
