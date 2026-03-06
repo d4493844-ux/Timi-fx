@@ -203,7 +203,7 @@ function getSignal(candles1m: any[], candles5m: any[] = []) {
   const bbWidth = (bb.upper - bb.lower) / bb.mid;
   if (bbWidth > 0.06) { score *= 0.7; reasons.push("High volatility filter"); }
 
-  const maxScore = 16;
+  const maxScore = 10;
   const confidence = Math.min(Math.round(Math.abs(score) / maxScore * 100), 99);
   const action = score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD";
   return { action, confidence, reasons };

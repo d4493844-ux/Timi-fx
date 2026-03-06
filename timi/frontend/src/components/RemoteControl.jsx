@@ -14,8 +14,6 @@ const SYMBOLS = [
   { id:"BOOM500",   label:"BOOM 500" },
   { id:"CRASH1000", label:"CRASH 1000" },
   { id:"CRASH500",  label:"CRASH 500" },
-  { id:"JD75",      label:"Jump 75" },
-  { id:"JD100",     label:"Jump 100" },
   // Forex
   { id:"frxEURUSD", label:"EUR/USD" },
   { id:"frxGBPUSD", label:"GBP/USD" },
@@ -104,6 +102,14 @@ export default function RemoteControl() {
   const loadLastRun = useCallback(async () => {
     const { data } = await supabase.from("trades")
       .select("*").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(1)
+    // Auto-refresh every 30 seconds
+    if (!window._timiRefresh) {
+      window._timiRefresh = setInterval(() => {
+        supabase.from("trades").select("*").eq("account_name","edge_function")
+          .order("created_at",{ascending:false}).limit(1)
+          .then(({data}) => { if (data?.[0]) setLastRun(data[0]); });
+      }, 30000);
+    }
       .order("created_at", { ascending: false }).limit(1).single();
     if (data) setLastRun(data);
   }, []);
