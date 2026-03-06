@@ -9,6 +9,7 @@ const FCM_CLIENT_EMAIL = Deno.env.get("FCM_CLIENT_EMAIL") || "";
 const FCM_PRIVATE_KEY  = (Deno.env.get("FCM_PRIVATE_KEY") || "").replace(/\\n/g, "\n");
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY);
+(globalThis as any).supabaseClient = supabase;
 
 // ── Get OAuth2 token for FCM v1 API ──
 async function getFCMAccessToken(): Promise<string> {
@@ -189,6 +190,69 @@ async function getBalance(token: string): Promise<number> {
     } catch { resolve(0); }
   });
 }
+async function checkOpenTrades(token: string): Promise<void> {
+  try {
+    const { data: openTrades } = await (globalThis as any).supabaseClient
+      .from("trades")
+      .select("*")
+      .eq("result", "OPEN")
+      .eq("account_name", "edge_function");
+    
+    if (!openTrades?.length) return;
+    
+    for (const trade of openTrades) {
+      if (!trade.contract_id) {
+        // No contract ID - close as unknown after 15 mins
+        if (new Date(trade.created_at) < new Date(Date.now() - 15 * 60 * 1000)) {
+          await (globalThis as any).supabaseClient
+            .from("trades").update({ result: "LOSS", pnl: -trade.stake })
+            .eq("id", trade.id);
+        }
+        continue;
+      }
+      
+      // Check contract result via WebSocket
+      const result = await checkContract(token, trade.contract_id);
+      if (result && result.is_sold) {
+        const pnl = parseFloat(result.profit) || 0;
+        await (globalThis as any).supabaseClient
+          .from("trades")
+          .update({ 
+            result: pnl >= 0 ? "WIN" : "LOSS", 
+            pnl: Math.round(pnl * 100) / 100 
+          })
+          .eq("id", trade.id);
+        console.log(`✅ Trade closed: ${trade.symbol} ${pnl >= 0 ? "WIN" : "LOSS"} $${pnl}`);
+      }
+    }
+  } catch(e) {
+    console.error("checkOpenTrades error:", e);
+  }
+}
+
+async function checkContract(token: string, contractId: number): Promise<any> {
+  return new Promise((resolve) => {
+    try {
+      const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
+      const t = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 10000);
+      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+      ws.onmessage = (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        if (d.msg_type === "authorize" && !d.error) {
+          ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: contractId }));
+        }
+        if (d.msg_type === "proposal_open_contract") {
+          clearTimeout(t);
+          try { ws.close(); } catch {}
+          resolve(d.proposal_open_contract);
+        }
+        if (d.error) { clearTimeout(t); try { ws.close(); } catch {} resolve(null); }
+      };
+      ws.onerror = () => { clearTimeout(t); resolve(null); };
+    } catch { resolve(null); }
+  });
+}
+
 async function placeTrade(token: string, symbol: string, action: string, stake: number, duration: number): Promise<any> {
   return new Promise((resolve) => {
     try {
@@ -244,6 +308,9 @@ Deno.serve(async (req: Request) => {
     if (config.daily_target > 0 && todayPnl >= config.daily_target)
       return new Response(JSON.stringify({ status: "target_reached", daily_pnl: todayPnl }), { headers });
 
+    // Check and close any finished open trades first
+    await checkOpenTrades(token);
+    
     const balance = await getBalance(token);
     if (balance < 1) return new Response(JSON.stringify({ status: "low_balance", balance }), { headers });
 
@@ -327,7 +394,8 @@ Deno.serve(async (req: Request) => {
     await supabase.from("trades").insert([{
       symbol: bestSig.symbol, type: bestSig.action, stake, pnl: 0,
       result: "OPEN", session: "background", confidence: bestSig.confidence,
-      account_name: "edge_function"
+      account_name: "edge_function",
+      contract_id: result.contractId || null,
     }]);
 
     // Update snapshot
