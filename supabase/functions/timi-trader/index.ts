@@ -247,6 +247,13 @@ Deno.serve(async (req: Request) => {
     const balance = await getBalance(token);
     if (balance < 1) return new Response(JSON.stringify({ status: "low_balance", balance }), { headers });
 
+    // Close any stuck OPEN trades older than 10 minutes
+    await supabase.from("trades")
+      .update({ result: "LOSS", pnl: -1 })
+      .eq("result", "OPEN")
+      .eq("account_name", "edge_function")
+      .lt("created_at", new Date(Date.now() - 10 * 60 * 1000).toISOString());
+
     const { data: recent } = await supabase.from("trades").select("result")
       .neq("result","OPEN").order("created_at",{ascending:false}).limit(6);
     const losses = (recent as any[])?.filter(t => t.result==="LOSS").length || 0;
