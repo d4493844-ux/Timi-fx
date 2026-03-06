@@ -100,11 +100,22 @@ export default function RemoteControl() {
 
   // ── Load last trade from Supabase ──
   const loadLastRun = useCallback(async () => {
-    const { data } = await supabase.from("trades")
-      .select("*").eq("account_name","edge_function")
-      .order("created_at",{ascending:false}).limit(1).single();
-    if (data) setLastRun(data);
+    try {
+      const { data } = await supabase.from("trades")
+        .select("*")
+        .eq("account_name","edge_function")
+        .order("created_at",{ascending:false})
+        .limit(1)
+        .single();
+      if (data) setLastRun(data);
+    } catch(e) {}
   }, []);
+
+  // Auto-refresh last trade every 15 seconds
+  useEffect(() => {
+    const interval = setInterval(loadLastRun, 15000);
+    return () => clearInterval(interval);
+  }, [loadLastRun]);
 
   useEffect(() => {
     loadConfig();
