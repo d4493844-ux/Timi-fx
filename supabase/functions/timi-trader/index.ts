@@ -96,6 +96,7 @@ async function sendPush(fcmToken: string, title: string, body: string) {
 }
 
 // ── Indicators ──
+// ── Exact same signal logic as the app ──
 function calcEMA(prices: number[], period: number): number {
   const k = 2 / (period + 1);
   let ema = prices[0];
@@ -113,64 +114,116 @@ function calcRSI(prices: number[], period = 14): number {
 }
 function calcBB(prices: number[], period = 20) {
   const sl = prices.slice(-period);
-  const mean = sl.reduce((a, b) => a + b, 0) / period;
-  const std = Math.sqrt(sl.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period);
-  return { upper: mean + 2 * std, lower: mean - 2 * std };
+  const mean = sl.reduce((a: number, b: number) => a + b, 0) / period;
+  const std = Math.sqrt(sl.reduce((a: number, b: number) => a + Math.pow(b - mean, 2), 0) / period);
+  return { upper: mean + 2 * std, lower: mean - 2 * std, mid: mean };
 }
 function calcMACD(prices: number[]) {
-  if (prices.length < 26) return { hist: 0 };
+  if (prices.length < 26) return { hist: 0, macd: 0, signal: 0 };
   const ema12 = calcEMA(prices.slice(-26), 12);
   const ema26 = calcEMA(prices.slice(-26), 26);
-  return { hist: (ema12 - ema26) - calcEMA([ema12 - ema26], 9) };
+  const macd = ema12 - ema26;
+  const signal = calcEMA([macd], 9);
+  return { hist: macd - signal, macd, signal };
 }
-function getSignal(candles: any[]) {
-  if (candles.length < 30) return { action: "HOLD", confidence: 0, reasons: [] as string[] };
-  const closes = candles.map((c: any) => parseFloat(c.close));
-  const ema9 = calcEMA(closes, 9), ema21 = calcEMA(closes, 21);
+function calcStoch(candles: any[], period = 14): number {
+  if (candles.length < period) return 50;
+  const slice = candles.slice(-period);
+  const highs = slice.map((c: any) => parseFloat(c.high));
+  const lows = slice.map((c: any) => parseFloat(c.low));
+  const close = parseFloat(candles[candles.length - 1].close);
+  const hh = Math.max(...highs), ll = Math.min(...lows);
+  return hh === ll ? 50 : ((close - ll) / (hh - ll)) * 100;
+}
+function getTradingSession() {
+  const h = new Date().getUTCHours();
+  const london = h >= 7 && h < 16;
+  const newYork = h >= 12 && h < 21;
+  const overlap = london && newYork;
+  const strength = overlap ? 3 : (london || newYork) ? 2 : 1;
+  return { london, newYork, overlap, strength };
+}
+function getSignal(candles1m: any[], candles5m: any[] = []) {
+  if (!candles1m || candles1m.length < 30) return { action: "HOLD", confidence: 0, reasons: [] as string[] };
+  const closes = candles1m.map((c: any) => parseFloat(c.close));
+  const ema9 = calcEMA(closes, 9);
+  const ema21 = calcEMA(closes, 21);
   const ema50 = calcEMA(closes.slice(-60), 50);
-  const rsi = calcRSI(closes), bb = calcBB(closes), macd = calcMACD(closes);
+  const rsi = calcRSI(closes);
+  const bb = calcBB(closes);
+  const macd = calcMACD(closes);
+  const stoch = calcStoch(candles1m);
   const price = closes[closes.length - 1];
+  const prev = closes[closes.length - 2];
+  const session = getTradingSession();
   let score = 0;
   const reasons: string[] = [];
-  if (ema9 > ema21 && ema21 > ema50) { score += 2; reasons.push("EMA bullish"); }
-  else if (ema9 < ema21 && ema21 < ema50) { score -= 2; reasons.push("EMA bearish"); }
-  if (rsi < 30) { score += 2.5; reasons.push("RSI oversold"); }
-  else if (rsi > 70) { score -= 2.5; reasons.push("RSI overbought"); }
-  else if (rsi < 45) score += 1; else if (rsi > 55) score -= 1;
-  if (price < bb.lower) { score += 2; reasons.push("Below BB"); }
-  else if (price > bb.upper) { score -= 2; reasons.push("Above BB"); }
-  if (macd.hist > 0) { score += 1.5; reasons.push("MACD bullish"); }
-  else { score -= 1.5; reasons.push("MACD bearish"); }
-  const confidence = Math.min(Math.round(Math.abs(score) / 9 * 100), 99);
-  return { action: score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD", confidence, reasons };
+
+  // 1. EMA trend
+  if (ema9 > ema21 && ema21 > ema50) { score += 2; reasons.push("EMA bullish stack"); }
+  else if (ema9 < ema21 && ema21 < ema50) { score -= 2; reasons.push("EMA bearish stack"); }
+
+  // 2. EMA crossover
+  if (prev < ema9 && price > ema9 && ema9 > ema21) { score += 2; reasons.push("EMA9 cross UP"); }
+  else if (prev > ema9 && price < ema9 && ema9 < ema21) { score -= 2; reasons.push("EMA9 cross DOWN"); }
+
+  // 3. RSI
+  if (rsi < 30) { score += 2.5; reasons.push("RSI oversold " + rsi.toFixed(0)); }
+  else if (rsi < 45) { score += 1; reasons.push("RSI bullish zone"); }
+  else if (rsi > 70) { score -= 2.5; reasons.push("RSI overbought " + rsi.toFixed(0)); }
+  else if (rsi > 55) { score -= 1; reasons.push("RSI bearish zone"); }
+
+  // 4. MACD
+  if (macd.hist > 0 && macd.macd > macd.signal) { score += 1.5; reasons.push("MACD bullish"); }
+  else if (macd.hist < 0 && macd.macd < macd.signal) { score -= 1.5; reasons.push("MACD bearish"); }
+
+  // 5. Bollinger Bands
+  if (price < bb.lower) { score += 2; reasons.push("Price below BB"); }
+  else if (price > bb.upper) { score -= 2; reasons.push("Price above BB"); }
+  else if (price > bb.mid) { score += 0.5; } else { score -= 0.5; }
+
+  // 6. Stochastic
+  if (stoch < 20) { score += 1.5; reasons.push("Stoch oversold"); }
+  else if (stoch > 80) { score -= 1.5; reasons.push("Stoch overbought"); }
+
+  // 7. Multi-timeframe 5M
+  if (candles5m && candles5m.length >= 20) {
+    const c5 = candles5m.map((c: any) => parseFloat(c.close));
+    const trend5m = calcEMA(c5, 9) > calcEMA(c5, 21);
+    if (trend5m && score > 0) { score += 1; reasons.push("5M confirms BUY"); }
+    else if (!trend5m && score < 0) { score += 1; reasons.push("5M confirms SELL"); }
+    else { score *= 0.8; reasons.push("5M divergence"); }
+  }
+
+  // 8. Session boost
+  if (session.overlap) { score *= 1.2; reasons.push("Session overlap boost"); }
+  else if (session.strength < 2) { score *= 0.8; }
+
+  // 9. Volatility filter
+  const bbWidth = (bb.upper - bb.lower) / bb.mid;
+  if (bbWidth > 0.06) { score *= 0.7; reasons.push("High volatility filter"); }
+
+  const maxScore = 16;
+  const confidence = Math.min(Math.round(Math.abs(score) / maxScore * 100), 99);
+  const action = score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD";
+  return { action, confidence, reasons };
 }
-async function fetchCandlesWS(symbol: string): Promise<any[]> {
+async function fetchCandles(symbol: string, granularity: number, count: number): Promise<any[]> {
   return new Promise((resolve) => {
     try {
       const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
       const t = setTimeout(() => { try { ws.close(); } catch {} resolve([]); }, 12000);
-      ws.onopen = () => {
-        ws.send(JSON.stringify({
-          ticks_history: symbol, adjust_start_time: 1,
-          count: 100, end: "latest", granularity: 60, style: "candles"
-        }));
-      };
+      ws.onopen = () => ws.send(JSON.stringify({
+        ticks_history: symbol, adjust_start_time: 1,
+        count, end: "latest", granularity, style: "candles"
+      }));
       ws.onmessage = (e: MessageEvent) => {
         const d = JSON.parse(e.data);
-        if (d.candles) {
-          clearTimeout(t);
-          try { ws.close(); } catch {}
-          resolve(d.candles);
-        }
-        if (d.error) {
-          clearTimeout(t);
-          try { ws.close(); } catch {}
-          console.error(`Candles error ${symbol}:`, d.error.message);
-          resolve([]);
-        }
+        if (d.candles) { clearTimeout(t); try { ws.close(); } catch {} resolve(d.candles); }
+        if (d.error) { clearTimeout(t); try { ws.close(); } catch {} resolve([]); }
       };
       ws.onerror = () => { clearTimeout(t); resolve([]); };
-    } catch(e) { resolve([]); }
+    } catch { resolve([]); }
   });
 }
 async function getBalance(token: string): Promise<number> {
@@ -354,8 +407,11 @@ Deno.serve(async (req: Request) => {
           const { data: symStat } = await supabase
             .from("symbol_stats").select("is_active").eq("symbol", symbol).single();
           if (symStat && (symStat as any).is_active === false) return null;
-          const candles = await fetchCandlesWS(symbol);
-          const sig = getSignal(candles);
+          const [candles1m, candles5m] = await Promise.all([
+            fetchCandles(symbol, 60, 100),
+            fetchCandles(symbol, 300, 50),
+          ]);
+          const sig = getSignal(candles1m, candles5m);
           console.log(`${symbol}: ${sig.action} ${sig.confidence}% (need ${minConf}%)`);
           if (sig.action === "HOLD" || sig.confidence < minConf) return null;
           return { ...sig, symbol };
