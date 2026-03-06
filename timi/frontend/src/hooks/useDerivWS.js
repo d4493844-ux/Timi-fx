@@ -444,7 +444,7 @@ export default function useDerivWS({ ai } = {}) {
 
   const manualTrade = (sym, direction, stake = null) => {
     const bal = parseFloat(balanceRef.current?.balance || 0);
-    const tradeStake = stake || Math.max(1, parseFloat((bal * riskPct).toFixed(2)));
+    const tradeStake = Math.round((stake || Math.max(1, bal * riskPct)) * 100) / 100;
     accounts.filter(a => a.active).forEach(acc => {
       sendTo(acc.id, { proposal: 1, amount: tradeStake, basis: "stake", contract_type: direction === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 5, duration_unit: "m", symbol: sym });
     });
@@ -586,7 +586,7 @@ export default function useDerivWS({ ai } = {}) {
       ? ai.getAIStake(rawStake, bal, dailyPnlRef.current, tradeHistoryRef.current, growthConfig)
       : { stake: rawStake, reasons: [] };
 
-    const stake = Math.min(aiStakeResult.stake, bal * 0.05);
+    const stake = Math.round(Math.min(aiStakeResult.stake, bal * 0.05) * 100) / 100;
     if (aiStakeResult.reasons?.length > 0) {
       setTimiStatus("💡 AI: " + aiStakeResult.reasons[0]);
     }
