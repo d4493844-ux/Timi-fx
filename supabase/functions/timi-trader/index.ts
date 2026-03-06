@@ -143,7 +143,7 @@ function getTradingSession() {
   const strength = overlap ? 3 : (london || newYork) ? 2 : 1;
   return { london, newYork, overlap, strength };
 }
-function getSignal(candles1m: any[], candles5m: any[] = []) {
+function getSignal(candles1m: any[], candles5m: any[] = [], weights: Record<string, number> = {}) {
   if (!candles1m || candles1m.length < 30) return { action: "HOLD", confidence: 0, reasons: [] as string[] };
   
   const closes = candles1m.map((c: any) => parseFloat(c.close));
@@ -176,17 +176,17 @@ function getSignal(candles1m: any[], candles5m: any[] = []) {
   // 1. EMA alignment - ALL THREE must agree
   const emaBull = ema9 > ema21 && ema21 > ema50;
   const emaBear = ema9 < ema21 && ema21 < ema50;
-  if (emaBull) { bullScore += 3; confirmedIndicators++; reasons.push("EMA stack BUY"); }
+  if (emaBull) { bullScore += 3 * (weights.ema_stack || 1); confirmedIndicators++; reasons.push("EMA stack BUY"); }
   else if (emaBear) { bearScore += 3; confirmedIndicators++; reasons.push("EMA stack SELL"); }
   else return { action: "HOLD", confidence: 0, reasons: ["EMA not aligned - blocked"] };
 
   // 2. MACD must confirm direction
-  if (macd.hist > 0 && macd.macd > macd.signal) { bullScore += 2; confirmedIndicators++; reasons.push("MACD BUY"); }
+  if (macd.hist > 0 && macd.macd > macd.signal) { bullScore += 2 * (weights.macd || 1); confirmedIndicators++; reasons.push("MACD BUY"); }
   else if (macd.hist < 0 && macd.macd < macd.signal) { bearScore += 2; confirmedIndicators++; reasons.push("MACD SELL"); }
   else return { action: "HOLD", confidence: 0, reasons: ["MACD not confirming - blocked"] };
 
   // 3. RSI must be in tradeable zone (not neutral 45-55)
-  if (rsi < 45) { bullScore += 2; confirmedIndicators++; reasons.push("RSI bullish " + rsi.toFixed(0)); }
+  if (rsi < 45) { bullScore += 2 * (weights.rsi || 1); confirmedIndicators++; reasons.push("RSI bullish " + rsi.toFixed(0)); }
   else if (rsi > 55) { bearScore += 2; confirmedIndicators++; reasons.push("RSI bearish " + rsi.toFixed(0)); }
   else return { action: "HOLD", confidence: 0, reasons: ["RSI neutral - blocked"] };
 
@@ -433,6 +433,25 @@ Deno.serve(async (req: Request) => {
     const minConf = config.min_confidence || 30;
     console.log(`🎯 Min confidence: ${minConf}%`);
 
+    // ── Load AI weights and symbol stats from Supabase ──
+    const [{ data: aiWeights }, { data: symStats }] = await Promise.all([
+      supabase.from("ai_weights").select("*"),
+      supabase.from("symbol_stats").select("*"),
+    ]);
+
+    // Build weights map
+    const weights: Record<string, number> = {
+      ema_stack: 1.0, ema_crossover: 1.0, rsi: 1.0, macd: 1.0,
+      bollinger: 1.0, stochastic: 1.0, multi_timeframe: 1.0,
+    };
+    if (aiWeights) aiWeights.forEach((r: any) => { weights[r.indicator] = parseFloat(r.weight); });
+
+    // Build symbol performance map
+    const symPerf: Record<string, any> = {};
+    if (symStats) symStats.forEach((r: any) => { symPerf[r.symbol] = r; });
+
+    console.log(`🧠 AI weights loaded: ${Object.keys(weights).length} indicators`);
+
     // Fetch candles for all symbols in parallel - much faster
     const results = await Promise.allSettled(
       symbols.map(async (symbol) => {
@@ -440,14 +459,35 @@ Deno.serve(async (req: Request) => {
           const { data: symStat } = await supabase
             .from("symbol_stats").select("is_active").eq("symbol", symbol).single();
           if (symStat && (symStat as any).is_active === false) return null;
+          // Check symbol performance - skip symbols with bad track record
+          const perf = symPerf[symbol];
+          if (perf) {
+            const total = (perf.win_count || 0) + (perf.loss_count || 0);
+            const winRate = total > 5 ? (perf.win_count || 0) / total : 1;
+            if (winRate < 0.3 && total > 5) {
+              console.log(`${symbol}: BLOCKED (win rate ${(winRate*100).toFixed(0)}%)`);
+              return null;
+            }
+          }
+
           const [candles1m, candles5m] = await Promise.all([
             fetchCandles(symbol, 60, 100),
             fetchCandles(symbol, 300, 50),
           ]);
-          const sig = getSignal(candles1m, candles5m);
+          const sig = getSignal(candles1m, candles5m, weights);
           console.log(`${symbol}: ${sig.action} ${sig.confidence}% (need ${minConf}%)`);
           if (sig.action === "HOLD" || sig.confidence < minConf) return null;
-          return { ...sig, symbol };
+          
+          // Boost confidence for historically winning symbols
+          let finalConf = sig.confidence;
+          if (perf) {
+            const total = (perf.win_count || 0) + (perf.loss_count || 0);
+            const winRate = total > 3 ? (perf.win_count || 0) / total : 0.5;
+            if (winRate > 0.6) finalConf = Math.min(finalConf + 10, 99);
+            else if (winRate < 0.4) finalConf = Math.max(finalConf - 10, 0);
+          }
+          if (finalConf < minConf) return null;
+          return { ...sig, confidence: finalConf, symbol };
         } catch(e) {
           console.error(`Error processing ${symbol}:`, e);
           return null;
@@ -486,6 +526,18 @@ Deno.serve(async (req: Request) => {
       account_name: "edge_function",
       contract_id: result.contractId || null,
     }]);
+
+    // Update symbol stats - track this trade
+    const existing = symPerf[bestSig.symbol] || { win_count: 0, loss_count: 0, total_pnl: 0, avg_confidence: 50 };
+    await supabase.from("symbol_stats").upsert({
+      symbol: bestSig.symbol,
+      win_count: existing.win_count || 0,
+      loss_count: existing.loss_count || 0,
+      total_pnl: existing.total_pnl || 0,
+      avg_confidence: Math.round((existing.avg_confidence + bestSig.confidence) / 2),
+      last_traded: new Date().toISOString(),
+      is_active: true,
+    }, { onConflict: "symbol" });
 
     // Update snapshot
     await supabase.from("growth_snapshots").upsert({
