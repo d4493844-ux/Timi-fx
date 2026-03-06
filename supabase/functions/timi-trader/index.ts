@@ -145,6 +145,7 @@ function getTradingSession() {
 }
 function getSignal(candles1m: any[], candles5m: any[] = []) {
   if (!candles1m || candles1m.length < 30) return { action: "HOLD", confidence: 0, reasons: [] as string[] };
+  
   const closes = candles1m.map((c: any) => parseFloat(c.close));
   const ema9 = calcEMA(closes, 9);
   const ema21 = calcEMA(closes, 21);
@@ -156,56 +157,88 @@ function getSignal(candles1m: any[], candles5m: any[] = []) {
   const price = closes[closes.length - 1];
   const prev = closes[closes.length - 2];
   const session = getTradingSession();
-  let score = 0;
-  const reasons: string[] = [];
 
-  // 1. EMA trend
-  if (ema9 > ema21 && ema21 > ema50) { score += 2; reasons.push("EMA bullish stack"); }
-  else if (ema9 < ema21 && ema21 < ema50) { score -= 2; reasons.push("EMA bearish stack"); }
-
-  // 2. EMA crossover
-  if (prev < ema9 && price > ema9 && ema9 > ema21) { score += 2; reasons.push("EMA9 cross UP"); }
-  else if (prev > ema9 && price < ema9 && ema9 < ema21) { score -= 2; reasons.push("EMA9 cross DOWN"); }
-
-  // 3. RSI
-  if (rsi < 30) { score += 2.5; reasons.push("RSI oversold " + rsi.toFixed(0)); }
-  else if (rsi < 45) { score += 1; reasons.push("RSI bullish zone"); }
-  else if (rsi > 70) { score -= 2.5; reasons.push("RSI overbought " + rsi.toFixed(0)); }
-  else if (rsi > 55) { score -= 1; reasons.push("RSI bearish zone"); }
-
-  // 4. MACD
-  if (macd.hist > 0 && macd.macd > macd.signal) { score += 1.5; reasons.push("MACD bullish"); }
-  else if (macd.hist < 0 && macd.macd < macd.signal) { score -= 1.5; reasons.push("MACD bearish"); }
-
-  // 5. Bollinger Bands
-  if (price < bb.lower) { score += 2; reasons.push("Price below BB"); }
-  else if (price > bb.upper) { score -= 2; reasons.push("Price above BB"); }
-  else if (price > bb.mid) { score += 0.5; } else { score -= 0.5; }
-
-  // 6. Stochastic
-  if (stoch < 20) { score += 1.5; reasons.push("Stoch oversold"); }
-  else if (stoch > 80) { score -= 1.5; reasons.push("Stoch overbought"); }
-
-  // 7. Multi-timeframe 5M
-  if (candles5m && candles5m.length >= 20) {
-    const c5 = candles5m.map((c: any) => parseFloat(c.close));
-    const trend5m = calcEMA(c5, 9) > calcEMA(c5, 21);
-    if (trend5m && score > 0) { score += 1; reasons.push("5M confirms BUY"); }
-    else if (!trend5m && score < 0) { score += 1; reasons.push("5M confirms SELL"); }
-    else { score *= 0.8; reasons.push("5M divergence"); }
+  // ── HARD FILTERS - these BLOCK trades completely ──
+  // Never trade when RSI is extreme (chasing overbought/oversold)
+  if (rsi > 75) return { action: "HOLD", confidence: 0, reasons: ["RSI too overbought - blocked"] };
+  if (rsi < 25) return { action: "HOLD", confidence: 0, reasons: ["RSI too oversold - blocked"] };
+  
+  // Never trade during low session (Asia only - weak signals)
+  if (session.strength < 2 && !candles1m[0].symbol?.startsWith("R_") && !candles1m[0].symbol?.startsWith("1HZ")) {
+    return { action: "HOLD", confidence: 0, reasons: ["Low session - blocked"] };
   }
 
-  // 8. Session boost
-  if (session.overlap) { score *= 1.2; reasons.push("Session overlap boost"); }
-  else if (session.strength < 2) { score *= 0.8; }
+  let bullScore = 0;
+  let bearScore = 0;
+  const reasons: string[] = [];
+  let confirmedIndicators = 0;
 
-  // 9. Volatility filter
-  const bbWidth = (bb.upper - bb.lower) / bb.mid;
-  if (bbWidth > 0.06) { score *= 0.7; reasons.push("High volatility filter"); }
+  // 1. EMA alignment - ALL THREE must agree
+  const emaBull = ema9 > ema21 && ema21 > ema50;
+  const emaBear = ema9 < ema21 && ema21 < ema50;
+  if (emaBull) { bullScore += 3; confirmedIndicators++; reasons.push("EMA stack BUY"); }
+  else if (emaBear) { bearScore += 3; confirmedIndicators++; reasons.push("EMA stack SELL"); }
+  else return { action: "HOLD", confidence: 0, reasons: ["EMA not aligned - blocked"] };
 
-  const maxScore = 10;
-  const confidence = Math.min(Math.round(Math.abs(score) / maxScore * 100), 99);
-  const action = score >= 2 ? "BUY" : score <= -2 ? "SELL" : "HOLD";
+  // 2. MACD must confirm direction
+  if (macd.hist > 0 && macd.macd > macd.signal) { bullScore += 2; confirmedIndicators++; reasons.push("MACD BUY"); }
+  else if (macd.hist < 0 && macd.macd < macd.signal) { bearScore += 2; confirmedIndicators++; reasons.push("MACD SELL"); }
+  else return { action: "HOLD", confidence: 0, reasons: ["MACD not confirming - blocked"] };
+
+  // 3. RSI must be in tradeable zone (not neutral 45-55)
+  if (rsi < 45) { bullScore += 2; confirmedIndicators++; reasons.push("RSI bullish " + rsi.toFixed(0)); }
+  else if (rsi > 55) { bearScore += 2; confirmedIndicators++; reasons.push("RSI bearish " + rsi.toFixed(0)); }
+  else return { action: "HOLD", confidence: 0, reasons: ["RSI neutral - blocked"] };
+
+  // 4. Stochastic confirmation
+  if (stoch < 30) { bullScore += 1.5; confirmedIndicators++; reasons.push("Stoch oversold"); }
+  else if (stoch > 70) { bearScore += 1.5; confirmedIndicators++; reasons.push("Stoch overbought"); }
+
+  // 5. Bollinger Bands
+  if (price < bb.lower) { bullScore += 1.5; reasons.push("Below BB lower"); }
+  else if (price > bb.upper) { bearScore += 1.5; reasons.push("Above BB upper"); }
+
+  // 6. EMA crossover bonus
+  if (prev < ema9 && price > ema9) { bullScore += 1; reasons.push("EMA cross UP"); }
+  else if (prev > ema9 && price < ema9) { bearScore += 1; reasons.push("EMA cross DOWN"); }
+
+  // 7. 5M timeframe must agree - REQUIRED for high confidence
+  let multiTF = false;
+  if (candles5m && candles5m.length >= 20) {
+    const c5 = candles5m.map((c: any) => parseFloat(c.close));
+    const ema9_5m = calcEMA(c5, 9);
+    const ema21_5m = calcEMA(c5, 21);
+    const trend5mBull = ema9_5m > ema21_5m;
+    const trend5mBear = ema9_5m < ema21_5m;
+    if (bullScore > bearScore && trend5mBull) { bullScore += 2; multiTF = true; reasons.push("5M confirms BUY"); }
+    else if (bearScore > bullScore && trend5mBear) { bearScore += 2; multiTF = true; reasons.push("5M confirms SELL"); }
+    else return { action: "HOLD", confidence: 0, reasons: ["5M contradicts signal - blocked"] };
+  }
+
+  // 8. Session boost for London/NY overlap
+  if (session.overlap) {
+    bullScore *= 1.15;
+    bearScore *= 1.15;
+    reasons.push("London/NY overlap");
+  }
+
+  // Determine direction - bull and bear must NOT be close
+  const netScore = bullScore - bearScore;
+  if (Math.abs(netScore) < 3) return { action: "HOLD", confidence: 0, reasons: ["Signal not strong enough"] };
+
+  const action = netScore > 0 ? "BUY" : "SELL";
+  const rawScore = Math.abs(netScore);
+  
+  // Confidence based on how many indicators agree AND score strength
+  // Need at least 4 confirmed indicators for any meaningful confidence
+  if (confirmedIndicators < 3) return { action: "HOLD", confidence: 0, reasons: ["Not enough indicators"] };
+  
+  const maxScore = 12;
+  let confidence = Math.min(Math.round(rawScore / maxScore * 100), 99);
+  
+  // Bonus for multi-timeframe confirmation
+  if (multiTF) confidence = Math.min(confidence + 10, 99);
+
   return { action, confidence, reasons };
 }
 async function fetchCandles(symbol: string, granularity: number, count: number): Promise<any[]> {
