@@ -3,12 +3,38 @@ import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabase";
 
 const SYMBOLS = [
-  { id:"R_75",label:"VIX 75"},{ id:"R_25",label:"VIX 25"},
-  { id:"R_50",label:"VIX 50"},{ id:"R_100",label:"VIX 100"},
-  { id:"BOOM1000",label:"BOOM 1000"},{ id:"BOOM500",label:"BOOM 500"},
-  { id:"CRASH1000",label:"CRASH 1000"},{ id:"CRASH500",label:"CRASH 500"},
-  { id:"frxEURUSD",label:"EUR/USD"},{ id:"frxGBPUSD",label:"GBP/USD"},
-  { id:"cryBTCUSD",label:"BTC/USD"},
+  // Synthetic Indices
+  { id:"R_75",      label:"VIX 75" },
+  { id:"R_25",      label:"VIX 25" },
+  { id:"R_50",      label:"VIX 50" },
+  { id:"R_100",     label:"VIX 100" },
+  { id:"1HZ100V",   label:"VIX 100 (1s)" },
+  { id:"1HZ75V",    label:"VIX 75 (1s)" },
+  { id:"BOOM1000",  label:"BOOM 1000" },
+  { id:"BOOM500",   label:"BOOM 500" },
+  { id:"CRASH1000", label:"CRASH 1000" },
+  { id:"CRASH500",  label:"CRASH 500" },
+  { id:"JD75",      label:"Jump 75" },
+  { id:"JD100",     label:"Jump 100" },
+  // Forex
+  { id:"frxEURUSD", label:"EUR/USD" },
+  { id:"frxGBPUSD", label:"GBP/USD" },
+  { id:"frxUSDJPY", label:"USD/JPY" },
+  { id:"frxGBPJPY", label:"GBP/JPY" },
+  { id:"frxEURJPY", label:"EUR/JPY" },
+  { id:"frxAUDUSD", label:"AUD/USD" },
+  { id:"frxUSDCAD", label:"USD/CAD" },
+  { id:"frxGBPAUD", label:"GBP/AUD" },
+  { id:"frxEURGBP", label:"EUR/GBP" },
+  { id:"frxAUDJPY", label:"AUD/JPY" },
+  { id:"frxNZDUSD", label:"NZD/USD" },
+  { id:"frxUSDCHF", label:"USD/CHF" },
+  // Crypto
+  { id:"cryBTCUSD", label:"BTC/USD" },
+  { id:"cryETHUSD", label:"ETH/USD" },
+  // Metals
+  { id:"frxXAUUSD", label:"Gold/USD" },
+  { id:"frxXAGUSD", label:"Silver/USD" },
 ];
 
 const s = {
@@ -77,7 +103,7 @@ export default function RemoteControl() {
   // ── Load last trade from Supabase ──
   const loadLastRun = useCallback(async () => {
     const { data } = await supabase.from("trades")
-      .select("*").eq("account_name","edge_function")
+      .select("*").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(1)
       .order("created_at", { ascending: false }).limit(1).single();
     if (data) setLastRun(data);
   }, []);
