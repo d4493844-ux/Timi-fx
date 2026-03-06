@@ -101,16 +101,8 @@ export default function RemoteControl() {
   // ── Load last trade from Supabase ──
   const loadLastRun = useCallback(async () => {
     const { data } = await supabase.from("trades")
-      .select("*").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(1)
-    // Auto-refresh every 30 seconds
-    if (!window._timiRefresh) {
-      window._timiRefresh = setInterval(() => {
-        supabase.from("trades").select("*").eq("account_name","edge_function")
-          .order("created_at",{ascending:false}).limit(1)
-          .then(({data}) => { if (data?.[0]) setLastRun(data[0]); });
-      }, 30000);
-    }
-      .order("created_at", { ascending: false }).limit(1).single();
+      .select("*").eq("account_name","edge_function")
+      .order("created_at",{ascending:false}).limit(1).single();
     if (data) setLastRun(data);
   }, []);
 
