@@ -109,6 +109,11 @@ export default function RemoteControl() {
   useEffect(() => {
     loadConfig();
     loadLastRun();
+    // Realtime subscription for instant last trade updates
+    const sub = supabase.channel("trades-changes")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "trades" }, 
+        (payload) => { if (payload.new?.account_name === "edge_function") setLastRun(payload.new); })
+      .subscribe();
     // Refresh last run every 30 seconds
     const interval = setInterval(loadLastRun, 30000);
     return () => clearInterval(interval);

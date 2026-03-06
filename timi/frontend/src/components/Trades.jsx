@@ -2,7 +2,18 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 
 const SYMS = ["R_75","R_25","R_50","BOOM1000","BOOM500","CRASH1000","CRASH500","frxEURUSD","cryBTCUSD"];
-const NAMES = { R_75:"VIX 75",R_25:"VIX 25",R_50:"VIX 50",BOOM1000:"BOOM 1000",BOOM500:"BOOM 500",CRASH1000:"CRASH 1000",CRASH500:"CRASH 500",frxEURUSD:"EUR/USD",cryBTCUSD:"BTC/USD" };
+const NAMES = {
+  R_75:"VIX 75", R_25:"VIX 25", R_50:"VIX 50", R_100:"VIX 100",
+  "1HZ100V":"VIX 100 (1s)", "1HZ75V":"VIX 75 (1s)",
+  BOOM1000:"BOOM 1000", BOOM500:"BOOM 500",
+  CRASH1000:"CRASH 1000", CRASH500:"CRASH 500",
+  frxEURUSD:"EUR/USD", frxGBPUSD:"GBP/USD", frxUSDJPY:"USD/JPY",
+  frxGBPJPY:"GBP/JPY", frxEURJPY:"EUR/JPY", frxAUDUSD:"AUD/USD",
+  frxUSDCAD:"USD/CAD", frxGBPAUD:"GBP/AUD", frxEURGBP:"EUR/GBP",
+  frxAUDJPY:"AUD/JPY", frxNZDUSD:"NZD/USD", frxUSDCHF:"USD/CHF",
+  cryBTCUSD:"BTC/USD", cryETHUSD:"ETH/USD",
+  frxXAUUSD:"Gold/USD", frxXAGUSD:"Silver/USD",
+};
 
 const s = {
   page:{ padding:"20px 20px 100px" },
