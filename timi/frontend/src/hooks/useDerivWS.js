@@ -607,7 +607,7 @@ export default function useDerivWS({ ai } = {}) {
       ? ai.getAIStake(rawStake, bal, dailyPnlRef.current, tradeHistoryRef.current, growthConfig)
       : { stake: rawStake, reasons: [] };
 
-    const stake = Math.round(Math.min(aiStakeResult.stake, bal * 0.05) * 100) / 100;
+    const stake = Math.max(0.35, Math.round(Math.min(aiStakeResult.stake, bal * 0.05) * 100) / 100);
     if (aiStakeResult.reasons?.length > 0) {
       setTimiStatus("💡 AI: " + aiStakeResult.reasons[0]);
     }
