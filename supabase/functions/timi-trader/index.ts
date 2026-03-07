@@ -241,6 +241,34 @@ function getSignal(candles1m: any[], candles5m: any[] = [], weights: Record<stri
 
   return { action, confidence, reasons };
 }
+async function getConsecutiveLosses(supabase: any): Promise<number> {
+  const { data } = await supabase.from("trades")
+    .select("result")
+    .eq("account_name", "edge_function")
+    .order("created_at", { ascending: false })
+    .limit(5);
+  if (!data) return 0;
+  let count = 0;
+  for (const t of data) {
+    if (t.result === "LOSS") count++;
+    else break;
+  }
+  return count;
+}
+
+function detectEngulfing(candles: any[]): { bullish: boolean, bearish: boolean } {
+  if (candles.length < 2) return { bullish: false, bearish: false };
+  const prev = candles[candles.length - 2];
+  const curr = candles[candles.length - 1];
+  const prevOpen = parseFloat(prev.open), prevClose = parseFloat(prev.close);
+  const currOpen = parseFloat(curr.open), currClose = parseFloat(curr.close);
+  const bullish = prevClose < prevOpen && currClose > currOpen &&
+    currOpen < prevClose && currClose > prevOpen;
+  const bearish = prevClose > prevOpen && currClose < currOpen &&
+    currOpen > prevClose && currClose < prevOpen;
+  return { bullish, bearish };
+}
+
 async function fetchCandles(symbol: string, granularity: number, count: number): Promise<any[]> {
   return new Promise((resolve) => {
     try {
@@ -354,11 +382,14 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
             proposal: 1, amount: stake, basis: "stake",
             contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN",
             currency: "USD", symbol, multiplier: 100,
-            limit_order: { stop_loss: stake * 0.5, take_profit: stake * 1.5 }
+            limit_order: { 
+              stop_loss: Math.round(stake * 0.5 * 100) / 100, 
+              take_profit: Math.round(stake * 2.0 * 100) / 100  // 2:1 reward:risk
+            }
           } : {
             proposal: 1, amount: stake, basis: "stake",
             contract_type: action === "BUY" ? "CALL" : "PUT",
-            currency: "USD", duration, duration_unit: "m", symbol,
+            currency: "USD", duration: 4, duration_unit: "m", symbol,
           };
           ws.send(JSON.stringify(proposal));
         }
@@ -396,6 +427,17 @@ Deno.serve(async (req: Request) => {
 
     // Check and close any finished open trades first
     await checkOpenTrades(token);
+
+    // ── Strategy: Consecutive loss pause ──
+    const consecLosses = await getConsecutiveLosses(supabase);
+    if (consecLosses >= 2) {
+      console.log(`⚠️ ${consecLosses} consecutive losses - pausing to protect capital`);
+      return new Response(JSON.stringify({ 
+        status: "paused_consecutive_losses", 
+        losses: consecLosses,
+        message: "Paused after consecutive losses - protecting capital"
+      }), { headers });
+    }
     
     const balance = await getBalance(token);
     if (balance < 1) return new Response(JSON.stringify({ status: "low_balance", balance }), { headers });
@@ -470,11 +512,42 @@ Deno.serve(async (req: Request) => {
             }
           }
 
-          const [candles1m, candles5m] = await Promise.all([
+          const [candles1m, candles5m, candles15m] = await Promise.all([
             fetchCandles(symbol, 60, 100),
             fetchCandles(symbol, 300, 50),
+            fetchCandles(symbol, 900, 30),
           ]);
           const sig = getSignal(candles1m, candles5m, weights);
+          
+          // ── 15M Trend Filter - only trade WITH higher timeframe ──
+          if (sig.action !== "HOLD" && candles15m.length >= 20) {
+            const c15 = candles15m.map((c: any) => parseFloat(c.close));
+            const ema9_15m = calcEMA(c15, 9);
+            const ema21_15m = calcEMA(c15, 21);
+            const trend15mBull = ema9_15m > ema21_15m;
+            if (sig.action === "BUY" && !trend15mBull) {
+              console.log(`${symbol}: BUY blocked - 15M trend is DOWN`);
+              return null;
+            }
+            if (sig.action === "SELL" && trend15mBull) {
+              console.log(`${symbol}: SELL blocked - 15M trend is UP`);
+              return null;
+            }
+          }
+
+          // ── Candle Pattern Confirmation ──
+          if (sig.action !== "HOLD") {
+            const engulf = detectEngulfing(candles1m);
+            if (sig.action === "BUY" && !engulf.bullish) {
+              console.log(`${symbol}: BUY needs bullish engulfing - not confirmed`);
+              // Don't block but reduce confidence
+              sig.confidence = Math.max(sig.confidence - 15, 0);
+            }
+            if (sig.action === "SELL" && !engulf.bearish) {
+              console.log(`${symbol}: SELL needs bearish engulfing - not confirmed`);
+              sig.confidence = Math.max(sig.confidence - 15, 0);
+            }
+          }
           console.log(`${symbol}: ${sig.action} ${sig.confidence}% (need ${minConf}%)`);
           if (sig.action === "HOLD" || sig.confidence < minConf) return null;
           
