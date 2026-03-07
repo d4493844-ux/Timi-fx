@@ -499,7 +499,16 @@ export default function useDerivWS({ ai } = {}) {
     syms.forEach(sym => {
       const c1 = candles1m.current[sym];
       if (!c1 || c1.length < 30) return;
-      const sig = getSignal(c1, candles5m.current[sym]);
+      const c15 = candles15m.current[sym] || [];
+      let sig = getSignal(c1, candles5m.current[sym]);
+      if (sig.action !== "HOLD" && c15.length >= 20) {
+        const c15closes = c15.map(c => parseFloat(c.close));
+        const ema9_15 = calcEMA(c15closes, 9);
+        const ema21_15 = calcEMA(c15closes, 21);
+        const bull15 = ema9_15 > ema21_15;
+        if (sig.action === "BUY" && !bull15) sig = { ...sig, action: "HOLD", confidence: 0, reasons: ["15M trend DOWN"] };
+        if (sig.action === "SELL" && bull15) sig = { ...sig, action: "HOLD", confidence: 0, reasons: ["15M trend UP"] };
+      }
       newSigs[sym] = sig;
       const minConf = (() => { try { return pGetSync("timi_risk")?.minConfidence || 45; } catch { return 45; } })();
       if (sig.action !== "HOLD" && sig.confidence >= minConf)
@@ -609,13 +618,13 @@ export default function useDerivWS({ ai } = {}) {
       const proposal = isForexOrCrypto ? {
         proposal: 1, amount: stake, basis: "stake",
         contract_type: best.sig.action === "BUY" ? "MULTUP" : "MULTDOWN",
-        currency: "USD", duration: 5, duration_unit: "m",
+        currency: "USD", duration: 4, duration_unit: "m",
         symbol: best.sym, multiplier: 10,
         limit_order: { stop_loss: stake * 0.5, take_profit: stake * 1.5 }
       } : {
         proposal: 1, amount: stake, basis: "stake",
         contract_type: best.sig.action === "BUY" ? "CALL" : "PUT",
-        currency: "USD", duration: 5, duration_unit: "m", symbol: best.sym
+        currency: "USD", duration: 4, duration_unit: "m", symbol: best.sym
       };
       sendTo(acc.id, proposal);
     });
@@ -784,6 +793,7 @@ export default function useDerivWS({ ai } = {}) {
                 if (ws.readyState !== WebSocket.OPEN) return;
                 ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 50, end: "latest", granularity: 300, style: "candles" }));
               }, i * 2500 + 1200);
+                ws.send(JSON.stringify({ ticks_history: sym, adjust_start_time: 1, count: 30, end: "latest", granularity: 900, style: "candles" }));
             });
             // Load next batch after this one finishes
             const nextIdx = startIdx + batchSize;
@@ -813,6 +823,7 @@ export default function useDerivWS({ ai } = {}) {
         if (sym) {
           if (gran === 60) candles1m.current[sym] = d.candles;
           else if (gran === 300) candles5m.current[sym] = d.candles;
+          else if (gran === 900) candles15m.current[sym] = d.candles;
           setTimiStatus("Loaded " + sym + " " + (gran === 60 ? "1M" : "5M") + " candles");
           setTimeout(runAnalysis, 500);
         }
@@ -972,11 +983,13 @@ export default function useDerivWS({ ai } = {}) {
     setActiveSymbols(syms);
     candles1m.current = {};
     candles5m.current = {};
+    candles15m.current = {};
     setSignals({});
     syms.forEach(sym => {
       send({ ticks: sym, subscribe: 1 });
       send({ ticks_history: sym, adjust_start_time: 1, count: 100, end: "latest", granularity: 60, style: "candles" });
       send({ ticks_history: sym, adjust_start_time: 1, count: 50, end: "latest", granularity: 300, style: "candles" });
+      send({ ticks_history: sym, adjust_start_time: 1, count: 30, end: "latest", granularity: 900, style: "candles" });
     });
   };
 
