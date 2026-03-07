@@ -364,6 +364,7 @@ export default function useDerivWS({ ai } = {}) {
 
   const candles1m = useRef({});
   const candles5m = useRef({});
+  const candles15m = useRef({});
   const openTradesRef = useRef([]);
   const balanceRef = useRef(null);
   const autoTradeRef = useRef(true);
@@ -446,7 +447,18 @@ export default function useDerivWS({ ai } = {}) {
     const bal = parseFloat(balanceRef.current?.balance || 0);
     const tradeStake = Math.round((stake || Math.max(1, bal * riskPct)) * 100) / 100;
     accounts.filter(a => a.active).forEach(acc => {
-      sendTo(acc.id, { proposal: 1, amount: tradeStake, basis: "stake", contract_type: direction === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 5, duration_unit: "m", symbol: sym });
+      const isFC = sym.startsWith("frx") || sym.startsWith("cry");
+      const manualProposal = isFC ? {
+        proposal: 1, amount: tradeStake, basis: "stake",
+        contract_type: direction === "BUY" ? "MULTUP" : "MULTDOWN",
+        currency: "USD", symbol: sym, multiplier: 100,
+        limit_order: { stop_loss: Math.round(tradeStake*0.5*100)/100, take_profit: Math.round(tradeStake*2*100)/100 }
+      } : {
+        proposal: 1, amount: tradeStake, basis: "stake",
+        contract_type: direction === "BUY" ? "CALL" : "PUT",
+        currency: "USD", duration: 4, duration_unit: "m", symbol: sym
+      };
+      sendTo(acc.id, manualProposal);
     });
     setTimiStatus("Manual " + direction + " on " + sym + " $" + tradeStake);
   };
