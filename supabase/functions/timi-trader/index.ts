@@ -271,6 +271,44 @@ function detectEngulfing(candles: any[]): { bullish: boolean, bearish: boolean }
   return { bullish, bearish };
 }
 
+
+// ══════════════════════════════════════════════════════
+// DIGITS STRATEGY - Statistical edge on synthetics
+// ══════════════════════════════════════════════════════
+function getDigitsSignal(ticks: number[], symbol: string): {
+  action: string; contract_type: string; barrier: string; confidence: number; reason: string;
+} {
+  if (!ticks || ticks.length < 20) return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: "Not enough ticks" };
+  const digits = ticks.map((t: number) => Math.floor((t * 10)) % 10);
+  const last10 = digits.slice(-10);
+  const last5 = digits.slice(-5);
+  const avg5 = last5.reduce((a: number, b: number) => a + b, 0) / 5;
+  const highCount = last10.filter((d: number) => d >= 5).length;
+  const lowCount = last10.filter((d: number) => d <= 4).length;
+  const recentHigh = last5.filter((d: number) => d >= 5).length;
+  const recentLow = last5.filter((d: number) => d <= 4).length;
+
+  if (symbol.startsWith("BOOM")) {
+    if (recentLow >= 4) return { action: "BUY", contract_type: "CALL", barrier: "", confidence: 72, reason: `BOOM dip ${recentLow} low digits` };
+    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: "BOOM waiting for dip" };
+  }
+  if (symbol.startsWith("CRASH")) {
+    if (recentHigh >= 4) return { action: "SELL", contract_type: "PUT", barrier: "", confidence: 72, reason: `CRASH rise ${recentHigh} high digits` };
+    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: "CRASH waiting for rise" };
+  }
+  if (highCount >= 7) {
+    const confidence = Math.min(50 + (highCount - 5) * 8, 82);
+    return { action: "SELL", contract_type: "DIGITUNDER", barrier: "5", confidence, reason: `${highCount}/10 high - UNDER 5` };
+  }
+  if (lowCount >= 7) {
+    const confidence = Math.min(50 + (lowCount - 5) * 8, 82);
+    return { action: "BUY", contract_type: "DIGITOVER", barrier: "4", confidence, reason: `${lowCount}/10 low - OVER 4` };
+  }
+  if (recentHigh >= 4 && avg5 > 6) return { action: "SELL", contract_type: "DIGITUNDER", barrier: "5", confidence: 65, reason: `High streak avg=${avg5.toFixed(1)}` };
+  if (recentLow >= 4 && avg5 < 4) return { action: "BUY", contract_type: "DIGITOVER", barrier: "4", confidence: 65, reason: `Low streak avg=${avg5.toFixed(1)}` };
+  return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: `No pattern avg=${avg5.toFixed(1)}` };
+}
+
 async function fetchCandles(symbol: string, granularity: number, count: number): Promise<any[]> {
   return new Promise((resolve) => {
     try {
@@ -508,6 +546,24 @@ Deno.serve(async (req: Request) => {
 
     console.log(`🧠 AI weights loaded: ${Object.keys(weights).length} indicators`);
 
+    // Fetch ticks for digits strategy
+    const ticksMap: Record<string, number[]> = {};
+    await Promise.allSettled(symbols.map(async (symbol: string) => {
+      try {
+        const ticks = await new Promise<number[]>((resolve) => {
+          const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+          const timeout = setTimeout(() => { ws.close(); resolve([]); }, 8000);
+          ws.onopen = () => ws.send(JSON.stringify({ ticks_history: symbol, count: 25, end: "latest", style: "ticks" }));
+          ws.onmessage = (e: MessageEvent) => {
+            const d = JSON.parse(e.data);
+            if (d.history?.prices) { clearTimeout(timeout); ws.close(); resolve(d.history.prices.map((p: string) => parseFloat(p))); }
+          };
+          ws.onerror = () => { clearTimeout(timeout); resolve([]); };
+        });
+        ticksMap[symbol] = ticks;
+      } catch(e) { ticksMap[symbol] = []; }
+    }));
+
     // Fetch candles for all symbols in parallel - much faster
     const results = await Promise.allSettled(
       symbols.map(async (symbol) => {
@@ -532,7 +588,17 @@ Deno.serve(async (req: Request) => {
             fetchCandles(symbol, 900, 30),
           ]);
           console.log(`${symbol}: candles 1m=${candles1m?.length||0} 5m=${candles5m?.length||0} 15m=${candles15m?.length||0}`);
-          const sig = getSignal(candles1m, candles5m, weights, symbol);
+          const isSynth = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+          let sig: any;
+          if (isSynth && ticksMap[symbol]?.length >= 20) {
+            const ds = getDigitsSignal(ticksMap[symbol], symbol);
+            console.log(`${symbol} DIGITS: ${ds.action} ${ds.confidence}% - ${ds.reason}`);
+            sig = ds.action !== "HOLD" && ds.confidence >= minConf
+              ? { action: ds.action, confidence: ds.confidence, contract_type_override: ds.contract_type, barrier: ds.barrier, reasons: [ds.reason] }
+              : { action: "HOLD", confidence: 0, reasons: [ds.reason] };
+          } else {
+            sig = getSignal(candles1m, candles5m, weights, symbol);
+          }
           
           // ── 15M Trend Filter - only trade WITH higher timeframe ──
           if (sig.action !== "HOLD" && candles15m.length >= 20) {
