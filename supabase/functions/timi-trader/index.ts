@@ -582,10 +582,24 @@ Deno.serve(async (req: Request) => {
             }
           }
 
-          const [candles1m, candles5m, candles15m] = await Promise.all([
-            fetchCandles(symbol, 60, 100),
-            fetchCandles(symbol, 300, 50),
-            fetchCandles(symbol, 900, 30),
+          // Skip candle fetch for synthetics - use digits only
+          const isSynth = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+          let sig: any;
+          if (isSynth) {
+            if (ticksMap[symbol]?.length >= 20) {
+              const ds = getDigitsSignal(ticksMap[symbol], symbol);
+              console.log(`${symbol} DIGITS: ${ds.action} ${ds.confidence}% - ${ds.reason}`);
+              sig = ds.action !== "HOLD" && ds.confidence >= minConf
+                ? { action: ds.action, confidence: ds.confidence, contract_type_override: ds.contract_type, barrier: ds.barrier, reasons: [ds.reason] }
+                : { action: "HOLD", confidence: 0, reasons: [ds.reason] };
+            } else {
+              sig = { action: "HOLD", confidence: 0, reasons: ["No ticks"] };
+            }
+          } else {
+            const [candles1m, candles5m, candles15m] = await Promise.all([fetchCandles(symbol, 60, 100), fetchCandles(symbol, 300, 50), fetchCandles(symbol, 900, 30)]);
+            console.log(`${symbol}: candles 1m=${candles1m?.length||0}`);
+            sig = getSignal(candles1m, candles5m, weights, symbol);
+          }
           ]);
           console.log(`${symbol}: candles 1m=${candles1m?.length||0} 5m=${candles5m?.length||0} 15m=${candles15m?.length||0}`);
           const isSynth = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
