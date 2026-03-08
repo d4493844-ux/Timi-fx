@@ -143,14 +143,17 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
       const d = JSON.parse(e.data);
       if (d.authorize && !authed) {
         authed = true;
-        const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-        // BOOM always spikes UP → always BUY. CRASH always spikes DOWN → always SELL
-        let finalAction = action;
-        if (symbol.startsWith("BOOM"))  finalAction = "BUY";
-        if (symbol.startsWith("CRASH")) finalAction = "SELL";
-        const contract = isSynthetic
-          ? { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: finalAction === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 4, duration_unit: "m", symbol } }
-          : { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: finalAction === "BUY" ? "MULTUP" : "MULTDOWN", currency: "USD", symbol, multiplier: 100, stop_loss: stake, take_profit: stake * 2 } };
+        // Contract types based on what Deriv actually supports per symbol
+        let contractType: string;
+        if (symbol.startsWith("BOOM"))       contractType = "MULTUP";    // BOOM always spikes UP
+        else if (symbol.startsWith("CRASH")) contractType = "MULTDOWN";  // CRASH always spikes DOWN
+        else if (symbol.startsWith("R_"))    contractType = action === "BUY" ? "CALL" : "PUT";
+        else                                  contractType = action === "BUY" ? "MULTUP" : "MULTDOWN"; // forex/crypto
+        
+        const isMult = contractType.startsWith("MULT");
+        const contract = isMult
+          ? { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: 100, stop_loss: stake, take_profit: stake * 2 } }
+          : { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: contractType, currency: "USD", duration: 4, duration_unit: "m", symbol } };
         ws.send(JSON.stringify(contract));
       }
       if (d.buy) { clearTimeout(timeout); ws.close(); resolve(d.buy); }
