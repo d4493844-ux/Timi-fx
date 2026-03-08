@@ -143,7 +143,7 @@ function getTradingSession() {
   const strength = overlap ? 3 : (london || newYork) ? 2 : 1;
   return { london, newYork, overlap, strength };
 }
-function getSignal(candles1m: any[], candles5m: any[] = [], weights: Record<string, number> = {}) {
+function getSignal(candles1m: any[], candles5m: any[] = [], weights: Record<string, number> = {}, symbol: string = "") {
   if (!candles1m || candles1m.length < 30) return { action: "HOLD", confidence: 0, reasons: [] as string[] };
   
   const closes = candles1m.map((c: any) => parseFloat(c.close));
@@ -163,9 +163,11 @@ function getSignal(candles1m: any[], candles5m: any[] = [], weights: Record<stri
   if (rsi > 75) return { action: "HOLD", confidence: 0, reasons: ["RSI too overbought - blocked"] };
   if (rsi < 25) return { action: "HOLD", confidence: 0, reasons: ["RSI too oversold - blocked"] };
   
-  // Never trade during low session (Asia only - weak signals)
-  if (session.strength < 2 && !candles1m[0].symbol?.startsWith("R_") && !candles1m[0].symbol?.startsWith("1HZ")) {
-    return { action: "HOLD", confidence: 0, reasons: ["Low session - blocked"] };
+  // Never trade during low session for FOREX only (synthetics trade 24/7)
+  const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("1HZ") || 
+    symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+  if (!isSynthetic && session.strength < 2) {
+    return { action: "HOLD", confidence: 0, reasons: ["Low session - forex blocked"] };
   }
 
   let bullScore = 0;
@@ -517,7 +519,8 @@ Deno.serve(async (req: Request) => {
             fetchCandles(symbol, 300, 50),
             fetchCandles(symbol, 900, 30),
           ]);
-          const sig = getSignal(candles1m, candles5m, weights);
+          console.log(`${symbol}: candles 1m=${candles1m?.length||0} 5m=${candles5m?.length||0} 15m=${candles15m?.length||0}`);
+          const sig = getSignal(candles1m, candles5m, weights, symbol);
           
           // ── 15M Trend Filter - only trade WITH higher timeframe ──
           if (sig.action !== "HOLD" && candles15m.length >= 20) {
@@ -548,7 +551,7 @@ Deno.serve(async (req: Request) => {
               sig.confidence = Math.max(sig.confidence - 15, 0);
             }
           }
-          console.log(`${symbol}: ${sig.action} ${sig.confidence}% (need ${minConf}%)`);
+          console.log(`${symbol}: ${sig.action} ${sig.confidence}% reasons=[${sig.reasons?.join(",")}]` );
           if (sig.action === "HOLD" || sig.confidence < minConf) return null;
           
           // Boost confidence for historically winning symbols
