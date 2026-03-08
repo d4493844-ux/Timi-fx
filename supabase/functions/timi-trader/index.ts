@@ -1,13 +1,29 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verify } from "https://deno.land/x/djwt@v2.8/mod.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-};
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-// ── Math helpers ──
+// ── ML Tree Inference ──
+function predictTree(node: any, f: number[]): number {
+  if ('v' in node) return node.v;
+  return f[node.f] <= node.t ? predictTree(node.l, f) : predictTree(node.r, f);
+}
+function sigmoid(x: number): number { return 1 / (1 + Math.exp(-x)); }
+
+function mlPredict(model: any, featVals: number[]): { action: string; confidence: number; reason: string } {
+  const mainSum = model.main_trees.reduce((s: number, t: any) => s + predictTree(t, featVals), 0);
+  const mlProb  = sigmoid(mainSum);
+  const pred    = mlProb > 0.5 ? 1 : 0;
+  const metaF   = [...featVals, mlProb];
+  const metaSum = model.meta_trees.reduce((s: number, t: any) => s + predictTree(t, metaF), 0);
+  const metaConf = sigmoid(metaSum);
+  if (metaConf < model.meta_threshold) return { action: "HOLD", confidence: 0, reason: `meta:${metaConf.toFixed(2)}` };
+  const action = pred === 1 ? "BUY" : "SELL";
+  const confidence = Math.min(95, Math.round(metaConf * 100));
+  return { action, confidence, reason: `ML prob:${mlProb.toFixed(2)} meta:${metaConf.toFixed(2)}` };
+}
+
+// ── Feature Engineering (matches Python training exactly) ──
 function calcEMA(prices: number[], period: number): number {
   const k = 2 / (period + 1);
   let ema = prices[0];
@@ -21,398 +37,253 @@ function calcRSI(prices: number[], period = 14): number {
     const d = prices[i] - prices[i - 1];
     if (d > 0) g += d; else l -= d;
   }
-  return 100 - 100 / (1 + g / (l || 0.0001));
+  return 100 - 100 / (1 + g / (l || 1e-10));
 }
-function calcMACD(prices: number[]) {
-  const ema12 = calcEMA(prices, 12);
-  const ema26 = calcEMA(prices, 26);
-  const macd = ema12 - ema26;
-  const signal = calcEMA(prices.slice(-9).map((_, i) => calcEMA(prices.slice(0, prices.length - 9 + i + 1), 12) - calcEMA(prices.slice(0, prices.length - 9 + i + 1), 26)), 9);
-  return { macd, signal, hist: macd - signal };
-}
-function calcBB(prices: number[], period = 20) {
-  const slice = prices.slice(-period);
-  const mean = slice.reduce((a, b) => a + b, 0) / period;
-  const std = Math.sqrt(slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period);
-  return { upper: mean + 2 * std, lower: mean - 2 * std, mid: mean };
-}
-function calcStoch(candles: any[], period = 14): number {
-  if (candles.length < period) return 50;
-  const slice = candles.slice(-period);
-  const high = Math.max(...slice.map((c: any) => parseFloat(c.high)));
-  const low = Math.min(...slice.map((c: any) => parseFloat(c.low)));
-  const close = parseFloat(candles[candles.length - 1].close);
-  return high === low ? 50 : ((close - low) / (high - low)) * 100;
-}
-function getTradingSession() {
-  const h = new Date().getUTCHours();
-  const london = h >= 7 && h < 16;
-  const newYork = h >= 12 && h < 21;
-  const overlap = london && newYork;
-  const strength = overlap ? 3 : (london || newYork) ? 2 : 1;
-  return { london, newYork, overlap, strength };
-}
-function detectEngulfing(candles: any[]) {
-  if (candles.length < 2) return { bullish: false, bearish: false };
-  const prev = candles[candles.length - 2];
-  const curr = candles[candles.length - 1];
-  const po = parseFloat(prev.open), pc = parseFloat(prev.close);
-  const co = parseFloat(curr.open), cc = parseFloat(curr.close);
-  return {
-    bullish: pc < po && cc > co && co < pc && cc > po,
-    bearish: pc > po && cc < co && co > pc && cc < po,
-  };
-}
+function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
+  const c = candles1m.map((x: any) => parseFloat(x.close));
+  const h = candles1m.map((x: any) => parseFloat(x.high));
+  const lo = candles1m.map((x: any) => parseFloat(x.low));
+  const price = c[c.length - 1];
+  const prev  = c[c.length - 2];
 
-// ── DIGITS STRATEGY ──
-function getDigitsSignal(ticks: number[], symbol: string): {
-  action: string; contract_type: string; barrier: string; confidence: number; reason: string;
-} {
-  if (!ticks || ticks.length < 20) return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: "Not enough ticks" };
-  const digits = ticks.map((t: number) => Math.floor(t * 10) % 10);
-  const last10 = digits.slice(-10);
-  const last5 = digits.slice(-5);
-  const avg5 = last5.reduce((a: number, b: number) => a + b, 0) / 5;
-  const highCount = last10.filter((d: number) => d >= 5).length;
-  const lowCount = last10.filter((d: number) => d <= 4).length;
-  const recentHigh = last5.filter((d: number) => d >= 5).length;
-  const recentLow = last5.filter((d: number) => d <= 4).length;
+  const ema8   = calcEMA(c, 8);
+  const ema21  = calcEMA(c, 21);
+  const ema50  = calcEMA(c.slice(-60), 50);
+  const rsi    = calcRSI(c);
 
-  // BOOM always spikes UP - buy on dips (3+ consecutive drops)
-  if (symbol.startsWith("BOOM")) {
-    const prices = ticks.slice(-10);
-    let drops = 0;
-    for (let i = 1; i < prices.length; i++) if (prices[i] < prices[i-1]) drops++;
-    if (drops >= 6) return { action: "BUY", contract_type: "CALL", barrier: "", confidence: 75, reason: `BOOM ${drops} drops - spike incoming` };
-    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: `BOOM waiting drops=${drops}` };
-  }
-  // CRASH always spikes DOWN - sell on rises (3+ consecutive rises)
-  if (symbol.startsWith("CRASH")) {
-    const prices = ticks.slice(-10);
-    let rises = 0;
-    for (let i = 1; i < prices.length; i++) if (prices[i] > prices[i-1]) rises++;
-    if (rises >= 6) return { action: "SELL", contract_type: "PUT", barrier: "", confidence: 75, reason: `CRASH ${rises} rises - crash incoming` };
-    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: `CRASH waiting rises=${rises}` };
-  }
-  if (highCount >= 7) {
-    const confidence = Math.min(50 + (highCount - 5) * 8, 82);
-    return { action: "SELL", contract_type: "DIGITUNDER", barrier: "5", confidence, reason: `${highCount}/10 high - UNDER 5` };
-  }
-  if (lowCount >= 7) {
-    const confidence = Math.min(50 + (lowCount - 5) * 8, 82);
-    return { action: "BUY", contract_type: "DIGITOVER", barrier: "4", confidence, reason: `${lowCount}/10 low - OVER 4` };
-  }
-  if (recentHigh >= 4 && avg5 > 6) return { action: "SELL", contract_type: "DIGITUNDER", barrier: "5", confidence: 65, reason: `High streak avg=${avg5.toFixed(1)}` };
-  if (recentLow >= 4 && avg5 < 4) return { action: "BUY", contract_type: "DIGITOVER", barrier: "4", confidence: 65, reason: `Low streak avg=${avg5.toFixed(1)}` };
-  return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: `No pattern avg=${avg5.toFixed(1)}` };
-}
+  // MACD
+  const ema12 = calcEMA(c, 12);
+  const ema26 = calcEMA(c, 26);
+  const macd_hist = ema12 - ema26;
 
-// ── CANDLE SIGNAL (for forex) ──
-function getSignal(candles1m: any[], candles5m: any[] = [], weights: Record<string, number> = {}, symbol = "") {
-  if (!candles1m || candles1m.length < 30) return { action: "HOLD", confidence: 0, reasons: ["Not enough candles"] };
-  const closes = candles1m.map((c: any) => parseFloat(c.close));
-  const ema9 = calcEMA(closes, 9);
-  const ema21 = calcEMA(closes, 21);
-  const ema50 = calcEMA(closes.slice(-60), 50);
-  const ema200 = closes.length >= 200 ? calcEMA(closes, 200) : calcEMA(closes, closes.length);
-  const price = closes[closes.length - 1];
-  // 200 EMA master trend filter - never trade against it
-  const aboveEma200 = price > ema200;
-  const rsi = calcRSI(closes);
-  const bb = calcBB(closes);
-  const macd = calcMACD(closes);
-  const stoch = calcStoch(candles1m);
-  const prev = closes[closes.length - 2];
-  const session = getTradingSession();
+  // Bollinger Bands
+  const slice20 = c.slice(-20);
+  const bbMid = slice20.reduce((a: number, b: number) => a + b, 0) / 20;
+  const bbStd = Math.sqrt(slice20.reduce((a: number, b: number) => a + Math.pow(b - bbMid, 2), 0) / 20);
+  const bbUpper = bbMid + 2 * bbStd;
+  const bbLower = bbMid - 2 * bbStd;
+  const bb_pos   = (price - bbLower) / (bbUpper - bbLower + 1e-10);
+  const bb_width = (bbUpper - bbLower) / (bbMid + 1e-10);
 
-  if (rsi > 75) return { action: "HOLD", confidence: 0, reasons: ["RSI overbought"] };
-  if (rsi < 25) return { action: "HOLD", confidence: 0, reasons: ["RSI oversold"] };
-  // 200 EMA master trend - only trade in its direction
-  if (!aboveEma200 && emaBull) return { action: "HOLD", confidence: 0, reasons: ["Price below 200 EMA - no BUY"] };
-  if (aboveEma200 && emaBear) return { action: "HOLD", confidence: 0, reasons: ["Price above 200 EMA - no SELL"] };
+  // ATR
+  const atrSlice = candles1m.slice(-14);
+  const trs = atrSlice.map((can: any, i: number) => {
+    const high = parseFloat(can.high), low = parseFloat(can.low), close = parseFloat(can.close);
+    const pc = i > 0 ? parseFloat(atrSlice[i-1].close) : close;
+    return Math.max(high - low, Math.abs(high - pc), Math.abs(low - pc));
+  });
+  const atr = trs.reduce((a: number, b: number) => a + b, 0) / trs.length;
+  const atr_pct = atr / (price + 1e-10);
 
-  const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-  if (!isSynthetic && session.strength < 2) return { action: "HOLD", confidence: 0, reasons: ["Low session"] };
+  const ema_bull = (ema8 > ema21 && ema21 > ema50) ? 1 : 0;
+  const ema_bear = (ema8 < ema21 && ema21 < ema50) ? 1 : 0;
 
-  const emaBull = ema9 > ema21 && ema21 > ema50;
-  const emaBear = ema9 < ema21 && ema21 < ema50;
-  if (!emaBull && !emaBear) return { action: "HOLD", confidence: 0, reasons: ["EMA not aligned"] };
+  const candle_body = (price - prev) / (prev + 1e-10);
+  const candle_dir  = candle_body > 0 ? 1 : -1;
+  const high_low_range = (h[h.length-1] - lo[lo.length-1]) / (lo[lo.length-1] + 1e-10);
 
-  let bullScore = 0, bearScore = 0, confirmed = 0;
-  const reasons: string[] = [];
+  const mom = (lag: number) => (price - c[c.length-1-lag]) / (c[c.length-1-lag] + 1e-10);
 
-  if (emaBull) { bullScore += 3 * (weights.ema_stack || 1); confirmed++; reasons.push("EMA BUY"); }
-  else { bearScore += 3 * (weights.ema_stack || 1); confirmed++; reasons.push("EMA SELL"); }
-
-  if (macd.hist > 0) { bullScore += 2 * (weights.macd || 1); confirmed++; reasons.push("MACD BUY"); }
-  else { bearScore += 2 * (weights.macd || 1); confirmed++; reasons.push("MACD SELL"); }
-
-  if (rsi < 45) { bullScore += 2 * (weights.rsi || 1); confirmed++; reasons.push("RSI BUY"); }
-  else if (rsi > 55) { bearScore += 2 * (weights.rsi || 1); confirmed++; reasons.push("RSI SELL"); }
-  else return { action: "HOLD", confidence: 0, reasons: ["RSI neutral"] };
-
-  if (stoch < 30) { bullScore += 1.5; reasons.push("Stoch oversold"); }
-  else if (stoch > 70) { bearScore += 1.5; reasons.push("Stoch overbought"); }
-
-  if (price < bb.lower) { bullScore += 1.5; reasons.push("Below BB"); }
-  else if (price > bb.upper) { bearScore += 1.5; reasons.push("Above BB"); }
-
-  if (candles5m && candles5m.length >= 20) {
-    const c5 = candles5m.map((c: any) => parseFloat(c.close));
-    const bull5m = calcEMA(c5, 9) > calcEMA(c5, 21);
-    if (bullScore > bearScore && bull5m) { bullScore += 2; confirmed++; reasons.push("5M confirms"); }
-    else if (bearScore > bullScore && !bull5m) { bearScore += 2; confirmed++; reasons.push("5M confirms"); }
-    else return { action: "HOLD", confidence: 0, reasons: ["5M contradicts"] };
+  // 5M trend
+  let trend5m = 0;
+  if (candles5m.length >= 50) {
+    const c5 = candles5m.map((x: any) => parseFloat(x.close));
+    const e20 = calcEMA(c5, 20);
+    const e50 = calcEMA(c5, 50);
+    const r5  = calcRSI(c5);
+    trend5m = e20 > e50 && r5 > 50 ? 1 : e20 < e50 && r5 < 50 ? -1 : 0;
   }
 
-  if (session.overlap) { bullScore *= 1.15; bearScore *= 1.15; }
-
-  const net = bullScore - bearScore;
-  if (Math.abs(net) < 3 || confirmed < 3) return { action: "HOLD", confidence: 0, reasons: ["Signal weak"] };
-
-  const action = net > 0 ? "BUY" : "SELL";
-  const confidence = Math.min(Math.round(Math.abs(net) / 12 * 100), 99);
-  return { action, confidence, reasons };
+  return [
+    rsi, macd_hist, bb_pos, bb_width,
+    ema_bull, ema_bear,
+    (price - ema8)  / (ema8  + 1e-10),
+    (price - ema21) / (ema21 + 1e-10),
+    (price - ema50) / (ema50 + 1e-10),
+    atr_pct, candle_body, candle_dir, high_low_range,
+    mom(1), mom(3), mom(5), mom(10),
+    rsi < 35 ? 1 : 0,
+    rsi > 65 ? 1 : 0,
+    rsi >= 45 && rsi <= 55 ? 1 : 0,
+    trend5m
+  ];
 }
 
-// ── Fetch candles via WebSocket ──
+// ── Fetch candles via Deriv WebSocket ──
 async function fetchCandles(symbol: string, granularity: number, count: number): Promise<any[]> {
   return new Promise((resolve) => {
-    try {
-      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const timeout = setTimeout(() => { try { ws.close(); } catch {} resolve([]); }, 10000);
-      ws.onopen = () => ws.send(JSON.stringify({ ticks_history: symbol, adjust_start_time: 1, count, end: "latest", granularity, style: "candles" }));
-      ws.onmessage = (e: MessageEvent) => {
-        const d = JSON.parse(e.data);
-        if (d.candles) { clearTimeout(timeout); try { ws.close(); } catch {} resolve(d.candles); }
-        else if (d.error) { clearTimeout(timeout); try { ws.close(); } catch {} resolve([]); }
-      };
-      ws.onerror = () => { clearTimeout(timeout); resolve([]); };
-    } catch { resolve([]); }
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const timeout = setTimeout(() => { ws.close(); resolve([]); }, 20000);
+    ws.onopen = () => ws.send(JSON.stringify({ ticks_history: symbol, adjust_start_time: 1, count, end: "latest", granularity, style: "candles" }));
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      if (d.candles) { clearTimeout(timeout); ws.close(); resolve(d.candles); }
+      if (d.error)   { clearTimeout(timeout); ws.close(); resolve([]); }
+    };
+    ws.onerror = () => { clearTimeout(timeout); resolve([]); };
   });
 }
 
-// ── Check open trades ──
-async function checkOpenTrades(token: string) {
-  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const { data: openTrades } = await supabase.from("trades")
-    .select("*").eq("result", "OPEN").eq("account_name", "edge_function");
-  if (!openTrades?.length) return;
-
-  for (const trade of openTrades) {
-    const age = (Date.now() - new Date(trade.created_at).getTime()) / 60000;
-    if (!trade.contract_id && age > 15) {
-      await supabase.from("trades").update({ result: "LOSS", pnl: -trade.stake }).eq("id", trade.id);
-      continue;
-    }
-    if (!trade.contract_id) continue;
-    try {
-      const result = await new Promise<any>((resolve) => {
-        const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-        const t = setTimeout(() => { ws.close(); resolve(null); }, 8000);
-        ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-        ws.onmessage = (e: MessageEvent) => {
-          const d = JSON.parse(e.data);
-          if (d.msg_type === "authorize") ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: trade.contract_id }));
-          if (d.msg_type === "proposal_open_contract") {
-            clearTimeout(t); ws.close();
-            resolve(d.proposal_open_contract);
-          }
-        };
-        ws.onerror = () => { clearTimeout(t); resolve(null); };
-      });
-      if (result && result.is_sold) {
-        const pnl = parseFloat(result.profit || "0");
-        await supabase.from("trades").update({ result: pnl >= 0 ? "WIN" : "LOSS", pnl })
-          .eq("id", trade.id);
-        console.log(`✅ Trade closed: ${trade.symbol} ${pnl >= 0 ? "WIN" : "LOSS"} $${pnl}`);
-      }
-    } catch {}
-  }
+// ── Trading session filter for forex ──
+function getTradingSession(): { active: boolean; name: string } {
+  const h = new Date().getUTCHours();
+  if (h >= 7 && h < 16) return { active: true,  name: "London" };
+  if (h >= 12 && h < 21) return { active: true,  name: "New York" };
+  return { active: false, name: "Off-hours" };
 }
 
-// ── Get consecutive losses ──
+// ── Place trade on Deriv ──
+async function placeTrade(token: string, symbol: string, action: string, stake: number, sig: any) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 15000);
+    let authed = false;
+    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      if (d.authorize && !authed) {
+        authed = true;
+        const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+        const contract = isSynthetic
+          ? { buy: 1, subscribe: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: action === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 4, duration_unit: "m", symbol } }
+          : { buy: 1, subscribe: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: "MULTUP", currency: "USD", symbol, multiplier: 100, stop_loss: stake, take_profit: stake * 2 } };
+        ws.send(JSON.stringify(contract));
+      }
+      if (d.buy) { clearTimeout(timeout); ws.close(); resolve(d.buy); }
+      if (d.error) { clearTimeout(timeout); ws.close(); resolve({ error: d.error.message }); }
+    };
+    ws.onerror = () => { clearTimeout(timeout); resolve({ error: "ws error" }); };
+  });
+}
+
+// ── Check consecutive losses ──
 async function getConsecutiveLosses(supabase: any): Promise<number> {
-  const { data } = await supabase.from("trades").select("result")
-    .eq("account_name", "edge_function").order("created_at", { ascending: false }).limit(5);
+  const { data } = await supabase.from("trades").select("result").eq("account_name","edge_function").order("created_at", { ascending: false }).limit(5);
   if (!data) return 0;
   let count = 0;
-  for (const t of data) { if (t.result === "LOSS") count++; else break; }
+  for (const t of data) { if (t.result === "loss") count++; else break; }
   return count;
 }
 
-// ── Place trade ──
-async function placeTrade(token: string, symbol: string, action: string, stake: number, sig: any): Promise<any> {
-  return new Promise((resolve) => {
-    try {
-      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const t = setTimeout(() => { try { ws.close(); } catch {} resolve({ error: "timeout" }); }, 15000);
-      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-      ws.onmessage = (e: MessageEvent) => {
-        const d = JSON.parse(e.data);
-        if (d.error) { clearTimeout(t); try { ws.close(); } catch {} resolve({ error: d.error.message }); return; }
-        if (d.msg_type === "authorize") {
-          const isForex = symbol.startsWith("frx") || symbol.startsWith("cry");
-          let proposal: any;
-          if (isForex) {
-            // Multiplier: stop_loss/take_profit are profit amounts not stake amounts
-            const sl = Math.round(stake * 100) / 100; // lose 1x stake
-            const tp = Math.round(stake * 2 * 100) / 100; // win 2x stake = 1:2 RR
-            proposal = { proposal: 1, amount: stake, basis: "stake", contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN", currency: "USD", symbol, multiplier: 100, limit_order: { stop_loss: sl, take_profit: tp } };
-          } else if (sig.contract_type_override && sig.contract_type_override.startsWith("DIGIT")) {
-            proposal = { proposal: 1, amount: stake, basis: "stake", contract_type: sig.contract_type_override, currency: "USD", duration: 5, duration_unit: "t", symbol, barrier: sig.barrier || "5" };
-          } else if (sig.contract_type_override) {
-            proposal = { proposal: 1, amount: stake, basis: "stake", contract_type: sig.contract_type_override, currency: "USD", duration: 4, duration_unit: "m", symbol };
-          } else {
-            proposal = { proposal: 1, amount: stake, basis: "stake", contract_type: action === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 4, duration_unit: "m", symbol };
-          }
-          ws.send(JSON.stringify(proposal));
-        }
-        if (d.msg_type === "proposal" && d.proposal) ws.send(JSON.stringify({ buy: d.proposal.id, price: d.proposal.ask_price }));
-        if (d.msg_type === "buy") { clearTimeout(t); try { ws.close(); } catch {} resolve({ success: true, contractId: d.buy.contract_id, buyPrice: d.buy.buy_price }); }
-      };
-      ws.onerror = () => { clearTimeout(t); resolve({ error: "ws error" }); };
-    } catch (e) { resolve({ error: String(e) }); }
-  });
-}
+// ── Main handler ──
+Deno.serve(async () => {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// ── MAIN HANDLER ──
-Deno.serve(async (req: Request) => {
-  const headers = { ...corsHeaders, "Content-Type": "application/json" };
-  if (req.method === "OPTIONS") return new Response("ok", { headers });
+  // Load config
+  const { data: cfg } = await supabase.from("bot_config").select("*").eq("active", true).single();
+  if (!cfg || !cfg.auto_trade) return new Response(JSON.stringify({ status: "disabled" }), { headers: { "Content-Type": "application/json" } });
 
-  try {
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const { data: config } = await supabase.from("bot_config").select("*").eq("active", true).single();
-    if (!config) return new Response(JSON.stringify({ error: "No config" }), { headers });
+  const token    = cfg.token;
+  const symbols  = cfg.symbols || ["BOOM1000","CRASH1000","frxUSDJPY"];
+  const riskPct  = cfg.risk_pct || 2;
+  const balance  = cfg.balance_cache || 10;
+  const stake    = Math.max(0.35, parseFloat(((balance * riskPct) / 100).toFixed(2)));
+  const minConf  = cfg.min_confidence || 65;
+  const maxTrades= cfg.max_trades || 1;
 
-    const token = config.token;
-    if (!token) return new Response(JSON.stringify({ error: "No token" }), { headers });
-    if (!config.auto_trade) return new Response(JSON.stringify({ status: "auto_trade_disabled" }), { headers });
-
-    await checkOpenTrades(token);
-
-    const consecLosses = await getConsecutiveLosses(supabase);
-    if (consecLosses >= 3) {
-      return new Response(JSON.stringify({ status: "paused_consecutive_losses", losses: consecLosses }), { headers });
-    }
-
-    const { data: openTrades } = await supabase.from("trades").select("id").eq("result", "OPEN").eq("account_name", "edge_function");
-    if ((openTrades?.length || 0) >= (config.max_trades || 3))
-      return new Response(JSON.stringify({ status: "max_trades_reached" }), { headers });
-
-    const symbols: string[] = config.symbols || ["R_75","R_25","R_50","BOOM1000","BOOM500","CRASH1000","CRASH500","frxEURUSD","frxGBPUSD","frxUSDJPY","cryBTCUSD","cryETHUSD"];
-    const minConf = config.min_confidence || 55;
-    console.log(`🤖 TIMI running | minConf: ${minConf}% | symbols: ${symbols.length}`);
-
-    // Load AI weights
-    const [{ data: aiWeights }, { data: symStats }] = await Promise.all([
-      supabase.from("ai_weights").select("*"),
-      supabase.from("symbol_stats").select("*"),
-    ]);
-    const weights: Record<string, number> = { ema_stack: 1.0, macd: 1.0, rsi: 1.0, bollinger: 1.0, stochastic: 1.0, multi_timeframe: 1.0 };
-    if (aiWeights) aiWeights.forEach((r: any) => { weights[r.indicator] = parseFloat(r.weight); });
-    const symPerf: Record<string, any> = {};
-    if (symStats) symStats.forEach((r: any) => { symPerf[r.symbol] = r; });
-
-    // Fetch ticks for all symbols (synthetics use digits)
-    const ticksMap: Record<string, number[]> = {};
-    await Promise.allSettled(symbols.map(async (symbol: string) => {
-      try {
-        const ticks = await new Promise<number[]>((resolve) => {
-          const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-          const timeout = setTimeout(() => { try { ws.close(); } catch {} resolve([]); }, 8000);
-          ws.onopen = () => ws.send(JSON.stringify({ ticks_history: symbol, count: 25, end: "latest", style: "ticks" }));
-          ws.onmessage = (e: MessageEvent) => {
-            const d = JSON.parse(e.data);
-            if (d.history?.prices) { clearTimeout(timeout); try { ws.close(); } catch {} resolve(d.history.prices.map((p: string) => parseFloat(p))); }
-          };
-          ws.onerror = () => { clearTimeout(timeout); resolve([]); };
-        });
-        ticksMap[symbol] = ticks;
-      } catch { ticksMap[symbol] = []; }
-    }));
-
-    // Evaluate signals for all symbols
-    const signals: any[] = [];
-    await Promise.allSettled(symbols.map(async (symbol: string) => {
-      try {
-        // Skip symbols with bad track record
-        const perf = symPerf[symbol];
-        if (perf) {
-          const total = (perf.win_count || 0) + (perf.loss_count || 0);
-          if (total > 5 && (perf.win_count || 0) / total < 0.3) {
-            console.log(`${symbol}: BLOCKED low win rate`);
-            return;
-          }
-        }
-
-        const isSynth = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-        let sig: any;
-
-        if (isSynth) {
-          const ds = getDigitsSignal(ticksMap[symbol] || [], symbol);
-          console.log(`${symbol} DIGITS: ${ds.action} ${ds.confidence}% - ${ds.reason}`);
-          sig = ds.action !== "HOLD" && ds.confidence >= minConf
-            ? { action: ds.action, confidence: ds.confidence, contract_type_override: ds.contract_type, barrier: ds.barrier, reasons: [ds.reason] }
-            : { action: "HOLD", confidence: 0, reasons: [ds.reason] };
-        } else {
-          const [c1m, c5m] = await Promise.all([fetchCandles(symbol, 60, 100), fetchCandles(symbol, 300, 50)]);
-          sig = getSignal(c1m, c5m, weights, symbol);
-          console.log(`${symbol}: ${sig.action} ${sig.confidence}%`);
-        }
-
-        if (sig.action !== "HOLD" && sig.confidence >= minConf) {
-          signals.push({ ...sig, symbol });
-        }
-      } catch (e) { console.log(`${symbol} error: ${e}`); }
-    }));
-
-    if (!signals.length) return new Response(JSON.stringify({ status: "no_signal", checked: symbols }), { headers });
-
-    // Pick best signal
-    const bestSig = signals.sort((a, b) => b.confidence - a.confidence)[0];
-    console.log(`🎯 Best: ${bestSig.action} ${bestSig.symbol} ${bestSig.confidence}%`);
-
-    // Calculate stake
-    const balance = config.balance_cache || 10;
-    const rawStake = Math.round(balance * (config.risk_pct || 2) / 100 * 100) / 100;
-    const minStake = (bestSig.symbol?.startsWith("frx") || bestSig.symbol?.startsWith("cry")) ? 5 : 0.35;
-    const stake = Math.max(minStake, rawStake);
-
-    console.log(`📊 TRADING: ${bestSig.action} ${bestSig.symbol} $${stake}`);
-
-    const result = await placeTrade(token, bestSig.symbol, bestSig.action, stake, bestSig);
-
-    if (result.error) {
-      console.log(`❌ Trade failed: ${result.error}`);
-      return new Response(JSON.stringify({ status: "trade_failed", error: result.error }), { headers });
-    }
-
-    await supabase.from("trades").insert([{
-      symbol: bestSig.symbol, type: bestSig.action, stake, pnl: 0,
-      result: "OPEN", session: "background", confidence: bestSig.confidence,
-      account_name: "edge_function", contract_id: result.contractId || null,
-    }]);
-
-    // Update symbol stats
-    await supabase.from("symbol_stats").upsert({
-      symbol: bestSig.symbol,
-      win_count: (symPerf[bestSig.symbol]?.win_count || 0),
-      loss_count: (symPerf[bestSig.symbol]?.loss_count || 0),
-      avg_confidence: bestSig.confidence,
-      last_traded: new Date().toISOString(),
-      is_active: true,
-    }, { onConflict: "symbol" });
-
-    return new Response(JSON.stringify({
-      status: "trade_placed", symbol: bestSig.symbol,
-      action: bestSig.action, stake, confidence: bestSig.confidence,
-      contract_id: result.contractId, reasons: bestSig.reasons,
-    }), { headers });
-
-  } catch (e) {
-    console.log(`💥 Error: ${e}`);
-    return new Response(JSON.stringify({ error: String(e) }), { headers });
+  // Pause after 3 consecutive losses
+  const consec = await getConsecutiveLosses(supabase);
+  if (consec >= 3) {
+    console.log(`⏸ Paused: ${consec} consecutive losses`);
+    return new Response(JSON.stringify({ status: "paused", consecutive_losses: consec }), { headers: { "Content-Type": "application/json" } });
   }
+
+  // Load ML models from Supabase
+  const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
+  const ML_MODELS: Record<string, any> = {};
+  for (const row of (mlRows || [])) {
+    try { ML_MODELS[row.symbol] = JSON.parse(row.model_json); } catch {}
+  }
+  console.log(`🧠 Loaded ML models: ${Object.keys(ML_MODELS).join(", ")}`);
+
+  // Scan symbols for signals
+  const signals: any[] = [];
+  for (const symbol of symbols) {
+    try {
+      const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+      if (!isSynthetic) {
+        const session = getTradingSession();
+        if (!session.active) { console.log(`${symbol}: skipped - ${session.name}`); continue; }
+      }
+
+      // Fetch candles
+      const [c1m, c5m] = await Promise.all([
+        fetchCandles(symbol, 60, 200),
+        fetchCandles(symbol, 300, 100),
+      ]);
+      if (c1m.length < 50) { console.log(`${symbol}: not enough candles`); continue; }
+
+      let sig;
+      if (ML_MODELS[symbol]) {
+        // Use ML model
+        const features = buildFeatures(c1m, c5m);
+        sig = mlPredict(ML_MODELS[symbol], features);
+        console.log(`${symbol}: ML → ${sig.action} conf:${sig.confidence} (${sig.reason})`);
+      } else {
+        // Fallback: smart strategy for non-ML symbols
+        const c = c1m.map((x: any) => parseFloat(x.close));
+        const c5 = c5m.map((x: any) => parseFloat(x.close));
+        const price = c[c.length-1], prev = c[c.length-2];
+        let trend5m = 0;
+        if (c5.length >= 50) {
+          const e20 = calcEMA(c5, 20), e50 = calcEMA(c5, 50), r5 = calcRSI(c5);
+          trend5m = e20 > e50 && r5 > 50 ? 1 : e20 < e50 && r5 < 50 ? -1 : 0;
+        }
+        if (trend5m === 0) { console.log(`${symbol}: 5M unclear`); continue; }
+        const e8 = calcEMA(c, 8), e21 = calcEMA(c, 21);
+        const rsi = calcRSI(c);
+        const momBull = e8 > e21 && price > e8 && price > prev;
+        const momBear = e8 < e21 && price < e8 && price < prev;
+        if (trend5m === 1 && momBull && rsi >= 40 && rsi <= 65)
+          sig = { action: "BUY",  confidence: 65, reason: "Fallback bull" };
+        else if (trend5m === -1 && momBear && rsi >= 35 && rsi <= 60)
+          sig = { action: "SELL", confidence: 65, reason: "Fallback bear" };
+        else
+          sig = { action: "HOLD", confidence: 0, reason: "No fallback signal" };
+        console.log(`${symbol}: Fallback → ${sig.action} (${sig.reason})`);
+      }
+
+      if (sig.action !== "HOLD" && sig.confidence >= minConf) {
+        signals.push({ symbol, ...sig });
+      }
+    } catch (err) {
+      console.error(`${symbol} error:`, err);
+    }
+  }
+
+  if (signals.length === 0) {
+    return new Response(JSON.stringify({ status: "no_signal", scanned: symbols.length }), { headers: { "Content-Type": "application/json" } });
+  }
+
+  // Pick highest confidence signal
+  signals.sort((a, b) => b.confidence - a.confidence);
+  const best = signals[0];
+  console.log(`🎯 Best signal: ${best.symbol} ${best.action} ${best.confidence}%`);
+
+  // Place trade
+  const result: any = await placeTrade(token, best.symbol, best.action, stake, best);
+  const success = result && !result.error;
+
+  // Log to trades table
+  await supabase.from("trades").insert({
+    symbol: best.symbol,
+    type: best.action,
+    stake,
+    result: success ? "open" : "error",
+    confidence: best.confidence,
+    account_name: "edge_function",
+    notes: best.reason,
+  });
+
+  // Update balance cache
+  if (success) await supabase.from("bot_config").update({ balance_cache: balance - stake }).eq("active", true);
+
+  return new Response(JSON.stringify({
+    status: success ? "trade_placed" : "trade_failed",
+    signal: best,
+    stake,
+    trade: result,
+    ml_models_used: Object.keys(ML_MODELS),
+    signals_found: signals.length,
+  }), { headers: { "Content-Type": "application/json" } });
 });
