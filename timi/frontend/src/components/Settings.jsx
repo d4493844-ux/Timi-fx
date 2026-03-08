@@ -5,20 +5,16 @@ import { motion } from "framer-motion";
 import useRisk from "../hooks/useRisk";
 
 const ALL_SYMBOLS = [
-  // Synthetic Indices - 24/7, fastest signals
+  // Synthetic Indices - 24/7
   { id:"R_75",      label:"VIX 75",        group:"Synthetic" },
   { id:"R_25",      label:"VIX 25",        group:"Synthetic" },
   { id:"R_50",      label:"VIX 50",        group:"Synthetic" },
   { id:"R_100",     label:"VIX 100",       group:"Synthetic" },
-  { id:"1HZ100V",   label:"VIX 100 (1s)",  group:"Synthetic" },
-  { id:"1HZ75V",    label:"VIX 75 (1s)",   group:"Synthetic" },
   { id:"BOOM1000",  label:"BOOM 1000",     group:"Synthetic" },
   { id:"BOOM500",   label:"BOOM 500",      group:"Synthetic" },
   { id:"CRASH1000", label:"CRASH 1000",    group:"Synthetic" },
   { id:"CRASH500",  label:"CRASH 500",     group:"Synthetic" },
-  { id:"JD75",      label:"Jump 75",       group:"Synthetic" },
-  { id:"JD100",     label:"Jump 100",      group:"Synthetic" },
-  // Forex - strong signals London/NY sessions
+  // Forex - London/NY sessions only
   { id:"frxEURUSD", label:"EUR/USD",       group:"Forex" },
   { id:"frxGBPUSD", label:"GBP/USD",       group:"Forex" },
   { id:"frxUSDJPY", label:"USD/JPY",       group:"Forex" },
@@ -31,12 +27,23 @@ const ALL_SYMBOLS = [
   { id:"frxAUDJPY", label:"AUD/JPY",       group:"Forex" },
   { id:"frxNZDUSD", label:"NZD/USD",       group:"Forex" },
   { id:"frxUSDCHF", label:"USD/CHF",       group:"Forex" },
-  // Crypto - volatile, strong signals
+  // Crypto
   { id:"cryBTCUSD", label:"BTC/USD",       group:"Crypto" },
   { id:"cryETHUSD", label:"ETH/USD",       group:"Crypto" },
-  // Metals - steady trends
+  // Metals
   { id:"frxXAUUSD", label:"Gold/USD",      group:"Metals" },
   { id:"frxXAGUSD", label:"Silver/USD",    group:"Metals" },
+];
+
+// Default symbols that should be ON
+const DEFAULT_ON = [
+  "R_75","R_25","R_50","R_100",
+  "BOOM1000","BOOM500","CRASH1000","CRASH500",
+  "frxEURUSD","frxGBPUSD","frxUSDJPY",
+  "frxGBPJPY","frxEURJPY","frxAUDUSD",
+  "frxUSDCAD","frxGBPAUD",
+  "cryBTCUSD","cryETHUSD",
+  "frxXAUUSD",
 ];
 
 const c = {
