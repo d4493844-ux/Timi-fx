@@ -78,13 +78,21 @@ function getDigitsSignal(ticks: number[], symbol: string): {
   const recentHigh = last5.filter((d: number) => d >= 5).length;
   const recentLow = last5.filter((d: number) => d <= 4).length;
 
+  // BOOM always spikes UP - buy on dips (3+ consecutive drops)
   if (symbol.startsWith("BOOM")) {
-    if (recentLow >= 4) return { action: "BUY", contract_type: "CALL", barrier: "", confidence: 72, reason: `BOOM dip ${recentLow} low digits` };
-    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: "BOOM waiting for dip" };
+    const prices = ticks.slice(-10);
+    let drops = 0;
+    for (let i = 1; i < prices.length; i++) if (prices[i] < prices[i-1]) drops++;
+    if (drops >= 6) return { action: "BUY", contract_type: "CALL", barrier: "", confidence: 75, reason: `BOOM ${drops} drops - spike incoming` };
+    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: `BOOM waiting drops=${drops}` };
   }
+  // CRASH always spikes DOWN - sell on rises (3+ consecutive rises)
   if (symbol.startsWith("CRASH")) {
-    if (recentHigh >= 4) return { action: "SELL", contract_type: "PUT", barrier: "", confidence: 72, reason: `CRASH rise ${recentHigh} high digits` };
-    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: "CRASH waiting for rise" };
+    const prices = ticks.slice(-10);
+    let rises = 0;
+    for (let i = 1; i < prices.length; i++) if (prices[i] > prices[i-1]) rises++;
+    if (rises >= 6) return { action: "SELL", contract_type: "PUT", barrier: "", confidence: 75, reason: `CRASH ${rises} rises - crash incoming` };
+    return { action: "HOLD", contract_type: "", barrier: "", confidence: 0, reason: `CRASH waiting rises=${rises}` };
   }
   if (highCount >= 7) {
     const confidence = Math.min(50 + (highCount - 5) * 8, 82);
@@ -106,16 +114,22 @@ function getSignal(candles1m: any[], candles5m: any[] = [], weights: Record<stri
   const ema9 = calcEMA(closes, 9);
   const ema21 = calcEMA(closes, 21);
   const ema50 = calcEMA(closes.slice(-60), 50);
+  const ema200 = closes.length >= 200 ? calcEMA(closes, 200) : calcEMA(closes, closes.length);
+  const price = closes[closes.length - 1];
+  // 200 EMA master trend filter - never trade against it
+  const aboveEma200 = price > ema200;
   const rsi = calcRSI(closes);
   const bb = calcBB(closes);
   const macd = calcMACD(closes);
   const stoch = calcStoch(candles1m);
-  const price = closes[closes.length - 1];
   const prev = closes[closes.length - 2];
   const session = getTradingSession();
 
   if (rsi > 75) return { action: "HOLD", confidence: 0, reasons: ["RSI overbought"] };
   if (rsi < 25) return { action: "HOLD", confidence: 0, reasons: ["RSI oversold"] };
+  // 200 EMA master trend - only trade in its direction
+  if (!aboveEma200 && emaBull) return { action: "HOLD", confidence: 0, reasons: ["Price below 200 EMA - no BUY"] };
+  if (aboveEma200 && emaBear) return { action: "HOLD", confidence: 0, reasons: ["Price above 200 EMA - no SELL"] };
 
   const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
   if (!isSynthetic && session.strength < 2) return { action: "HOLD", confidence: 0, reasons: ["Low session"] };
@@ -241,7 +255,10 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
           const isForex = symbol.startsWith("frx") || symbol.startsWith("cry");
           let proposal: any;
           if (isForex) {
-            proposal = { proposal: 1, amount: stake, basis: "stake", contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN", currency: "USD", symbol, multiplier: 100, limit_order: { stop_loss: Math.round(stake * 0.5 * 100) / 100, take_profit: Math.round(stake * 2.0 * 100) / 100 } };
+            // Multiplier: stop_loss/take_profit are profit amounts not stake amounts
+            const sl = Math.round(stake * 100) / 100; // lose 1x stake
+            const tp = Math.round(stake * 2 * 100) / 100; // win 2x stake = 1:2 RR
+            proposal = { proposal: 1, amount: stake, basis: "stake", contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN", currency: "USD", symbol, multiplier: 100, limit_order: { stop_loss: sl, take_profit: tp } };
           } else if (sig.contract_type_override && sig.contract_type_override.startsWith("DIGIT")) {
             proposal = { proposal: 1, amount: stake, basis: "stake", contract_type: sig.contract_type_override, currency: "USD", duration: 5, duration_unit: "t", symbol, barrier: sig.barrier || "5" };
           } else if (sig.contract_type_override) {
@@ -284,7 +301,7 @@ Deno.serve(async (req: Request) => {
     if ((openTrades?.length || 0) >= (config.max_trades || 3))
       return new Response(JSON.stringify({ status: "max_trades_reached" }), { headers });
 
-    const symbols: string[] = config.symbols || ["R_75","R_25","R_50","R_100","1HZ100V","1HZ75V","BOOM1000","BOOM500","CRASH1000","CRASH500"];
+    const symbols: string[] = config.symbols || ["R_75","R_25","R_50","BOOM1000","BOOM500","CRASH1000","CRASH500","frxEURUSD","frxGBPUSD","frxUSDJPY","cryBTCUSD","cryETHUSD"];
     const minConf = config.min_confidence || 55;
     console.log(`🤖 TIMI running | minConf: ${minConf}% | symbols: ${symbols.length}`);
 

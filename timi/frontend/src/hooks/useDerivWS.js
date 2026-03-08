@@ -216,6 +216,9 @@ function getSignal(candles1m, candles5m) {
   const ema9 = calcEMA(closes, 9);
   const ema21 = calcEMA(closes, 21);
   const ema50 = calcEMA(closes.slice(-60), 50);
+  const ema200 = closes.length >= 200 ? calcEMA(closes, 200) : calcEMA(closes, closes.length);
+  const price200 = closes[closes.length - 1];
+  const aboveEma200 = price200 > ema200;
   const rsi = calcRSI(closes);
   const bb = calcBB(closes);
   const macd = calcMACD(closes);
