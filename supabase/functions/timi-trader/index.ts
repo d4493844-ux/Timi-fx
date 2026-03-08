@@ -144,9 +144,13 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
       if (d.authorize && !authed) {
         authed = true;
         const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+        // BOOM always spikes UP → always BUY. CRASH always spikes DOWN → always SELL
+        let finalAction = action;
+        if (symbol.startsWith("BOOM"))  finalAction = "BUY";
+        if (symbol.startsWith("CRASH")) finalAction = "SELL";
         const contract = isSynthetic
-          ? { buy: 1, subscribe: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: action === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 4, duration_unit: "m", symbol } }
-          : { buy: 1, subscribe: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: "MULTUP", currency: "USD", symbol, multiplier: 100, stop_loss: stake, take_profit: stake * 2 } };
+          ? { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: finalAction === "BUY" ? "CALL" : "PUT", currency: "USD", duration: 4, duration_unit: "m", symbol } }
+          : { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: finalAction === "BUY" ? "MULTUP" : "MULTDOWN", currency: "USD", symbol, multiplier: 100, stop_loss: stake, take_profit: stake * 2 } };
         ws.send(JSON.stringify(contract));
       }
       if (d.buy) { clearTimeout(timeout); ws.close(); resolve(d.buy); }
