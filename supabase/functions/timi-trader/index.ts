@@ -380,15 +380,27 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         if (d.error) { clearTimeout(t); try { ws.close(); } catch {} resolve({ error: d.error.message }); return; }
         if (d.msg_type === "authorize") {
           const isForexOrCrypto = symbol.startsWith("frx") || symbol.startsWith("cry");
+          // Use override contract type for digits, otherwise standard
+          const contractType = bestSig.contract_type_override || 
+            (isForexOrCrypto ? (action === "BUY" ? "MULTUP" : "MULTDOWN") : 
+            (action === "BUY" ? "CALL" : "PUT"));
+
           const proposal = isForexOrCrypto ? {
             proposal: 1, amount: stake, basis: "stake",
-            contract_type: action === "BUY" ? "MULTUP" : "MULTDOWN",
+            contract_type: contractType,
             currency: "USD", symbol, multiplier: 100,
             limit_order: { 
               stop_loss: Math.round(stake * 0.5 * 100) / 100, 
-              take_profit: Math.round(stake * 2.0 * 100) / 100  // 2:1 reward:risk
+              take_profit: Math.round(stake * 2.0 * 100) / 100
             }
+          } : bestSig.contract_type_override ? {
+            // Digits contract
+            proposal: 1, amount: stake, basis: "stake",
+            contract_type: contractType,
+            currency: "USD", duration: 5, duration_unit: "t",
+            symbol, barrier: bestSig.barrier || "5",
           } : {
+            // Standard rise/fall
             proposal: 1, amount: stake, basis: "stake",
             contract_type: action === "BUY" ? "CALL" : "PUT",
             currency: "USD", duration: 4, duration_unit: "m", symbol,
