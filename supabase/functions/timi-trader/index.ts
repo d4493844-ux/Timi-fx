@@ -358,7 +358,6 @@ Deno.serve(async (req: Request) => {
     console.log(`🎯 Best: ${bestSig.action} ${bestSig.symbol} ${bestSig.confidence}%`);
 
     // Calculate stake
-    const { data: bal } = await supabase.rpc("get_balance", { p_token: token }).single().catch(() => ({ data: null }));
     const balance = config.balance_cache || 10;
     const rawStake = Math.round(balance * (config.risk_pct || 2) / 100 * 100) / 100;
     const minStake = (bestSig.symbol?.startsWith("frx") || bestSig.symbol?.startsWith("cry")) ? 5 : 0.35;
