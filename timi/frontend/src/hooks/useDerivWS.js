@@ -456,16 +456,21 @@ export default function useDerivWS({ ai } = {}) {
     const bal = parseFloat(balanceRef.current?.balance || 0);
     const tradeStake = Math.round((stake || Math.max(1, bal * riskPct)) * 100) / 100;
     accounts.filter(a => a.active).forEach(acc => {
-      const isFC = sym.startsWith("frx") || sym.startsWith("cry");
-      const manualProposal = isFC ? {
-        proposal: 1, amount: tradeStake, basis: "stake",
+      // BOOM/CRASH → MULTUP/MULTDOWN. Forex/Crypto → CALL/PUT. R_ synthetics → CALL/PUT
+      const isMult = sym.startsWith("BOOM") || sym.startsWith("CRASH");
+      const isSynth = sym.startsWith("R_");
+      const adjStake = isMult ? Math.min(9, Math.max(1, tradeStake)) : Math.max(0.35, tradeStake);
+      const tp = parseFloat((adjStake * 0.5).toFixed(2));
+      const sl = parseFloat((adjStake * 0.9).toFixed(2));
+      const manualProposal = isMult ? {
+        proposal: 1, amount: adjStake, basis: "stake",
         contract_type: direction === "BUY" ? "MULTUP" : "MULTDOWN",
         currency: "USD", symbol: sym, multiplier: 100,
-        limit_order: { stop_loss: Math.round(tradeStake*0.5*100)/100, take_profit: Math.round(tradeStake*2*100)/100 }
+        limit_order: { stop_loss: sl, take_profit: tp }
       } : {
-        proposal: 1, amount: tradeStake, basis: "stake",
+        proposal: 1, amount: adjStake, basis: "stake",
         contract_type: direction === "BUY" ? "CALL" : "PUT",
-        currency: "USD", duration: 4, duration_unit: "m", symbol: sym
+        currency: "USD", duration: 5, duration_unit: "m", symbol: sym
       };
       sendTo(acc.id, manualProposal);
     });
@@ -623,17 +628,20 @@ export default function useDerivWS({ ai } = {}) {
 
     setTimiStatus(best.sig.action + " " + best.sym + " " + best.sig.confidence + "% | " + (currentSession.names || "off-session"));
     accounts.filter(a => a.active).forEach(acc => {
-      const isForexOrCrypto = best.sym.startsWith("frx") || best.sym.startsWith("cry");
-      const proposal = isForexOrCrypto ? {
-        proposal: 1, amount: stake, basis: "stake",
+      // BOOM/CRASH → MULTUP/MULTDOWN. Everything else → CALL/PUT with 5m duration
+      const isBoomCrash = best.sym.startsWith("BOOM") || best.sym.startsWith("CRASH");
+      const adjAutoStake = isBoomCrash ? Math.min(9, Math.max(1, stake)) : Math.max(0.35, stake);
+      const autoTp = parseFloat((adjAutoStake * 0.5).toFixed(2));
+      const autoSl = parseFloat((adjAutoStake * 0.9).toFixed(2));
+      const proposal = isBoomCrash ? {
+        proposal: 1, amount: adjAutoStake, basis: "stake",
         contract_type: best.sig.action === "BUY" ? "MULTUP" : "MULTDOWN",
-        currency: "USD", duration: 4, duration_unit: "m",
-        symbol: best.sym, multiplier: 10,
-        limit_order: { stop_loss: stake * 0.5, take_profit: stake * 1.5 }
+        currency: "USD", symbol: best.sym, multiplier: 100,
+        limit_order: { stop_loss: autoSl, take_profit: autoTp }
       } : {
-        proposal: 1, amount: stake, basis: "stake",
+        proposal: 1, amount: adjAutoStake, basis: "stake",
         contract_type: best.sig.action === "BUY" ? "CALL" : "PUT",
-        currency: "USD", duration: 4, duration_unit: "m", symbol: best.sym
+        currency: "USD", duration: 5, duration_unit: "m", symbol: best.sym
       };
       sendTo(acc.id, proposal);
     });
