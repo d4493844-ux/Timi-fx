@@ -172,9 +172,17 @@ Deno.serve(async () => {
   const ML_MODELS: Record<string, any> = {};
   for (const row of (mlRows || [])) {
     try {
-      const parsed = row.model_json;
-      ML_MODELS[row.symbol] = parsed;
-    } catch {}
+      // model_json is stored as a string in Supabase - must JSON.parse
+      const mj = typeof row.model_json === "string" ? JSON.parse(row.model_json) : row.model_json;
+      if (mj?.main_trees && mj?.meta_trees) {
+        ML_MODELS[row.symbol] = mj;
+        console.log(`✅ ${row.symbol}: ${mj.main_trees.length} main + ${mj.meta_trees.length} meta trees`);
+      } else {
+        console.log(`❌ ${row.symbol}: missing trees, keys=${Object.keys(mj||{}).join(",")}`);
+      }
+    } catch(e) {
+      console.log(`❌ ${row.symbol}: parse error ${e}`);
+    }
   }
   console.log(`🧠 ML models loaded: ${Object.keys(ML_MODELS).join(", ")}`);
 
