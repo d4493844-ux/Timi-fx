@@ -361,7 +361,16 @@ export default function useDerivWS({ ai } = {}) {
     } catch { return [{ id: "primary", name: "Primary", token: "", active: true, balance: "---", currency: "USD" }]; }
   });
   const [activeSymbols, setActiveSymbols] = useState(() => {
-    try { return pGetSync("timi_symbols", ["BOOM1000", "CRASH1000", "frxUSDJPY"]); }
+    try {
+      const saved = pGetSync("timi_symbols", ["BOOM1000", "CRASH1000", "frxUSDJPY"]);
+      // Clear old localStorage if it contains legacy VIX-only symbols (no ML symbols)
+      const hasML = saved.some(s => ["BOOM1000","CRASH1000","frxUSDJPY"].includes(s));
+      if (!hasML) {
+        console.log("🔄 Clearing old symbol cache, resetting to ML defaults");
+        return ["BOOM1000", "CRASH1000", "frxUSDJPY"];
+      }
+      return saved;
+    }
     catch { return ["BOOM1000", "CRASH1000", "frxUSDJPY"]; }
   });
 

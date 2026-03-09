@@ -46,7 +46,18 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
 
   useEffect(()=>{const p=ticks[firstSym];if(!p)return;setChartData(prev=>[...prev.slice(1),{v:p}]);},[ticks,firstSym]);
   useEffect(()=>{
-    supabase.from("ml_models").select("symbol,win_rate,trained_at").then(({data})=>setMlModels(data||[]));
+    supabase.from("ml_models").select("symbol,win_rate,trained_at")
+      .then(({data, error}) => {
+        if (error) console.error("❌ ml_models fetch error:", error.message);
+        else if (data && data.length > 0) setMlModels(data);
+        else {
+          // Retry once after 3s in case of cold start
+          setTimeout(() => {
+            supabase.from("ml_models").select("symbol,win_rate,trained_at")
+              .then(({data: d2}) => { if (d2?.length > 0) setMlModels(d2); });
+          }, 3000);
+        }
+      });
     supabase.from("trades").select("result").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(100)
       .then(({data})=>{
         if(!data?.length)return;
@@ -121,7 +132,10 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
       <motion.div style={s.mlCard} variants={iv}>
         <div style={{fontFamily:"'Orbitron',monospace",fontSize:9,color:"#3a6080",letterSpacing:4,marginBottom:12}}>🧠 AUTO-DISCOVERED ML MODELS</div>
         {mlModels.length===0
-          ? <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#3a6080"}}>Loading ML models...</div>
+          ? <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#3a6080",textAlign:"center",padding:"12px 0"}}>
+              <div style={{marginBottom:6}}>⏳ Loading ML models...</div>
+              <div style={{fontSize:9,color:"#1a3550"}}>Fetching from Supabase ml_models table</div>
+            </div>
           : mlModels.map(m=>{
               const wr=Math.round(m.win_rate*100);
               const color=wr>=70?"#00ff9d":wr>=55?"#00d4ff":"#ffcc00";
