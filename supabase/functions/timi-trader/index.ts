@@ -268,7 +268,7 @@ Deno.serve(async () => {
     result:       success ? "open" : "error",
     confidence:   best.confidence,
     account_name: "edge_function",
-    notes:        `${best.reason} | ML:${best.is_ml}`,
+    session: getTradingSession().name,
   });
 
   if (success) await supabase.from("bot_config").update({ balance_cache: balance - stake }).eq("active", true);
