@@ -100,9 +100,20 @@ export default function Settings({
   // Load ML config from Supabase bot_config.symbols + ml_models table
   useEffect(() => {
     supabase.from("bot_config").select("symbols").eq("active", true).single()
-      .then(({ data }) => { if (data?.symbols) setMlSymbols(data.symbols); });
+      .then(({ data }) => {
+        if (data?.symbols && Array.isArray(data.symbols)) {
+          // Only show symbols that are actually in our ALL_SYMBOLS list
+          const validIds = ALL_SYMBOLS.map(s => s.id);
+          const filtered = data.symbols.filter(s => validIds.includes(s));
+          setMlSymbols(filtered);
+        }
+      });
+    // Also fix: if training_queue table doesn't exist yet, handle gracefully
     supabase.from("ml_models").select("symbol,win_rate,trained_at")
-      .then(({ data }) => setMlModels(data || []));
+      .then(({ data, error }) => {
+        if (!error && data) setMlModels(data);
+      });
+    // ml_models fetched above
     supabase.from("training_queue").select("symbol,status,requested_at,win_rate")
       .then(({ data }) => setTrainQueue(data || []));
   }, []);
