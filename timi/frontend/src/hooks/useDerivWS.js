@@ -361,8 +361,8 @@ export default function useDerivWS({ ai } = {}) {
     } catch { return [{ id: "primary", name: "Primary", token: "", active: true, balance: "---", currency: "USD" }]; }
   });
   const [activeSymbols, setActiveSymbols] = useState(() => {
-    try { return pGetSync("timi_symbols", ["R_75", "R_25", "BOOM1000", "CRASH1000"]); }
-    catch { return ["R_75", "R_25", "BOOM1000", "CRASH1000"]; }
+    try { return pGetSync("timi_symbols", ["BOOM1000", "CRASH1000", "frxUSDJPY"]); }
+    catch { return ["BOOM1000", "CRASH1000", "frxUSDJPY"]; }
   });
 
   const candles1m = useRef({});
@@ -387,7 +387,7 @@ export default function useDerivWS({ ai } = {}) {
       try {
         const { data, error } = await supabase
           .from("bot_config")
-          .select("token")
+          .select("token, symbols")
           .eq("active", true)
           .limit(1)
           .single();
@@ -398,6 +398,12 @@ export default function useDerivWS({ ai } = {}) {
           ));
           // Save to local storage too
           pSet("timi_accounts", prev => prev); // trigger save
+          // Also load symbols from Supabase
+          if (data.symbols && Array.isArray(data.symbols) && data.symbols.length > 0) {
+            console.log("✅ Symbols loaded from Supabase:", data.symbols);
+            setActiveSymbols(data.symbols);
+            pSet("timi_symbols", data.symbols);
+          }
         }
       } catch (e) {
         console.error("Token load error:", e);
@@ -984,6 +990,10 @@ export default function useDerivWS({ ai } = {}) {
   const updateSymbols = (syms) => {
     activeSymbolsRef.current = syms;
     setActiveSymbols(syms);
+    pSet("timi_symbols", syms);
+    // Sync to Supabase so edge function trades same symbols
+    supabase.from("bot_config").update({ symbols: syms }).eq("active", true)
+      .then(() => console.log("✅ Symbols synced to Supabase:", syms));
     candles1m.current = {};
     candles5m.current = {};
     candles15m.current = {};
