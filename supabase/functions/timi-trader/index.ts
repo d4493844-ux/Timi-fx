@@ -156,11 +156,23 @@ async function checkSymbolHealth(symbol: string, model: any, minConf: number): P
   return { tradable: sig.action !== "HOLD" && sig.confidence >= minConf, reason: sig.reason };
 }
 
-Deno.serve(async () => {
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Content-Type": "application/json",
+};
+
+Deno.serve(async (req) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: CORS });
+  }
+
   const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
   const { data: cfg } = await supabase.from("bot_config").select("*").eq("active", true).single();
-  if (!cfg || !cfg.auto_trade) return new Response(JSON.stringify({ status: "disabled" }), { headers: { "Content-Type": "application/json" } });
+  if (!cfg || !cfg.auto_trade) return new Response(JSON.stringify({ status: "disabled" }), { headers: CORS });
 
   const token     = cfg.token;
   const riskPct   = cfg.risk_pct || 2;
@@ -169,7 +181,7 @@ Deno.serve(async () => {
   const minConf   = cfg.min_confidence || 65;
 
   const consec = await getConsecutiveLosses(supabase);
-  if (consec >= 3) return new Response(JSON.stringify({ status: "paused", consecutive_losses: consec }), { headers: { "Content-Type": "application/json" } });
+  if (consec >= 3) return new Response(JSON.stringify({ status: "paused", consecutive_losses: consec }), { headers: CORS });
 
   // Load ALL ML models from Supabase — not just whitelisted symbols
   const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
@@ -259,7 +271,7 @@ Deno.serve(async () => {
       scanned: allSymbols.length,
       ml_models_used: Object.keys(ML_MODELS),
       scan_log: scanLog,
-    }), { headers: { "Content-Type": "application/json" } });
+    }), { headers: CORS });
   }
 
   // Pick best signal — ML signals ranked above fallback, then by confidence
@@ -294,5 +306,5 @@ Deno.serve(async () => {
     signals_found:   signals.length,
     auto_discovered: mlSymbols.filter(s => !cfgSymbols.includes(s)),
     scan_log:        scanLog,
-  }), { headers: { "Content-Type": "application/json" } });
+  }), { headers: CORS });
 });
