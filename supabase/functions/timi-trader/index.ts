@@ -124,8 +124,8 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         // MULT contracts: cap at $9 (Deriv demo limit), min $1
         const adjStake = isMult ? Math.min(9, Math.max(1, stake)) : Math.max(0.35, stake);
         // TP = 80% of stake, SL = 100% of stake (lose max what we put in)
-        const takeProfit = parseFloat((adjStake * 0.8).toFixed(2));
-        const stopLoss   = parseFloat((adjStake * 1.0).toFixed(2));
+        const takeProfit = parseFloat((adjStake * 0.5).toFixed(2));  // 50% of stake
+        const stopLoss   = parseFloat((adjStake * 0.9).toFixed(2));  // 90% of stake (Deriv max)
 
         if (isMult) {
           ws.send(JSON.stringify({
