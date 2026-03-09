@@ -104,30 +104,102 @@ function getTradingSession(): { active: boolean; name: string } {
 async function placeTrade(token: string, symbol: string, action: string, stake: number) {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 15000);
+    const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 25000);
     let authed = false;
+    let contractId: number | null = null;
+
     ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-    ws.onmessage = (e) => {
+    ws.onmessage = async (e) => {
       const d = JSON.parse(e.data);
+
       if (d.authorize && !authed) {
         authed = true;
-        // BOOM always spikes up → MULTUP. CRASH always spikes down → MULTDOWN.
-        // For these, ML signal direction doesn't matter — only meta confidence matters.
         let contractType: string;
         if (symbol.startsWith("BOOM"))       contractType = "MULTUP";
         else if (symbol.startsWith("CRASH")) contractType = "MULTDOWN";
         else if (symbol.startsWith("R_"))    contractType = action === "BUY" ? "CALL" : "PUT";
         else                                  contractType = action === "BUY" ? "MULTUP" : "MULTDOWN";
-        // Fix stake minimum for multipliers
-        const adjStake = Math.max(1.00, stake);
+
         const isMult = contractType.startsWith("MULT");
-        const contract = isMult
-          ? { buy: 1, price: adjStake, parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: 100 } }
-          : { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: contractType, currency: "USD", duration: 4, duration_unit: "m", symbol } };
-        ws.send(JSON.stringify(contract));
+        // MULT contracts: cap at $9 (Deriv demo limit), min $1
+        const adjStake = isMult ? Math.min(9, Math.max(1, stake)) : Math.max(0.35, stake);
+        // TP = 80% of stake, SL = 100% of stake (lose max what we put in)
+        const takeProfit = parseFloat((adjStake * 0.8).toFixed(2));
+        const stopLoss   = parseFloat((adjStake * 1.0).toFixed(2));
+
+        if (isMult) {
+          ws.send(JSON.stringify({
+            buy: 1, price: adjStake,
+            parameters: {
+              amount: adjStake, basis: "stake",
+              contract_type: contractType, currency: "USD",
+              symbol, multiplier: 100
+            }
+          }));
+          // Store for TP/SL update after buy confirms
+          (ws as any)._tp = takeProfit;
+          (ws as any)._sl = stopLoss;
+          (ws as any)._adjStake = adjStake;
+        } else {
+          ws.send(JSON.stringify({
+            buy: 1, price: adjStake,
+            parameters: {
+              amount: adjStake, basis: "stake",
+              contract_type: contractType, currency: "USD",
+              duration: 5, duration_unit: "m", symbol
+            }
+          }));
+        }
       }
-      if (d.buy)   { clearTimeout(timeout); ws.close(); resolve(d.buy); }
-      if (d.error) { clearTimeout(timeout); ws.close(); resolve({ error: d.error.message }); }
+
+      if (d.buy && !contractId) {
+        contractId = d.buy.contract_id;
+        const tp = (ws as any)._tp;
+        const sl = (ws as any)._sl;
+        const adjStake = (ws as any)._adjStake;
+
+        if (tp && sl) {
+          // Set TP/SL via contract_update immediately after trade opens
+          console.log(`📊 Setting TP=$${tp} SL=$${sl} on contract ${contractId}`);
+          ws.send(JSON.stringify({
+            contract_update: 1,
+            contract_id: contractId,
+            limit_order: { take_profit: tp, stop_loss: sl }
+          }));
+        } else {
+          clearTimeout(timeout);
+          ws.close();
+          resolve({ ...d.buy, stake_used: adjStake });
+        }
+      }
+
+      if (d.contract_update) {
+        console.log(`✅ TP/SL set on contract ${contractId}`);
+        clearTimeout(timeout);
+        ws.close();
+        resolve({
+          contract_id: contractId,
+          stake_used: (ws as any)._adjStake,
+          take_profit: (ws as any)._tp,
+          stop_loss: (ws as any)._sl,
+          tp_sl_set: true,
+          shortcode: d.contract_update?.limit_order ? "updated" : "unknown"
+        });
+      }
+
+      if (d.error) {
+        // If contract_update fails, still resolve with the open trade
+        if (contractId) {
+          console.log(`⚠️ TP/SL update failed: ${d.error.message} — trade still open`);
+          clearTimeout(timeout);
+          ws.close();
+          resolve({ contract_id: contractId, stake_used: (ws as any)._adjStake, tp_sl_error: d.error.message });
+        } else {
+          clearTimeout(timeout);
+          ws.close();
+          resolve({ error: d.error.message });
+        }
+      }
     };
     ws.onerror = () => { clearTimeout(timeout); resolve({ error: "ws error" }); };
   });
