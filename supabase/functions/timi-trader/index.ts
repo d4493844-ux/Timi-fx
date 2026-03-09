@@ -111,14 +111,18 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
       const d = JSON.parse(e.data);
       if (d.authorize && !authed) {
         authed = true;
+        // BOOM always spikes up → MULTUP. CRASH always spikes down → MULTDOWN.
+        // For these, ML signal direction doesn't matter — only meta confidence matters.
         let contractType: string;
         if (symbol.startsWith("BOOM"))       contractType = "MULTUP";
         else if (symbol.startsWith("CRASH")) contractType = "MULTDOWN";
         else if (symbol.startsWith("R_"))    contractType = action === "BUY" ? "CALL" : "PUT";
         else                                  contractType = action === "BUY" ? "MULTUP" : "MULTDOWN";
+        // Fix stake minimum for multipliers
+        const adjStake = Math.max(1.00, stake);
         const isMult = contractType.startsWith("MULT");
         const contract = isMult
-          ? { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: 100, stop_loss: stake, take_profit: stake * 2 } }
+          ? { buy: 1, price: adjStake, parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: 100, stop_loss: adjStake, take_profit: adjStake * 2 } }
           : { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: contractType, currency: "USD", duration: 4, duration_unit: "m", symbol } };
         ws.send(JSON.stringify(contract));
       }
