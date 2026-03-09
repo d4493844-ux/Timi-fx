@@ -365,14 +365,15 @@ export default function Settings({
                         </div>
                         <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, marginTop: 3,
                           color: on ? (hasModel ? "#00ff9d" : isQueued ? "#ffcc00" : "#00d4ff") : "#3a6080" }}>
-                          {on
-                            ? hasModel    ? "● ML ACTIVE"
-                            : isQueued    ? (qItem.status === "training" ? "● TRAINING..." : "● QUEUED ~30min")
-                            : qFailed     ? "● TRAIN FAILED"
+                          {on ? (
+                            hasModel ? "● ML ACTIVE"
+                            : isQueued ? (qItem.status === "training" ? "● TRAINING..." : "● QUEUED ~30min")
+                            : qFailed ? "● TRAIN FAILED"
                             : "● FALLBACK (no model)"
-                            : "○ OFF"}
+                          ) : "○ OFF"}
                         </div>
                       </motion.button>
+                    );
                   })}
                 </div>
               </div>
