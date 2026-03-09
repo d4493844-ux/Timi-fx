@@ -46,7 +46,7 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
 
   useEffect(()=>{const p=ticks[firstSym];if(!p)return;setChartData(prev=>[...prev.slice(1),{v:p}]);},[ticks,firstSym]);
   useEffect(()=>{
-    supabase.from("ml_models").select("symbol,win_rate,meta_threshold").then(({data})=>setMlModels(data||[]));
+    supabase.from("ml_models").select("symbol,win_rate,trained_at").then(({data})=>setMlModels(data||[]));
     supabase.from("trades").select("result").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(100)
       .then(({data})=>{
         if(!data?.length)return;

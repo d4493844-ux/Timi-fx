@@ -21,7 +21,7 @@ export default function AIBrain({ symbolStats={}, learningLog=[], aiReady }) {
   const [totalStats,setTotalStats] = useState({ wins:0,losses:0,wr:null });
 
   useEffect(()=>{
-    supabase.from("ml_models").select("symbol,win_rate,meta_threshold,trained_at").then(({data})=>setMlModels(data||[]));
+    supabase.from("ml_models").select("symbol,win_rate,trained_at").then(({data})=>setMlModels(data||[]));
     supabase.from("trades").select("result,symbol,notes").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(200)
       .then(({data})=>{
         if(!data?.length)return;
@@ -90,7 +90,7 @@ export default function AIBrain({ symbolStats={}, learningLog=[], aiReady }) {
                         <div>
                           <div style={{fontFamily:"'Orbitron',monospace",fontSize:12,color:"#c8e8ff",fontWeight:700}}>{SYMBOL_NAMES[m.symbol]||m.symbol}</div>
                           <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginTop:3}}>
-                            meta_threshold: {m.meta_threshold||0.60} · trained: {m.trained_at?.slice(0,10)}
+                            trained: {m.trained_at?.slice(0,10)} · trained: {m.trained_at?.slice(0,10)}
                           </div>
                         </div>
                         <div style={{textAlign:"right"}}>
