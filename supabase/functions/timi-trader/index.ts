@@ -172,7 +172,7 @@ Deno.serve(async () => {
   const ML_MODELS: Record<string, any> = {};
   for (const row of (mlRows || [])) {
     try {
-      const parsed = typeof row.model_json === "string" ? JSON.parse(row.model_json) : row.model_json;
+      const parsed = row.model_json;
       ML_MODELS[row.symbol] = parsed;
     } catch {}
   }
