@@ -214,6 +214,100 @@ Deno.serve(async (req) => {
   const actions: any[] = [];
 
   try {
+    // 0. Process training queue FIRST — symbols user added in Settings
+    const { data: queueItems } = await supabase
+      .from("training_queue")
+      .select("*")
+      .eq("status", "pending")
+      .order("requested_at", { ascending: true })
+      .limit(3); // process max 3 per run
+
+    if (queueItems && queueItems.length > 0) {
+      log.push(`🎯 Training queue: ${queueItems.length} symbols pending`);
+
+      for (const item of queueItems) {
+        const sym = item.symbol;
+        log.push(`  🔧 Training ${sym}...`);
+
+        // Mark as training
+        await supabase.from("training_queue")
+          .update({ status: "training", started_at: new Date().toISOString() })
+          .eq("symbol", sym);
+
+        try {
+          // Collect candle data
+          const candles1m = await fetchCandles(sym, 60, 4999);
+          const candles5m = await fetchCandles(sym, 300, 1000);
+
+          if (candles1m.length < 200) {
+            await supabase.from("training_queue")
+              .update({ status: "failed", error: `Only ${candles1m.length} candles available` })
+              .eq("symbol", sym);
+            log.push(`  ❌ ${sym}: not enough data (${candles1m.length} candles)`);
+            continue;
+          }
+
+          const rows = engineerFeatures(candles1m, candles5m);
+          log.push(`  📐 ${sym}: ${rows.length} feature rows built`);
+
+          if (rows.length < 100) {
+            await supabase.from("training_queue")
+              .update({ status: "failed", error: "Not enough feature rows" })
+              .eq("symbol", sym);
+            continue;
+          }
+
+          const { trees, winRate, nTrades } = buildSimpleModel(rows, FEATURES);
+          log.push(`  🌲 ${sym}: WR=${(winRate*100).toFixed(1)}% on ${nTrades} test trades`);
+
+          // Build and upload model regardless of WR (user explicitly requested it)
+          const modelPayload = {
+            symbol: sym,
+            features: FEATURES,
+            main_trees: trees.length > 0 ? trees : [{ f: 0, t: 50, l: { v: 0.3 }, r: { v: -0.3 } }],
+            meta_trees: trees.length > 0 ? trees : [{ f: 0, t: 50, l: { v: 0.3 }, r: { v: -0.3 } }],
+            meta_threshold: winRate >= 0.58 ? 0.60 : 0.55,
+            version: "queue_v1",
+            trained_at: new Date().toISOString(),
+            win_rate: winRate,
+            n_trades: nTrades,
+          };
+
+          await supabase.from("ml_models").upsert({
+            symbol: sym,
+            model_json: JSON.stringify(modelPayload),
+            win_rate: winRate,
+            trained_at: new Date().toISOString(),
+          }, { onConflict: "symbol" });
+
+          // Add to bot_config symbols if not already there
+          const { data: cfg } = await supabase
+            .from("bot_config").select("symbols").eq("active", true).single();
+          if (cfg?.symbols && !(cfg.symbols as string[]).includes(sym)) {
+            await supabase.from("bot_config")
+              .update({ symbols: [...(cfg.symbols as string[]), sym] })
+              .eq("active", true);
+          }
+
+          // Mark queue item as done
+          await supabase.from("training_queue").update({
+            status: "done",
+            completed_at: new Date().toISOString(),
+            win_rate: winRate,
+          }).eq("symbol", sym);
+
+          log.push(`  ✅ ${sym}: trained & uploaded! WR=${(winRate*100).toFixed(1)}%`);
+          actions.push({ symbol: sym, action: "trained_from_queue", winRate, nTrades });
+
+        } catch (trainErr) {
+          await supabase.from("training_queue")
+            .update({ status: "failed", error: String(trainErr) })
+            .eq("symbol", sym);
+          log.push(`  ❌ ${sym}: training error — ${trainErr}`);
+        }
+      }
+    }
+
     // 1. Get all existing ML models
     const { data: mlModels } = await supabase
       .from("ml_models")

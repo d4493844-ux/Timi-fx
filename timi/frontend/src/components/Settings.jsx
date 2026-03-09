@@ -86,6 +86,7 @@ export default function Settings({
   const [savedFlash,   setSavedFlash]   = useState("");
   const [mlSymbols,    setMlSymbols]    = useState([]);       // symbols selected for ML trading
   const [mlModels,     setMlModels]     = useState([]);       // models that exist in Supabase
+  const [trainQueue,   setTrainQueue]   = useState([]);       // symbols queued for training
   const [mlSaving,     setMlSaving]     = useState(false);
   const [mlFlash,      setMlFlash]      = useState("");
   const [tab,          setTab]          = useState("general"); // general | ml | markets | accounts
@@ -102,6 +103,8 @@ export default function Settings({
       .then(({ data }) => { if (data?.symbols) setMlSymbols(data.symbols); });
     supabase.from("ml_models").select("symbol,win_rate,trained_at")
       .then(({ data }) => setMlModels(data || []));
+    supabase.from("training_queue").select("symbol,status,requested_at,win_rate")
+      .then(({ data }) => setTrainQueue(data || []));
   }, []);
 
   const saveMLSymbols = async (syms) => {
@@ -119,12 +122,29 @@ export default function Settings({
     setMlSaving(false);
   };
 
-  const toggleMLSymbol = (symId) => {
-    const updated = mlSymbols.includes(symId)
+  const toggleMLSymbol = async (symId) => {
+    const isOn = mlSymbols.includes(symId);
+    const updated = isOn
       ? mlSymbols.filter(s => s !== symId)
       : [...mlSymbols, symId];
     if (updated.length === 0) return;
-    saveMLSymbols(updated);
+    await saveMLSymbols(updated);
+
+    // If turning ON a symbol with no trained model → queue it for training
+    if (!isOn) {
+      const hasModel = mlModels.some(m => m.symbol === symId);
+      if (!hasModel) {
+        const { error } = await supabase.from("training_queue").upsert({
+          symbol: symId,
+          status: "pending",
+          requested_at: new Date().toISOString(),
+        }, { onConflict: "symbol" });
+        if (!error) {
+          setMlFlash(`🧠 ${symId} queued for training! (~30 min)`);
+          setTimeout(() => setMlFlash(""), 4000);
+        }
+      }
+    }
   };
 
   const handleAddAccount = () => {
@@ -328,24 +348,31 @@ export default function Settings({
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                   {ALL_SYMBOLS.filter(s => s.group === group).map(sym => {
-                    const on = mlSymbols.includes(sym.id);
+                     const on = mlSymbols.includes(sym.id);
                     const hasModel = mlModels.some(m => m.symbol === sym.id);
+                    const qItem = trainQueue.find(q => q.symbol === sym.id);
+                    const isQueued = qItem?.status === "pending" || qItem?.status === "training";
+                    const qFailed = qItem?.status === "failed";
                     return (
                       <motion.button key={sym.id} whileTap={{ scale: 0.94 }}
                         onClick={() => toggleMLSymbol(sym.id)}
                         style={c.symBtn(on, hasModel)}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                          <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 9, color: on ? (hasModel ? "#00ff9d" : "#00d4ff") : "#c8e8ff" }}>
+                          <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 9, color: on ? (hasModel ? "#00ff9d" : isQueued ? "#ffcc00" : "#00d4ff") : "#c8e8ff" }}>
                             {sym.label}
                           </div>
-                          {hasModel && <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 7, color: "#00ff9d" }}>🧠</div>}
+                          <div style={{ fontSize: 9 }}>{hasModel ? "🧠" : isQueued ? "⏳" : qFailed ? "❌" : ""}</div>
                         </div>
                         <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, marginTop: 3,
-                          color: on ? (hasModel ? "#00ff9d" : "#00d4ff") : "#3a6080" }}>
-                          {on ? (hasModel ? "● ML ACTIVE" : "● FALLBACK") : "○ OFF"}
+                          color: on ? (hasModel ? "#00ff9d" : isQueued ? "#ffcc00" : "#00d4ff") : "#3a6080" }}>
+                          {on
+                            ? hasModel    ? "● ML ACTIVE"
+                            : isQueued    ? (qItem.status === "training" ? "● TRAINING..." : "● QUEUED ~30min")
+                            : qFailed     ? "● TRAIN FAILED"
+                            : "● FALLBACK (no model)"
+                            : "○ OFF"}
                         </div>
                       </motion.button>
-                    );
                   })}
                 </div>
               </div>
