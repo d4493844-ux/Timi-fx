@@ -122,7 +122,7 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         const adjStake = Math.max(1.00, stake);
         const isMult = contractType.startsWith("MULT");
         const contract = isMult
-          ? { buy: 1, price: adjStake, parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: 100, stop_loss: adjStake, take_profit: adjStake * 2 } }
+          ? { buy: 1, price: adjStake, parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: 100 } }
           : { buy: 1, price: stake, parameters: { amount: stake, basis: "stake", contract_type: contractType, currency: "USD", duration: 4, duration_unit: "m", symbol } };
         ws.send(JSON.stringify(contract));
       }
