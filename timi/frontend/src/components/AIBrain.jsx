@@ -22,7 +22,7 @@ export default function AIBrain({ symbolStats={}, learningLog=[], aiReady }) {
 
   useEffect(()=>{
     supabase.from("ml_models").select("symbol,win_rate,trained_at").then(({data})=>setMlModels(data||[]));
-    supabase.from("trades").select("result,symbol,notes").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(200)
+    supabase.from("trades").select("result,symbol,session,confidence").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(200)
       .then(({data})=>{
         if(!data?.length)return;
         const decided=data.filter(t=>t.result==="win"||t.result==="loss");
@@ -199,7 +199,7 @@ export default function AIBrain({ symbolStats={}, learningLog=[], aiReady }) {
                 </div>
                 <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginTop:3}}>
                   {new Date(t.created_at).toLocaleString()}
-                  {t.notes&&` · ${t.notes.slice(0,50)}`}
+                  {t.session&&` · ${t.session.slice(0,50)}`}
                 </div>
               </div>
               <div style={{fontFamily:"'Orbitron',monospace",fontSize:13,fontWeight:700,color:t.result==="win"?"#00ff9d":t.result==="loss"?"#ff3366":"#ffcc00"}}>

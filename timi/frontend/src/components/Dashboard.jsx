@@ -136,7 +136,7 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
                       <motion.div style={{height:"100%",borderRadius:2,background:`linear-gradient(90deg,${color}55,${color})`}} initial={{width:0}} animate={{width:wr+"%"}} transition={{duration:1}}/>
                     </div>
                     <div style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
-                      <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#3a6080"}}>meta_threshold: {m.meta_threshold||0.60}</div>
+                      <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#3a6080"}}>trained: {m.trained_at?.slice(0,10)}</div>
                       <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#00ff9d"}}>✅ AUTO-ACTIVE</div>
                     </div>
                   </div>
