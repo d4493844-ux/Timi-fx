@@ -17,7 +17,7 @@ const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const MIN_TRADES        = 50;    // minimum trades before considering promotion
 const MIN_WIN_RATE      = 0.58;  // 58% win rate needed
 const RETRAIN_WIN_RATE  = 0.75;  // 75% → retrain existing ML model with fresh data
-const DEMOTION_RATE     = 0.45;  // below 45% → demote ML symbol back to fallback
+const DEMOTION_RATE     = 0.40;  // below 40% with 100+ trades → demote (very conservative)
 
 // All possible symbols TIMI can trade
 const ALL_SYMBOLS = [
@@ -350,7 +350,7 @@ Deno.serve(async (req) => {
       log.push(`  ${symbol}: ${perf.total} trades, ${(wr*100).toFixed(1)}% WR, ML=${hasML}`);
 
       // ── DEMOTION: ML symbol performing badly ──
-      if (hasML && perf.mlTotal >= 30 && perf.mlWins / perf.mlTotal < DEMOTION_RATE) {
+      if (hasML && perf.mlTotal >= 100 && perf.mlWins / perf.mlTotal < DEMOTION_RATE) {
         const mlWR = perf.mlWins / perf.mlTotal;
         log.push(`  ⬇️ ${symbol}: ML WR ${(mlWR*100).toFixed(1)}% < ${DEMOTION_RATE*100}% — DEMOTING`);
         // Remove from ml_models
