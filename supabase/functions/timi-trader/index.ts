@@ -168,7 +168,7 @@ Deno.serve(async () => {
   if (consec >= 3) return new Response(JSON.stringify({ status: "paused", consecutive_losses: consec }), { headers: { "Content-Type": "application/json" } });
 
   // Load ALL ML models from Supabase — not just whitelisted symbols
-  const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate, meta_threshold");
+  const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
   const ML_MODELS: Record<string, any> = {};
   for (const row of (mlRows || [])) {
     try {
