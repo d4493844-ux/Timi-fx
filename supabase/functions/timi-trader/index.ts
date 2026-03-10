@@ -301,9 +301,44 @@ Deno.serve(async (req) => {
       let sig;
 
       if (ML_MODELS[symbol]) {
-        // ── ML path: main model + meta-labeling filter ──
+        // ── ML path: main model + meta-labeling + indicator confirmation ──
         const features = buildFeatures(c1m, c5m);
         sig = mlPredict(ML_MODELS[symbol], features);
+
+        // Extra confirmation — same filters local bot uses
+        if (sig.action !== "HOLD") {
+          const c    = c1m.map((x: any) => parseFloat(x.close));
+          const rsi  = features[0];       // rsi is first feature
+          const macd = features[1];       // macd_hist
+          const ema_bull = features[4];   // ema_bull
+          const ema_bear = features[5];   // ema_bear
+          const trend5m  = features[20];  // trend5m last feature
+          const bb_pos   = features[2];   // bb_pos
+
+          let confirmed = true;
+          let rejectReason = "";
+
+          if (sig.action === "BUY") {
+            // For BUY: need bullish confirmation
+            if (rsi > 75)                           { confirmed = false; rejectReason = "rsi_overbought:" + rsi.toFixed(0); }
+            else if (rsi < 30)                      { confirmed = false; rejectReason = "rsi_oversold_on_buy:" + rsi.toFixed(0); }
+            else if (macd < 0 && ema_bull === 0)    { confirmed = false; rejectReason = "macd_bear+no_ema_bull"; }
+            else if (trend5m === -1 && sig.confidence < 85) { confirmed = false; rejectReason = "5m_bear_trend_low_conf"; }
+            else if (bb_pos > 0.95)                 { confirmed = false; rejectReason = "bb_extreme_top"; }
+          } else if (sig.action === "SELL") {
+            // For SELL: need bearish confirmation
+            if (rsi < 25)                           { confirmed = false; rejectReason = "rsi_oversold:" + rsi.toFixed(0); }
+            else if (rsi > 70)                      { confirmed = false; rejectReason = "rsi_overbought_on_sell:" + rsi.toFixed(0); }
+            else if (macd > 0 && ema_bear === 0)    { confirmed = false; rejectReason = "macd_bull+no_ema_bear"; }
+            else if (trend5m === 1 && sig.confidence < 85) { confirmed = false; rejectReason = "5m_bull_trend_low_conf"; }
+            else if (bb_pos < 0.05)                 { confirmed = false; rejectReason = "bb_extreme_bottom"; }
+          }
+
+          if (!confirmed) {
+            sig = { action: "HOLD", confidence: 0, reason: `indicator_rejected:${rejectReason}` };
+          }
+        }
+
         const logLine = `${symbol}: ML→${sig.action} conf:${sig.confidence} (${sig.reason})`;
         console.log(logLine);
         scanLog.push(logLine);
