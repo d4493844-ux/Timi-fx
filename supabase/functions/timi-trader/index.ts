@@ -476,15 +476,21 @@ Deno.serve(async (req) => {
   console.log(`🧠 ML models: ${Object.keys(ML_MODELS).join(", ")}`);
 
   const mlSymbols  = Object.keys(ML_MODELS);
-  const cfgSymbols = cfg.symbols || ["BOOM1000", "CRASH1000", "frxUSDJPY"];
-  const allSymbols = [...new Set([...mlSymbols, ...cfgSymbols])];
-  console.log(`📡 Scanning: ${allSymbols.join(", ")}`);
+  const cfgSymbols = cfg.symbols || ["BOOM500", "CRASH500", "frxUSDJPY"];
+  // INTERSECTION only — must be in BOTH ml_models AND bot_config.symbols
+  // This means user controls exactly which symbols trade via Settings
+  const allSymbols = cfgSymbols.filter(s => mlSymbols.includes(s));
+  // Fallback: if no intersection found, use cfg symbols anyway (no ML, uses fallback strategy)
+  const finalSymbols = allSymbols.length > 0 ? allSymbols : cfgSymbols;
+  console.log(`📡 Scanning (ML+config intersection): ${finalSymbols.join(", ")}`);
+  // Rename for rest of function
+  const allSymbolsList = finalSymbols;
 
   const signals: any[]  = [];
   const scanLog: string[] = [];
   const session = getTradingSession();
 
-  for (const symbol of allSymbols) {
+  for (const symbol of allSymbolsList) {
     try {
       // ── STEP 1: Session check (forex only) ──
       const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
@@ -586,7 +592,7 @@ Deno.serve(async (req) => {
   if (signals.length === 0) {
     return new Response(JSON.stringify({
       status: "no_signal",
-      scanned: allSymbols.length,
+      scanned: allSymbolsList.length,
       ml_models_used: Object.keys(ML_MODELS),
       scan_log: scanLog,
     }), { headers: CORS });
@@ -631,7 +637,7 @@ Deno.serve(async (req) => {
     signal:          best,
     stake,
     trade:           result,
-    ml_models_used:  Object.keys(ML_MODELS),
+    ml_models_used:  allSymbolsList,
     signals_found:   signals.length,
     scan_log:        scanLog,
     hmm_regimes:     scanLog.filter(l => l.includes("HMM")),
