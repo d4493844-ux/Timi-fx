@@ -438,6 +438,109 @@ async function getConsecutiveLosses(supabase: any): Promise<number> {
   return count;
 }
 
+
+// ─────────────────────────────────────────────
+// MONTE CARLO RISK SIMULATION
+// Simulates 5000 possible sequences of next 20 trades
+// to find optimal stake that maximizes growth while
+// keeping risk of ruin below 5%
+// ─────────────────────────────────────────────
+function monteCarloStake(
+  balance: number,
+  baseStakePct: number,
+  winRate: number,
+  avgWinPct: number,   // avg win as % of stake (e.g. 0.85 for 85%)
+  avgLossPct: number,  // avg loss as % of stake (e.g. 0.90 for 90%)
+  minStake: number,
+  maxStake: number
+): { stake: number; riskOfRuin: number; expectedGrowth: number; recommendation: string } {
+  const SIMULATIONS  = 5000;
+  const HORIZON      = 20;   // next 20 trades
+  const RUIN_THRESH  = 0.20; // account considered "ruined" if drops 20% from current
+
+  let testPct = baseStakePct / 100;
+
+  // Run simulations at current stake %
+  let ruinCount  = 0;
+  let totalGrowth = 0;
+
+  for (let sim = 0; sim < SIMULATIONS; sim++) {
+    let bal = balance;
+    const ruinLevel = balance * (1 - RUIN_THRESH);
+    let ruined = false;
+
+    for (let t = 0; t < HORIZON; t++) {
+      const stake = Math.max(minStake, Math.min(maxStake, bal * testPct));
+      const win   = Math.random() < winRate;
+      bal += win ? stake * avgWinPct : -(stake * avgLossPct);
+      if (bal <= ruinLevel) { ruined = true; break; }
+    }
+
+    if (ruined) ruinCount++;
+    totalGrowth += (bal - balance) / balance;
+  }
+
+  const riskOfRuin   = ruinCount / SIMULATIONS;
+  const expectedGrowth = totalGrowth / SIMULATIONS;
+
+  // If risk of ruin > 5%, reduce stake by 25%
+  // If risk of ruin < 1% AND win rate > 60%, allow up to 25% stake increase
+  let finalPct   = testPct;
+  let recommendation = "normal";
+
+  if (riskOfRuin > 0.10) {
+    finalPct = testPct * 0.50;  // cut stake in half — dangerous conditions
+    recommendation = "reduced_50pct";
+  } else if (riskOfRuin > 0.05) {
+    finalPct = testPct * 0.75;  // reduce by 25%
+    recommendation = "reduced_25pct";
+  } else if (riskOfRuin < 0.01 && winRate > 0.62 && expectedGrowth > 0) {
+    finalPct = Math.min(testPct * 1.25, 0.05); // boost up to 25% but cap at 5% of balance
+    recommendation = "boosted_25pct";
+  }
+
+  const finalStake = Math.max(minStake, Math.min(maxStake, parseFloat((balance * finalPct).toFixed(2))));
+  return { stake: finalStake, riskOfRuin, expectedGrowth, recommendation };
+}
+
+// Get recent win rate and avg payout from trades table
+async function getRecentPerformance(supabase: any): Promise<{ winRate: number; avgWinPct: number; avgLossPct: number }> {
+  try {
+    const { data } = await supabase
+      .from("trades")
+      .select("result, stake, pnl")
+      .eq("account_name", "edge_function")
+      .in("result", ["win", "loss"])
+      .order("created_at", { ascending: false })
+      .limit(30);
+
+    if (!data || data.length < 5) {
+      // Not enough data — use conservative defaults
+      return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90 };
+    }
+
+    const wins   = data.filter((t: any) => t.result === "win");
+    const losses = data.filter((t: any) => t.result === "loss");
+    const winRate = wins.length / data.length;
+
+    // Calculate avg win/loss as % of stake
+    const avgWinPct = wins.length > 0
+      ? wins.reduce((a: number, t: any) => a + (t.pnl || 0.85 * t.stake) / (t.stake || 1), 0) / wins.length
+      : 0.85;
+    const avgLossPct = losses.length > 0
+      ? losses.reduce((a: number, t: any) => a + Math.abs(t.pnl || 0.90 * t.stake) / (t.stake || 1), 0) / losses.length
+      : 0.90;
+
+    return {
+      winRate:    Math.max(0.35, Math.min(0.95, winRate)),
+      avgWinPct:  Math.max(0.50, Math.min(1.50, avgWinPct)),
+      avgLossPct: Math.max(0.50, Math.min(1.00, avgLossPct)),
+    };
+  } catch(e) {
+    return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90 };
+  }
+}
+
 // ─────────────────────────────────────────────
 // MAIN HANDLER
 // ─────────────────────────────────────────────
@@ -451,7 +554,25 @@ Deno.serve(async (req) => {
   const token   = cfg.token;
   const riskPct = cfg.risk_pct || 2;
   const balance = cfg.balance_cache || 10;
-  const stake   = Math.max(0.35, parseFloat(((balance * riskPct) / 100).toFixed(2)));
+
+  // ── MONTE CARLO DYNAMIC STAKE ──
+  // Get recent performance stats
+  const perf = await getRecentPerformance(supabase);
+  const isMult = (cfg.symbols || []).some((s: string) => s.startsWith("BOOM") || s.startsWith("CRASH"));
+  const minStk = isMult ? 1.00 : 0.35;
+  const maxStk = isMult ? 9.00 : balance * 0.05; // max 5% of balance for CALL/PUT
+
+  const mc = monteCarloStake(
+    balance,
+    riskPct,
+    perf.winRate,
+    perf.avgWinPct,
+    perf.avgLossPct,
+    minStk,
+    maxStk
+  );
+  const stake = mc.stake;
+  console.log(`💰 Monte Carlo stake: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
   const minConf = cfg.min_confidence || 65;
 
   // Circuit breaker — 3 consecutive losses → pause
@@ -636,6 +757,7 @@ Deno.serve(async (req) => {
     status:          success ? "trade_placed" : "trade_failed",
     signal:          best,
     stake,
+    monte_carlo:     { risk_of_ruin: mc.riskOfRuin, expected_growth: mc.expectedGrowth, recommendation: mc.recommendation, win_rate_used: perf.winRate },
     trade:           result,
     ml_models_used:  allSymbolsList,
     signals_found:   signals.length,
