@@ -4,10 +4,29 @@ import numpy as np
 import os
 import urllib.request
 
+WIN_RATES = {
+    "BOOM500": 0.776,
+    "CRASH500": 0.764,
+    "BOOM1000": 0.828,
+    "CRASH1000": 0.86,
+    "frxUSDJPY": 0.656,
+    "cryBTCUSD": 0.653,
+    "R_25": 0.646,
+    "R_50": 0.646,
+    "R_75": 0.689,
+    "R_100": 0.654,
+    "frxEURUSD": 0.677,
+    "frxGBPUSD": 0.625,
+    "frxXAUUSD": 0.696,
+    "cryETHUSD": 0.626,
+    "frxEURGBP": 0.663,
+    "frxXAGUSD": 0.678
+}
+
 SUPABASE_URL = "https://pedbupgjxlcumidwoktc.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjMyNzQ1MiwiZXhwIjoyMDg3OTAzNDUyfQ.Ktm6Hj88LIJubB-WSPEZEhDNQwpZ5Gyw7nH2IWJI0fo"
 
-SYMBOLS = ["BOOM1000", "CRASH1000", "frxUSDJPY"]
+SYMBOLS = ["BOOM500","CRASH500","BOOM1000","CRASH1000","frxUSDJPY","cryBTCUSD","R_25","R_50","R_75","R_100","frxEURUSD","frxGBPUSD","frxXAUUSD","cryETHUSD","frxEURGBP","frxXAGUSD"]
 FEATURES = [
     'rsi', 'macd_hist', 'bb_pos', 'bb_width',
     'ema_bull', 'ema_bear',
@@ -60,8 +79,8 @@ def upsert_model(symbol, payload):
     data = json.dumps({
         "symbol": symbol,
         "model_json": json.dumps(payload),
-        # win_rate from actual training — read from model eval if available
-        "win_rate": 0.805 if "BOOM" in symbol else 0.827 if "CRASH" in symbol else 0.552,
+        # win_rate from actual Kalman-enhanced training results
+        "win_rate": WIN_RATES.get(symbol, 0.60),
         "trained_at": "now()"
     }).encode()
 

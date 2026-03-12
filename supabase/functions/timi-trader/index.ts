@@ -47,6 +47,46 @@ function calcRSI(prices: number[], period = 14): number {
   return 100 - 100 / (1 + g / (l || 1e-10));
 }
 
+
+// ─────────────────────────────────────────────
+// KALMAN FILTER — adaptive price smoother
+// ─────────────────────────────────────────────
+function kalmanFilter(prices: number[], processNoise = 1e-5, measurementNoise = 1e-2): { filtered: number[]; velocity: number[] } {
+  const n = prices.length;
+  const filtered  = new Array(n).fill(0);
+  const velocity  = new Array(n).fill(0);
+
+  let x0 = prices[0], x1 = 0.0; // state: [price, velocity]
+  let p00 = 1.0, p01 = 0.0, p10 = 0.0, p11 = 1.0; // covariance 2x2
+
+  for (let i = 0; i < n; i++) {
+    // Predict: x = F*x, P = F*P*F' + Q
+    const px0 = x0 + x1;
+    const px1 = x1;
+    const pp00 = p00 + p10 + p01 + p11 + processNoise;
+    const pp01 = p01 + p11;
+    const pp10 = p10 + p11;
+    const pp11 = p11 + processNoise;
+
+    // Update: K = P*H'*(H*P*H'+R)^-1
+    const S   = pp00 + measurementNoise;
+    const k0  = pp00 / S;
+    const k1  = pp10 / S;
+    const inn = prices[i] - px0; // innovation
+
+    x0 = px0 + k0 * inn;
+    x1 = px1 + k1 * inn;
+    p00 = pp00 - k0 * pp00;
+    p01 = pp01 - k0 * pp01;
+    p10 = pp10 - k1 * pp00;
+    p11 = pp11 - k1 * pp01;
+
+    filtered[i] = x0;
+    velocity[i] = x1;
+  }
+  return { filtered, velocity };
+}
+
 function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
   const c = candles1m.map((x: any) => parseFloat(x.close));
   const h = candles1m.map((x: any) => parseFloat(x.high));
@@ -82,13 +122,38 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
     const e20 = calcEMA(c5, 20), e50 = calcEMA(c5, 50), r5 = calcRSI(c5);
     trend5m = e20 > e50 && r5 > 50 ? 1 : e20 < e50 && r5 < 50 ? -1 : 0;
   }
+  // ── 6 Kalman features ──
+  const kf      = kalmanFilter(c);
+  const kfPrice = kf.filtered[kf.filtered.length - 1];
+  const kfVel   = kf.velocity[kf.velocity.length - 1];
+
+  // 1. Price deviation from Kalman estimate
+  const kalman_price_vs_raw  = (price - kfPrice) / (kfPrice + 1e-10);
+  // 2. Kalman velocity (trend speed)
+  const kalman_velocity      = kfVel / (kfPrice + 1e-10);
+  // 3. Kalman trend direction
+  const kalman_trend_dir     = kfVel > 0 ? 1 : kfVel < 0 ? -1 : 0;
+  // 4. Kalman noise ratio — rolling std of residuals (last 20)
+  const residuals = kf.filtered.slice(-20).map((kp, i) => (c[c.length - 20 + i] - kp) / (kp + 1e-10));
+  const resMean   = residuals.reduce((a, b) => a + b, 0) / residuals.length;
+  const kalman_noise_ratio   = Math.sqrt(residuals.reduce((a, b) => a + Math.pow(b - resMean, 2), 0) / residuals.length);
+  // 5. Kalman-EMA agreement
+  const ema8dir              = ema8 > ema21 ? 1 : -1;
+  const kalman_ema_agreement = Math.sign(kfVel) === ema8dir ? 1 : 0;
+  // 6. Kalman acceleration (change in velocity)
+  const kfVelPrev            = kf.velocity[kf.velocity.length - 2] || 0;
+  const kalman_acceleration  = (kfVel - kfVelPrev) / (Math.abs(kfPrice) + 1e-10);
+
   return [
     rsi, macd_hist, bb_pos, bb_width, ema_bull, ema_bear,
     (price - ema8) / (ema8 + 1e-10), (price - ema21) / (ema21 + 1e-10), (price - ema50) / (ema50 + 1e-10),
     atr_pct, candle_body, candle_dir, high_low_range,
     mom(1), mom(3), mom(5), mom(10),
     rsi < 35 ? 1 : 0, rsi > 65 ? 1 : 0, rsi >= 45 && rsi <= 55 ? 1 : 0,
-    trend5m
+    trend5m,
+    // 6 Kalman features
+    kalman_price_vs_raw, kalman_velocity, kalman_trend_dir,
+    kalman_noise_ratio, kalman_ema_agreement, kalman_acceleration
   ];
 }
 
