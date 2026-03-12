@@ -572,7 +572,8 @@ Deno.serve(async (req) => {
     maxStk
   );
   const stake = mc.stake;
-  console.log(`💰 Monte Carlo stake: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
+  const baseStake = Math.max(minStk, parseFloat(((balance * riskPct) / 100).toFixed(2)));
+  console.log(`💰 Base stake: $${baseStake} → Monte Carlo adjusted: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
   const minConf = cfg.min_confidence || 65;
 
   // Circuit breaker — 3 consecutive losses → pause
@@ -757,7 +758,7 @@ Deno.serve(async (req) => {
     status:          success ? "trade_placed" : "trade_failed",
     signal:          best,
     stake,
-    monte_carlo:     { risk_of_ruin: mc.riskOfRuin, expected_growth: mc.expectedGrowth, recommendation: mc.recommendation, win_rate_used: perf.winRate },
+    monte_carlo:     { base_stake: baseStake, final_stake: stake, risk_of_ruin: mc.riskOfRuin, expected_growth: mc.expectedGrowth, recommendation: mc.recommendation, win_rate_used: perf.winRate },
     trade:           result,
     ml_models_used:  allSymbolsList,
     signals_found:   signals.length,
