@@ -471,7 +471,7 @@ async function aiBrainLearn(supabase: any): Promise<void> {
 // ─────────────────────────────────────────────
 // INDICATOR CONFIRMATION (unchanged from before)
 // ─────────────────────────────────────────────
-function confirmWithIndicators(features: number[], action: string, confidence: number): { confirmed: boolean; reason: string } {
+function confirmWithIndicators(features: number[], action: string, confidence: number, symbol: string): { confirmed: boolean; reason: string } {
   const rsi      = features[0];
   const macd     = features[1];
   const bb_pos   = features[2];
@@ -479,6 +479,37 @@ function confirmWithIndicators(features: number[], action: string, confidence: n
   const ema_bear = features[5];
   const trend5m  = features[20];
 
+  const isBoom   = symbol.startsWith("BOOM");
+  const isCrash  = symbol.startsWith("CRASH");
+  const isSpike  = isBoom || isCrash;
+
+  if (isSpike) {
+    // ── BOOM/CRASH spike logic — opposite of normal markets ──
+    // BOOM spikes UP from oversold conditions
+    // CRASH spikes DOWN from overbought conditions
+    if (isBoom && action === "BUY") {
+      // Allow oversold RSI — that's when BOOM spikes happen
+      if (rsi > 85)                        return { confirmed: false, reason: "rsi_extremely_overbought:" + rsi.toFixed(0) };
+      if (trend5m === -1 && confidence < 85) return { confirmed: false, reason: "5m_bear_trend_low_conf" };
+    }
+    if (isCrash && action === "SELL") {
+      // Allow overbought RSI — that's when CRASH spikes happen
+      if (rsi < 15)                        return { confirmed: false, reason: "rsi_extremely_oversold:" + rsi.toFixed(0) };
+      if (trend5m === 1 && confidence < 85)  return { confirmed: false, reason: "5m_bull_trend_low_conf" };
+    }
+    // For BOOM SELL or CRASH BUY — apply normal strict filters
+    if (isBoom && action === "SELL") {
+      if (rsi < 25)   return { confirmed: false, reason: "rsi_oversold_boom_sell" };
+      if (ema_bear === 0) return { confirmed: false, reason: "no_ema_bear_for_boom_sell" };
+    }
+    if (isCrash && action === "BUY") {
+      if (rsi > 75)   return { confirmed: false, reason: "rsi_overbought_crash_buy" };
+      if (ema_bull === 0) return { confirmed: false, reason: "no_ema_bull_for_crash_buy" };
+    }
+    return { confirmed: true, reason: "" };
+  }
+
+  // ── NORMAL markets (Forex, Crypto, VIX) ──
   if (action === "BUY") {
     if (rsi > 75)                                    return { confirmed: false, reason: "rsi_overbought:" + rsi.toFixed(0) };
     if (rsi < 30)                                    return { confirmed: false, reason: "rsi_oversold_on_buy:" + rsi.toFixed(0) };
@@ -815,7 +846,7 @@ Deno.serve(async (req) => {
         }
 
         // ── STEP 5: Indicator confirmation ──
-        const { confirmed, reason } = confirmWithIndicators(features, sig.action, sig.confidence);
+        const { confirmed, reason } = confirmWithIndicators(features, sig.action, sig.confidence, symbol);
         if (!confirmed) {
           scanLog.push(`${symbol}: indicator_rejected:${reason}`); continue;
         }
