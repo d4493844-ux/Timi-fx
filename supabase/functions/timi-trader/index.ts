@@ -48,6 +48,77 @@ function calcRSI(prices: number[], period = 14): number {
 }
 
 
+
+// ─────────────────────────────────────────────
+// GARCH(1,1) — conditional volatility estimate
+// ─────────────────────────────────────────────
+function garchVolatility(returns: number[], omega=1e-6, alpha=0.1, beta=0.85): number[] {
+  const n = returns.length;
+  const variance = new Array(n).fill(0);
+  const warmup = returns.slice(0, 20);
+  variance[0] = warmup.reduce((a,b) => a + b*b, 0) / (warmup.length || 1);
+  for (let i = 1; i < n; i++) {
+    variance[i] = omega + alpha * returns[i-1]**2 + beta * variance[i-1];
+  }
+  return variance.map(v => Math.sqrt(Math.max(v, 1e-12)));
+}
+
+// ─────────────────────────────────────────────
+// ORNSTEIN-UHLENBECK — mean reversion features
+// ─────────────────────────────────────────────
+function ouFeatures(prices: number[], window=20): { theta: number; zscore: number; revTime: number; meanDist: number } {
+  if (prices.length < window) return { theta:0, zscore:0, revTime:1, meanDist:0 };
+  const p   = prices.slice(-window);
+  const mu  = p.reduce((a,b) => a+b, 0) / window;
+  const std = Math.sqrt(p.reduce((a,b) => a + (b-mu)**2, 0) / window) + 1e-10;
+
+  // Estimate theta via OLS: dp = theta*(mu-p)*dt
+  const y = p.slice(1).map((v,i) => v - p[i]);
+  const x = p.slice(0,-1).map(v => mu - v);
+  const xxSum = x.reduce((a,b) => a + b*b, 0);
+  const xySum = x.reduce((a,b,i) => a + b*y[i], 0);
+  const theta = xxSum > 1e-12 ? Math.max(0, Math.min(5, xySum/xxSum)) : 0;
+
+  const last = prices[prices.length-1];
+  return {
+    theta,
+    zscore:   (last - mu) / std,
+    revTime:  theta > 0.01 ? Math.min(1, 1/(theta*50)) : 1,
+    meanDist: (last - mu) / (mu + 1e-10)
+  };
+}
+
+// ─────────────────────────────────────────────
+// VWAP PROXY — range-weighted average price
+// ─────────────────────────────────────────────
+function vwapFeatures(candles1m: any[], window=20): { dist: number; direction: number } {
+  const recent = candles1m.slice(-window);
+  let sumTpVol = 0, sumVol = 0;
+  for (const c of recent) {
+    const h = parseFloat(c.high), l = parseFloat(c.low), cl = parseFloat(c.close);
+    const tp  = (h + l + cl) / 3;
+    const vol = (h - l) + 1e-10;
+    sumTpVol += tp * vol;
+    sumVol   += vol;
+  }
+  const vwap  = sumTpVol / sumVol;
+  const price = parseFloat(candles1m[candles1m.length-1].close);
+  const dist  = (price - vwap) / (vwap + 1e-10);
+  return { dist, direction: dist > 0 ? 1 : dist < 0 ? -1 : 0 };
+}
+
+// ─────────────────────────────────────────────
+// SESSION FEATURES — regime-aware time encoding
+// ─────────────────────────────────────────────
+function sessionFeatures(): { asian:number; london:number; ny:number; overlap:number; night:number; strength:number } {
+  const h = new Date().getUTCHours();
+  if (h >= 0  && h < 7)  return { asian:1, london:0, ny:0, overlap:0, night:0, strength:0.3 };
+  if (h >= 7  && h < 12) return { asian:0, london:1, ny:0, overlap:0, night:0, strength:0.7 };
+  if (h >= 12 && h < 16) return { asian:0, london:1, ny:1, overlap:1, night:0, strength:1.0 };
+  if (h >= 16 && h < 21) return { asian:0, london:0, ny:1, overlap:0, night:0, strength:0.8 };
+  return { asian:0, london:0, ny:0, overlap:0, night:1, strength:0.2 };
+}
+
 // ─────────────────────────────────────────────
 // KALMAN FILTER — adaptive price smoother
 // ─────────────────────────────────────────────
@@ -144,17 +215,42 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
   const kfVelPrev            = kf.velocity[kf.velocity.length - 2] || 0;
   const kalman_acceleration  = (kfVel - kfVelPrev) / (Math.abs(kfPrice) + 1e-10);
 
+  // ── GARCH (2 features) ──
+  const closePrices = c;
+  const returns = closePrices.map((v,i) => i===0 ? 0 : (v - closePrices[i-1])/(closePrices[i-1]+1e-10));
+  const garchVols  = garchVolatility(returns);
+  const garch_vol  = garchVols[garchVols.length-1];
+  const realized_vs_garch = (atr_pct - garch_vol) / (garch_vol + 1e-10);
+
+  // ── ORNSTEIN-UHLENBECK (4 features) ──
+  const ou = ouFeatures(c);
+
+  // ── VWAP (2 features) ──
+  const vwap = vwapFeatures(candles1m);
+
+  // ── SESSION (6 features) ──
+  const sess = sessionFeatures();
+
   return [
+    // Base 21
     rsi, macd_hist, bb_pos, bb_width, ema_bull, ema_bear,
     (price - ema8) / (ema8 + 1e-10), (price - ema21) / (ema21 + 1e-10), (price - ema50) / (ema50 + 1e-10),
     atr_pct, candle_body, candle_dir, high_low_range,
     mom(1), mom(3), mom(5), mom(10),
     rsi < 35 ? 1 : 0, rsi > 65 ? 1 : 0, rsi >= 45 && rsi <= 55 ? 1 : 0,
     trend5m,
-    // 6 Kalman features
+    // Kalman 6
     kalman_price_vs_raw, kalman_velocity, kalman_trend_dir,
-    kalman_noise_ratio, kalman_ema_agreement, kalman_acceleration
-  ];
+    kalman_noise_ratio, kalman_ema_agreement, kalman_acceleration,
+    // GARCH 2
+    garch_vol, realized_vs_garch,
+    // OU 4
+    ou.theta, ou.zscore, ou.revTime, ou.meanDist,
+    // VWAP 2
+    vwap.dist, vwap.direction,
+    // Session 6
+    sess.asian, sess.london, sess.ny, sess.overlap, sess.night, sess.strength
+  ]; // total: 41 features
 }
 
 // ─────────────────────────────────────────────

@@ -36,54 +36,135 @@ async def fetch_candles(symbol, granularity=60, count=4999):
         print(f"  Exception: {e}")
         return []
 
-def kalman_filter(prices: np.ndarray, process_noise=1e-5, measurement_noise=1e-2):
+def kalman_filter(prices, process_noise=1e-5, measurement_noise=1e-2):
+    n = len(prices)
+    filtered = np.zeros(n)
+    velocity = np.zeros(n)
+    x0, x1 = prices[0], 0.0
+    p00, p01, p10, p11 = 1.0, 0.0, 0.0, 1.0
+    for i in range(n):
+        px0 = x0 + x1; px1 = x1
+        pp00 = p00 + p10 + p01 + p11 + process_noise
+        pp01 = p01 + p11; pp10 = p10 + p11
+        pp11 = p11 + process_noise
+        S = pp00 + measurement_noise
+        k0 = pp00 / S; k1 = pp10 / S
+        inn = prices[i] - px0
+        x0 = px0 + k0 * inn; x1 = px1 + k1 * inn
+        p00 = pp00 - k0 * pp00; p01 = pp01 - k0 * pp01
+        p10 = pp10 - k1 * pp00; p11 = pp11 - k1 * pp01
+        filtered[i] = x0; velocity[i] = x1
+    return filtered, velocity
+
+def garch_volatility(returns, omega=1e-6, alpha=0.1, beta=0.85, window=20):
+    """GARCH(1,1) estimated conditional volatility"""
+    n = len(returns)
+    var = np.zeros(n)
+    var[0] = np.var(returns[:window]) if len(returns) >= window else 1e-8
+    for i in range(1, n):
+        var[i] = omega + alpha * returns[i-1]**2 + beta * var[i-1]
+    return np.sqrt(var)
+
+def ornstein_uhlenbeck_features(prices, window=20):
     """
-    1D Kalman Filter for price smoothing.
-    Returns filtered prices and velocity (rate of change).
-    process_noise  Q — how much the true price can change per step
-    measurement_noise R — how noisy the observed price is
+    OU Process features:
+    - mean reversion speed (theta)
+    - long-run mean (mu)  
+    - deviation from mean (z-score)
+    - estimated reversion time in candles
     """
     n = len(prices)
-    filtered  = np.zeros(n)
-    velocity  = np.zeros(n)
+    theta_arr  = np.zeros(n)
+    mu_arr     = np.zeros(n)
+    zscore_arr = np.zeros(n)
+    rev_time   = np.zeros(n)
 
-    # State: [price, velocity]
-    x = np.array([prices[0], 0.0])
-    P = np.eye(2) * 1.0  # initial covariance
+    for i in range(window, n):
+        p = prices[i-window:i]
+        mu = np.mean(p)
+        std = np.std(p) + 1e-10
 
-    # State transition: price += velocity each step
-    F = np.array([[1, 1],
-                  [0, 1]])
-    # Observation: we only observe price
-    H = np.array([[1, 0]])
-    Q = np.eye(2) * process_noise   # process noise
-    R = np.array([[measurement_noise]])  # measurement noise
+        # OU regression: dp = theta*(mu - p)*dt + sigma*dW
+        # Estimate theta via OLS on (p[t] - p[t-1]) = theta*(mu - p[t-1])
+        y = np.diff(p)
+        x = mu - p[:-1]
+        if np.sum(x**2) > 1e-12:
+            theta = np.dot(x, y) / np.sum(x**2)
+            theta = max(0.0, min(theta, 5.0))  # clamp
+        else:
+            theta = 0.0
 
-    for i in range(n):
-        # Predict
-        x = F @ x
-        P = F @ P @ F.T + Q
+        theta_arr[i]  = theta
+        mu_arr[i]     = mu
+        zscore_arr[i] = (prices[i] - mu) / std
+        rev_time[i]   = 1.0 / (theta + 1e-6) if theta > 0.01 else window
 
-        # Update
-        y  = prices[i] - (H @ x)[0]        # innovation
-        S  = H @ P @ H.T + R               # innovation covariance
-        K  = P @ H.T @ np.linalg.inv(S)   # Kalman gain
-        x  = x + K.flatten() * y
-        P  = (np.eye(2) - K @ H) @ P
+    return theta_arr, mu_arr, zscore_arr, rev_time
 
-        filtered[i] = x[0]
-        velocity[i] = x[1]
+def vwap_features(df, window=20):
+    """
+    VWAP proxy (no real volume — use candle range as volume proxy)
+    Price above VWAP = bullish, below = bearish
+    """
+    c = df['close'].values
+    h = df['high'].values
+    l = df['low'].values
+    # Typical price
+    tp = (h + l + c) / 3
+    # Range as volume proxy (wider candle = more activity)
+    range_vol = (h - l) + 1e-10
+    # Rolling VWAP
+    vwap = np.zeros(len(c))
+    vwap_dist = np.zeros(len(c))
+    for i in range(window, len(c)):
+        tp_w   = tp[i-window:i]
+        rv_w   = range_vol[i-window:i]
+        vwap[i]      = np.sum(tp_w * rv_w) / np.sum(rv_w)
+        vwap_dist[i] = (c[i] - vwap[i]) / (vwap[i] + 1e-10)
+    return vwap, vwap_dist
 
-    return filtered, velocity
+def session_features(epochs):
+    """
+    Session-aware features — bot learns market behavior per session
+    Sessions: Asian(0-7), London(7-16), NY(12-21), Overlap(12-16), Night(21-24)
+    """
+    n = len(epochs)
+    is_asian   = np.zeros(n)
+    is_london  = np.zeros(n)
+    is_ny      = np.zeros(n)
+    is_overlap = np.zeros(n)  # London+NY overlap — best session
+    is_night   = np.zeros(n)
+    session_strength = np.zeros(n)
+
+    for i, epoch in enumerate(epochs):
+        h = (epoch // 3600) % 24  # UTC hour
+        if 0 <= h < 7:
+            is_asian[i] = 1
+            session_strength[i] = 0.3  # low activity
+        elif 7 <= h < 12:
+            is_london[i] = 1
+            session_strength[i] = 0.7  # good activity
+        elif 12 <= h < 16:
+            is_london[i] = 1
+            is_ny[i] = 1
+            is_overlap[i] = 1
+            session_strength[i] = 1.0  # BEST — overlap
+        elif 16 <= h < 21:
+            is_ny[i] = 1
+            session_strength[i] = 0.8  # good activity
+        else:
+            is_night[i] = 1
+            session_strength[i] = 0.2  # very low
+
+    return is_asian, is_london, is_ny, is_overlap, is_night, session_strength
 
 def engineer_features(df):
     c = df['close'].values
     h = df['high'].values
     l = df['low'].values
+    epochs = df['epoch'].values
 
-    # ── ORIGINAL 21 FEATURES ──
-
-    # EMAs
+    # ── ORIGINAL EMA/RSI/MACD/BB/ATR (kept) ──
     for p in [8, 21, 50, 200]:
         k = 2 / (p + 1)
         ema = [c[0]]
@@ -91,19 +172,14 @@ def engineer_features(df):
             ema.append(c[i] * k + ema[-1] * (1 - k))
         df[f'ema{p}'] = ema
 
-    # RSI
     deltas = np.diff(c, prepend=c[0])
     gains  = np.where(deltas > 0, deltas, 0)
     losses = np.where(deltas < 0, -deltas, 0)
     avg_gain = pd.Series(gains).rolling(14).mean().values
     avg_loss = pd.Series(losses).rolling(14).mean().values
-    rs = avg_gain / (avg_loss + 1e-10)
-    df['rsi'] = 100 - (100 / (1 + rs))
-
-    # MACD
+    df['rsi'] = 100 - (100 / (1 + avg_gain / (avg_loss + 1e-10)))
     df['macd_hist'] = df['ema8'].values - df['ema21'].values
 
-    # Bollinger Bands
     df['bb_mid']   = pd.Series(c).rolling(20).mean()
     df['bb_std']   = pd.Series(c).rolling(20).std()
     df['bb_upper'] = df['bb_mid'] + 2 * df['bb_std']
@@ -111,57 +187,61 @@ def engineer_features(df):
     df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_mid']
     df['bb_pos']   = (c - df['bb_lower'].values) / (df['bb_upper'].values - df['bb_lower'].values + 1e-10)
 
-    # ATR
-    tr = np.maximum(h - l, np.maximum(np.abs(h - np.roll(c, 1)), np.abs(l - np.roll(c, 1))))
+    tr = np.maximum(h - l, np.maximum(np.abs(h - np.roll(c,1)), np.abs(l - np.roll(c,1))))
     df['atr']     = pd.Series(tr).rolling(14).mean()
     df['atr_pct'] = df['atr'] / c
 
-    # Price relative to EMAs
     df['price_ema8_dist']  = (c - df['ema8'].values)  / df['ema8'].values
     df['price_ema21_dist'] = (c - df['ema21'].values) / df['ema21'].values
     df['price_ema50_dist'] = (c - df['ema50'].values) / df['ema50'].values
-
-    # EMA alignment
     df['ema_bull'] = ((df['ema8'] > df['ema21']) & (df['ema21'] > df['ema50'])).astype(int)
     df['ema_bear'] = ((df['ema8'] < df['ema21']) & (df['ema21'] < df['ema50'])).astype(int)
-
-    # Candle features
-    df['candle_body']    = (c - np.roll(c, 1)) / (np.roll(c, 1) + 1e-10)
+    df['candle_body']    = (c - np.roll(c,1)) / (np.roll(c,1) + 1e-10)
     df['candle_dir']     = np.sign(df['candle_body'])
     df['high_low_range'] = (h - l) / (l + 1e-10)
-
-    # Momentum
-    for lag in [1, 3, 5, 10]:
-        df[f'momentum_{lag}'] = (c - np.roll(c, lag)) / (np.roll(c, lag) + 1e-10)
-
-    # RSI zones
+    for lag in [1,3,5,10]:
+        df[f'momentum_{lag}'] = (c - np.roll(c,lag)) / (np.roll(c,lag) + 1e-10)
     df['rsi_oversold']  = (df['rsi'] < 35).astype(int)
     df['rsi_overbought']= (df['rsi'] > 65).astype(int)
     df['rsi_neutral']   = ((df['rsi'] >= 45) & (df['rsi'] <= 55)).astype(int)
 
-    # ── 6 NEW KALMAN FEATURES (added on top, EMA kept) ──
-    kf_price, kf_vel = kalman_filter(c, process_noise=1e-5, measurement_noise=1e-2)
-
-    # 1. How far raw price deviates from Kalman estimate (noise measure)
-    df['kalman_price_vs_raw']   = (c - kf_price) / (kf_price + 1e-10)
-
-    # 2. Kalman velocity — rate of change of filtered price (trend speed)
-    df['kalman_velocity']       = kf_vel / (kf_price + 1e-10)
-
-    # 3. Kalman trend direction — cleaner than EMA cross
-    df['kalman_trend_dir']      = np.sign(kf_vel)
-
-    # 4. Kalman noise ratio — high = ranging/noisy market
-    #    Rolling std of (price - kalman) / kalman
-    residuals = (c - kf_price) / (kf_price + 1e-10)
-    df['kalman_noise_ratio']    = pd.Series(residuals).rolling(20).std().fillna(0).values
-
-    # 5. Kalman-EMA8 agreement — does Kalman trend agree with EMA8 direction?
+    # ── KALMAN (6 features) ──
+    kf_price, kf_vel = kalman_filter(c)
+    df['kalman_price_vs_raw']  = (c - kf_price) / (kf_price + 1e-10)
+    df['kalman_velocity']      = kf_vel / (kf_price + 1e-10)
+    df['kalman_trend_dir']     = np.sign(kf_vel)
+    residuals = pd.Series((c - kf_price) / (kf_price + 1e-10))
+    df['kalman_noise_ratio']   = residuals.rolling(20).std().fillna(0).values
     ema8_dir = np.sign(df['ema8'].values - df['ema21'].values)
-    df['kalman_ema_agreement']  = (np.sign(kf_vel) == ema8_dir).astype(float)
+    df['kalman_ema_agreement'] = (np.sign(kf_vel) == ema8_dir).astype(float)
+    df['kalman_acceleration']  = np.gradient(kf_vel) / (np.abs(kf_price) + 1e-10)
 
-    # 6. Kalman acceleration — is the trend speeding up or slowing down?
-    df['kalman_acceleration']   = np.gradient(kf_vel) / (np.abs(kf_price) + 1e-10)
+    # ── GARCH (2 features) ──
+    returns = np.diff(c, prepend=c[0]) / (c + 1e-10)
+    garch_vol = garch_volatility(returns)
+    df['garch_vol']         = garch_vol
+    df['realized_vs_garch'] = (df['atr_pct'].values - garch_vol) / (garch_vol + 1e-10)
+
+    # ── ORNSTEIN-UHLENBECK (4 features) ──
+    theta, mu_ou, zscore, rev_time = ornstein_uhlenbeck_features(c)
+    df['ou_theta']     = theta       # mean reversion speed
+    df['ou_zscore']    = zscore      # how far from mean (normalized)
+    df['ou_rev_time']  = np.clip(rev_time, 0, 50) / 50  # normalized reversion time
+    df['ou_mean_dist'] = (c - mu_ou) / (mu_ou + 1e-10)  # distance from OU mean
+
+    # ── VWAP (2 features) ──
+    _, vwap_dist = vwap_features(df)
+    df['vwap_dist']      = vwap_dist   # price distance from VWAP
+    df['vwap_direction'] = np.sign(vwap_dist)  # above=1, below=-1
+
+    # ── SESSION (6 features) ──
+    is_asian, is_london, is_ny, is_overlap, is_night, sess_strength = session_features(epochs)
+    df['session_asian']    = is_asian
+    df['session_london']   = is_london
+    df['session_ny']       = is_ny
+    df['session_overlap']  = is_overlap
+    df['session_night']    = is_night
+    df['session_strength'] = sess_strength
 
     return df
 
@@ -172,9 +252,7 @@ def label_trades(df, lookahead=4):
         if i + lookahead >= len(closes):
             labels.append(np.nan)
         else:
-            future  = closes[i + lookahead]
-            current = closes[i]
-            labels.append(1 if future > current else 0)
+            labels.append(1 if closes[i+lookahead] > closes[i] else 0)
     df['label'] = labels
     df['label_strength'] = abs(df['close'].shift(-lookahead) - df['close']) / df['close']
     return df
@@ -192,10 +270,8 @@ async def collect_symbol(symbol):
     print(f"  ✅ Got {len(candles_1m)} x 1m, {len(candles_5m)} x 5m candles")
 
     df = pd.DataFrame(candles_1m)
-    df['close'] = df['close'].astype(float)
-    df['high']  = df['high'].astype(float)
-    df['low']   = df['low'].astype(float)
-    df['open']  = df['open'].astype(float)
+    for col in ['close','high','low','open']:
+        df[col] = df[col].astype(float)
     df['epoch'] = df['epoch'].astype(int)
 
     df = engineer_features(df)
@@ -203,13 +279,13 @@ async def collect_symbol(symbol):
     df = df.dropna()
     df['symbol'] = symbol
 
-    # Add 5m trend feature
+    # 5m trend
     if len(candles_5m) > 50:
         df5 = pd.DataFrame(candles_5m)
         df5['close'] = df5['close'].astype(float)
         df5['epoch'] = df5['epoch'].astype(int)
         c5 = df5['close'].values
-        k20 = 2/21; k50 = 2/51
+        k20=2/21; k50=2/51
         ema20=[c5[0]]; ema50=[c5[0]]
         for i in range(1,len(c5)):
             ema20.append(c5[i]*k20+ema20[-1]*(1-k20))
@@ -228,7 +304,8 @@ async def collect_symbol(symbol):
     return df
 
 async def main():
-    print("🔬 TIMI ML DATA COLLECTOR — 27 FEATURES (21 + 6 Kalman)")
+    print("🔬 TIMI ML DATA COLLECTOR — 41 FEATURES")
+    print("Features: 21 base + 6 Kalman + 2 GARCH + 4 OU + 2 VWAP + 6 Session")
     print(f"Collecting {len(SYMBOLS)} symbols...\n")
     results = []
     for sym in SYMBOLS:
@@ -237,6 +314,5 @@ async def main():
             results.append(sym)
         await asyncio.sleep(2)
     print(f"\n✅ Done! Collected: {results}")
-    print(f"📁 Files saved to /workspaces/Timi-fx/ml/data/")
 
 asyncio.run(main())
