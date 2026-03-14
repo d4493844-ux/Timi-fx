@@ -552,7 +552,7 @@ function getTradingSession(): { active: boolean; name: string } {
 // ─────────────────────────────────────────────
 // PLACE TRADE
 // ─────────────────────────────────────────────
-async function placeTrade(token: string, symbol: string, action: string, stake: number) {
+async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65) {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
     const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 25000);
@@ -573,8 +573,14 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
 
         const isMult   = contractType.startsWith("MULT");
         const adjStake = isMult ? Math.min(9, Math.max(1, stake)) : Math.max(0.35, stake);
-        const takeProfit = parseFloat((adjStake * 0.5).toFixed(2));
-        const stopLoss   = parseFloat((adjStake * 0.9).toFixed(2));
+        // Dynamic TP based on ML confidence
+        // High confidence = let profit run further
+        // Low confidence  = take profit quickly
+        const tpMult   = confidence >= 85 ? 3.0   // $3 on $1 — high confidence, let it run
+                       : confidence >= 75 ? 2.0   // $2 on $1 — medium confidence
+                       : 1.0;                     // $1 on $1 — conservative
+        const takeProfit = parseFloat((adjStake * tpMult).toFixed(2));
+        const stopLoss   = parseFloat((adjStake * 0.9).toFixed(2));  // always 90% max loss
 
         if (isMult) {
           ws.send(JSON.stringify({
@@ -920,7 +926,7 @@ Deno.serve(async (req) => {
   const best = signals[0];
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
-  const result: any = await placeTrade(token, best.symbol, best.action, stake);
+  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence);
   const success = result && !result.error;
 
   // Log trade with extra fields for AI Brain to learn from
