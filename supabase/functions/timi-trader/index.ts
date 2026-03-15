@@ -552,7 +552,7 @@ function getTradingSession(): { active: boolean; name: string } {
 // ─────────────────────────────────────────────
 // PLACE TRADE
 // ─────────────────────────────────────────────
-async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65) {
+async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65, dynMultiplier: number = 100, fptTpPct: number = 0, fptSlPct: number = 0) {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
     const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 25000);
@@ -573,19 +573,33 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
 
         const isMult   = contractType.startsWith("MULT");
         const adjStake = isMult ? Math.min(9, Math.max(1, stake)) : Math.max(0.35, stake);
-        // Dynamic TP based on ML confidence
-        // High confidence = let profit run further
-        // Low confidence  = take profit quickly
-        const tpMult   = confidence >= 85 ? 3.0   // $3 on $1 — high confidence, let it run
-                       : confidence >= 75 ? 2.0   // $2 on $1 — medium confidence
-                       : 1.0;                     // $1 on $1 — conservative
-        const takeProfit = parseFloat((adjStake * tpMult).toFixed(2));
-        const stopLoss   = parseFloat((adjStake * 0.9).toFixed(2));  // always 90% max loss
+        // ── FPT-optimized TP/SL ──
+        // If FPT calculated optimal distances, use those
+        // Otherwise fall back to confidence-based multipliers
+        let takeProfit: number;
+        let stopLoss: number;
+
+        if (fptTpPct > 0 && fptSlPct > 0) {
+          // FPT: TP = stake × multiplier × tpPct (price move needed × leverage)
+          // e.g. stake=$1, mult=x200, tpPct=0.5% → TP = 1 × 200 × 0.005 = $1.00
+          takeProfit = parseFloat((adjStake * dynMultiplier * fptTpPct).toFixed(2));
+          stopLoss   = parseFloat(Math.min(adjStake * dynMultiplier * fptSlPct, adjStake * 0.9).toFixed(2));
+          // Ensure TP is at least $0.10 and SL at least $0.10
+          takeProfit = Math.max(takeProfit, 0.10);
+          stopLoss   = Math.max(stopLoss, 0.10);
+        } else {
+          // Fallback: confidence-based multipliers
+          const tpMult = confidence >= 85 ? 3.0
+                       : confidence >= 75 ? 2.0
+                       : 1.0;
+          takeProfit = parseFloat((adjStake * tpMult).toFixed(2));
+          stopLoss   = parseFloat((adjStake * 0.9).toFixed(2));
+        }
 
         if (isMult) {
           ws.send(JSON.stringify({
             buy: 1, price: adjStake,
-            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: 100 }
+            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: dynMultiplier }
           }));
           (ws as any)._tp = takeProfit;
           (ws as any)._sl = stopLoss;
@@ -737,6 +751,147 @@ async function getRecentPerformance(supabase: any): Promise<{ winRate: number; a
   } catch(e) {
     return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90 };
   }
+}
+
+
+// ─────────────────────────────────────────────
+// FIRST PASSAGE TIME — optimal TP/SL calculation
+// Calculates mathematically optimal take profit
+// distance where P(win) is maximized given current
+// volatility and mean reversion characteristics
+// ─────────────────────────────────────────────
+function firstPassageTime(
+  prices: number[],
+  action: string,
+  symbol: string,
+  garchVol: number,
+  ouZscore: number,
+  confidence: number
+): { tpPct: number; slPct: number; winProb: number; tpMultiplier: number } {
+
+  // Known synthetic volatility per symbol (Deriv specification)
+  const KNOWN_VOL: Record<string, number> = {
+    "R_10": 0.001, "R_25": 0.0025, "R_50": 0.005,
+    "R_75": 0.0075, "R_100": 0.01
+  };
+
+  // Use known vol for synthetics, GARCH for everything else
+  const baseVol = KNOWN_VOL[symbol] || Math.max(garchVol, 0.001);
+
+  // Session-adjusted volatility — London/NY overlap has higher vol
+  const h = new Date().getUTCHours();
+  const sessionMult = (h >= 12 && h < 16) ? 1.3  // overlap — high vol
+                    : (h >= 7  && h < 21) ? 1.0  // active session
+                    : 0.7;                         // off hours — low vol
+  const adjVol = baseVol * sessionMult;
+
+  // OU mean reversion pull — if price is stretched, it will revert
+  // Strong reversion (|zscore| > 2) = higher win prob for mean reversion trades
+  const reversionPull = Math.min(Math.abs(ouZscore) * 0.001, 0.005);
+
+  // First Passage Time probability formula:
+  // P(hit TP before SL) = SL_dist / (TP_dist + SL_dist)
+  // We want P(win) >= 0.60 minimum
+  // Solve: SL / (TP + SL) >= 0.60
+  // → SL >= 1.5 * TP
+  // But we also want TP to be reachable given volatility
+
+  // TP = distance price needs to move to profit
+  // Set TP at 1.5x current volatility — achievable in 5-15 min
+  let tpPct = adjVol * 1.5;
+
+  // For mean reversion trades (OU zscore extreme) — tighter TP
+  // Price will snap back quickly
+  if (Math.abs(ouZscore) > 1.5) {
+    tpPct = Math.min(tpPct, reversionPull * 2);
+  }
+
+  // For trend-following trades — wider TP to catch the full move
+  if (confidence >= 85) {
+    tpPct = adjVol * 3.0;  // let strong trends run
+  } else if (confidence >= 75) {
+    tpPct = adjVol * 2.0;
+  }
+
+  // SL always 1.5x TP to ensure P(win) > 60%
+  // But capped at 90% of stake (Deriv max)
+  const slPct = Math.min(tpPct * 1.5, 0.90);
+
+  // Calculate actual win probability
+  const winProb = slPct / (tpPct + slPct);
+
+  // tpMultiplier = TP as fraction of stake (for contract_update)
+  // stake * multiplier * tpPct = TP profit
+  // → tpMultiplier = TP_profit / stake
+  // We'll calculate actual $ amounts in placeTrade
+  const tpMultiplier = tpPct * 100; // normalized
+
+  return { tpPct, slPct, winProb, tpMultiplier };
+}
+
+// ─────────────────────────────────────────────
+// DYNAMIC MULTIPLIER SELECTION
+// Selects optimal contract multiplier based on
+// signal confidence, symbol type and market regime
+// Higher multiplier = more profit per price move
+// but also faster SL hit — only use when confident
+// ─────────────────────────────────────────────
+function selectMultiplier(
+  symbol: string,
+  confidence: number,
+  hmmRegime: string,
+  kalmanVelocity: number,
+  garchVol: number
+): number {
+  // Available multipliers per symbol type (confirmed from Deriv API)
+  const MULT_RANGES: Record<string, number[]> = {
+    "BOOM":  [100, 150, 200, 300, 400],
+    "CRASH": [100, 150, 200, 300, 400],
+    "R_":    [50,  100, 200, 300, 500],
+    "forex": [100, 200, 300, 500, 800],
+    "cry":   [100, 200, 300, 500, 800],
+  };
+
+  // Determine symbol category
+  const category = symbol.startsWith("BOOM")  ? "BOOM"
+                 : symbol.startsWith("CRASH") ? "CRASH"
+                 : symbol.startsWith("R_")    ? "R_"
+                 : symbol.startsWith("cry")   ? "cry"
+                 : "forex";
+
+  const available = MULT_RANGES[category] || [100];
+  const maxMult   = available[available.length - 1];
+
+  // High volatility = risky to use high multiplier
+  // SL gets hit faster with high vol + high multiplier
+  const isHighVol = garchVol > 0.008;
+  const isStrongTrend = hmmRegime === "Uptrend" || hmmRegime === "Downtrend";
+  const isWeakTrend   = hmmRegime === "WeakUptrend" || hmmRegime === "WeakDowntrend";
+  const strongKalman  = Math.abs(kalmanVelocity) > 0.0001;
+
+  // Select multiplier tier based on conditions
+  let selectedMult: number;
+
+  if (confidence >= 88 && isStrongTrend && strongKalman && !isHighVol) {
+    // Premium conditions — use highest available
+    selectedMult = maxMult;
+  } else if (confidence >= 82 && (isStrongTrend || strongKalman) && !isHighVol) {
+    // Strong conditions — use 2nd highest
+    selectedMult = available[available.length - 2] || maxMult;
+  } else if (confidence >= 75 && !isHighVol) {
+    // Good conditions — use middle tier
+    const midIdx = Math.floor(available.length / 2);
+    selectedMult = available[midIdx];
+  } else if (confidence >= 65 && isWeakTrend) {
+    // Moderate conditions — use 2nd lowest
+    selectedMult = available[1] || available[0];
+  } else {
+    // Conservative — use lowest safe multiplier
+    selectedMult = available[0];
+  }
+
+  console.log(`🎯 Multiplier selected: x${selectedMult} for ${symbol} (conf:${confidence}% regime:${hmmRegime} vol:${garchVol.toFixed(4)})`);
+  return selectedMult;
 }
 
 // ─────────────────────────────────────────────
@@ -926,7 +1081,30 @@ Deno.serve(async (req) => {
   const best = signals[0];
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
-  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence);
+  // Calculate FPT optimal TP/SL
+  const bestFeatures = buildFeatures(
+    await fetchCandles(best.symbol, 60, 60),
+    await fetchCandles(best.symbol, 300, 20)
+  );
+  const fpt = firstPassageTime(
+    [], best.action, best.symbol,
+    Array.isArray(bestFeatures) ? bestFeatures[27] : 0.003, // garch_vol
+    Array.isArray(bestFeatures) ? bestFeatures[29] : 0,     // ou_zscore
+    best.confidence
+  );
+
+  // Select dynamic multiplier
+  const dynMult = selectMultiplier(
+    best.symbol,
+    best.confidence,
+    best.regime || "WeakUptrend",
+    Array.isArray(bestFeatures) ? bestFeatures[23] : 0,  // kalman_velocity
+    Array.isArray(bestFeatures) ? bestFeatures[27] : 0.003 // garch_vol
+  );
+
+  console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
+
+  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
   const success = result && !result.error;
 
   // Log trade with extra fields for AI Brain to learn from
