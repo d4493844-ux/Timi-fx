@@ -479,49 +479,51 @@ function confirmWithIndicators(features: number[], action: string, confidence: n
   const ema_bear = features[5];
   const trend5m  = features[20];
 
-  const isBoom   = symbol.startsWith("BOOM");
-  const isCrash  = symbol.startsWith("CRASH");
-  const isSpike  = isBoom || isCrash;
+  const isBoom  = symbol.startsWith("BOOM");
+  const isCrash = symbol.startsWith("CRASH");
+  const isSpike = isBoom || isCrash;
+
+  // High confidence ML signals — only block on truly extreme conditions
+  // ML already processed all indicators internally at 41 features
+  // Only intervene when market is in crisis/extreme territory
+  const isHighConf = confidence >= 80;
 
   if (isSpike) {
-    // ── BOOM/CRASH spike logic — opposite of normal markets ──
-    // BOOM spikes UP from oversold conditions
-    // CRASH spikes DOWN from overbought conditions
+    // BOOM/CRASH spike logic
     if (isBoom && action === "BUY") {
-      // Allow oversold RSI — that's when BOOM spikes happen
-      if (rsi > 85)                        return { confirmed: false, reason: "rsi_extremely_overbought:" + rsi.toFixed(0) };
-      if (trend5m === -1 && confidence < 85) return { confirmed: false, reason: "5m_bear_trend_low_conf" };
+      if (rsi > 90)                                    return { confirmed: false, reason: "rsi_crisis_overbought:" + rsi.toFixed(0) };
+      if (trend5m === -1 && confidence < 88)           return { confirmed: false, reason: "5m_bear_low_conf" };
     }
     if (isCrash && action === "SELL") {
-      // Allow overbought RSI — that's when CRASH spikes happen
-      if (rsi < 15)                        return { confirmed: false, reason: "rsi_extremely_oversold:" + rsi.toFixed(0) };
-      if (trend5m === 1 && confidence < 85)  return { confirmed: false, reason: "5m_bull_trend_low_conf" };
+      if (rsi < 10)                                    return { confirmed: false, reason: "rsi_crisis_oversold:" + rsi.toFixed(0) };
+      if (trend5m === 1 && confidence < 88)            return { confirmed: false, reason: "5m_bull_low_conf" };
     }
-    // For BOOM SELL or CRASH BUY — apply normal strict filters
     if (isBoom && action === "SELL") {
-      if (rsi < 25)   return { confirmed: false, reason: "rsi_oversold_boom_sell" };
-      if (ema_bear === 0) return { confirmed: false, reason: "no_ema_bear_for_boom_sell" };
+      if (rsi < 20 && !isHighConf)                     return { confirmed: false, reason: "rsi_oversold_boom_sell" };
+      if (ema_bear === 0 && confidence < 82)           return { confirmed: false, reason: "no_ema_bear_boom_sell_low_conf" };
     }
     if (isCrash && action === "BUY") {
-      if (rsi > 75)   return { confirmed: false, reason: "rsi_overbought_crash_buy" };
-      if (ema_bull === 0) return { confirmed: false, reason: "no_ema_bull_for_crash_buy" };
+      if (rsi > 80 && !isHighConf)                     return { confirmed: false, reason: "rsi_overbought_crash_buy" };
+      if (ema_bull === 0 && confidence < 82)           return { confirmed: false, reason: "no_ema_bull_crash_buy_low_conf" };
     }
     return { confirmed: true, reason: "" };
   }
 
-  // ── NORMAL markets (Forex, Crypto, VIX) ──
+  // Normal markets — relaxed thresholds, respect high confidence ML
   if (action === "BUY") {
-    if (rsi > 75)                                    return { confirmed: false, reason: "rsi_overbought:" + rsi.toFixed(0) };
-    if (rsi < 30)                                    return { confirmed: false, reason: "rsi_oversold_on_buy:" + rsi.toFixed(0) };
-    if (macd < 0 && ema_bull === 0)                  return { confirmed: false, reason: "macd_bear+no_ema_bull" };
-    if (trend5m === -1 && confidence < 85)           return { confirmed: false, reason: "5m_bear_trend_low_conf" };
-    if (bb_pos > 0.95)                               return { confirmed: false, reason: "bb_extreme_top" };
+    if (rsi > 90)                                      return { confirmed: false, reason: "rsi_crisis_overbought:" + rsi.toFixed(0) };
+    if (rsi > 82 && !isHighConf)                       return { confirmed: false, reason: "rsi_overbought_low_conf:" + rsi.toFixed(0) };
+    if (rsi < 15)                                      return { confirmed: false, reason: "rsi_crisis_oversold:" + rsi.toFixed(0) };
+    if (macd < 0 && ema_bull === 0 && confidence < 80) return { confirmed: false, reason: "macd_bear+no_ema_bull_low_conf" };
+    if (trend5m === -1 && confidence < 88)             return { confirmed: false, reason: "5m_bear_low_conf" };
+    if (bb_pos > 0.98)                                 return { confirmed: false, reason: "bb_crisis_top" };
   } else if (action === "SELL") {
-    if (rsi < 25)                                    return { confirmed: false, reason: "rsi_oversold:" + rsi.toFixed(0) };
-    if (rsi > 70)                                    return { confirmed: false, reason: "rsi_overbought_on_sell:" + rsi.toFixed(0) };
-    if (macd > 0 && ema_bear === 0)                  return { confirmed: false, reason: "macd_bull+no_ema_bear" };
-    if (trend5m === 1 && confidence < 85)            return { confirmed: false, reason: "5m_bull_trend_low_conf" };
-    if (bb_pos < 0.05)                               return { confirmed: false, reason: "bb_extreme_bottom" };
+    if (rsi < 10)                                      return { confirmed: false, reason: "rsi_crisis_oversold:" + rsi.toFixed(0) };
+    if (rsi < 18 && !isHighConf)                       return { confirmed: false, reason: "rsi_oversold_low_conf:" + rsi.toFixed(0) };
+    if (rsi > 90)                                      return { confirmed: false, reason: "rsi_crisis_overbought:" + rsi.toFixed(0) };
+    if (macd > 0 && ema_bear === 0 && confidence < 80) return { confirmed: false, reason: "macd_bull+no_ema_bear_low_conf" };
+    if (trend5m === 1 && confidence < 88)              return { confirmed: false, reason: "5m_bull_low_conf" };
+    if (bb_pos < 0.02)                                 return { confirmed: false, reason: "bb_crisis_bottom" };
   }
   return { confirmed: true, reason: "" };
 }
@@ -747,9 +749,10 @@ async function getRecentPerformance(supabase: any): Promise<{ winRate: number; a
       winRate:    Math.max(0.35, Math.min(0.95, winRate)),
       avgWinPct:  Math.max(0.50, Math.min(1.50, avgWinPct)),
       avgLossPct: Math.max(0.50, Math.min(1.00, avgLossPct)),
+      _tradeCount: data.length,
     };
   } catch(e) {
-    return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90 };
+    return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90, _tradeCount: 0 };
   }
 }
 
@@ -895,6 +898,73 @@ function selectMultiplier(
 }
 
 // ─────────────────────────────────────────────
+// FIX 5: TRADE RESULT UPDATER
+// Checks open trades via Deriv API and updates
+// win/loss results so AI Brain can learn
+// ─────────────────────────────────────────────
+async function updateOpenTradeResults(supabase: any, token: string): Promise<void> {
+  try {
+    // Get trades marked as "open" in last 2 hours
+    const twoHrsAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: openTrades } = await supabase
+      .from("trades")
+      .select("id, symbol, stake, created_at")
+      .eq("result", "open")
+      .eq("account_name", "edge_function")
+      .gte("created_at", twoHrsAgo);
+
+    if (!openTrades || openTrades.length === 0) return;
+    console.log(`🔄 Checking ${openTrades.length} open trades for results...`);
+
+    // Get profit table from Deriv to find closed trades
+    await new Promise<void>((resolve) => {
+      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+      const timeout = setTimeout(() => { ws.close(); resolve(); }, 15000);
+
+      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+      ws.onmessage = async (e) => {
+        const d = JSON.parse(e.data);
+        if (d.authorize) {
+          // Get recent profit table
+          ws.send(JSON.stringify({
+            profit_table: 1,
+            description: 1,
+            limit: 50,
+            sort: "DESC"
+          }));
+        }
+        if (d.profit_table) {
+          clearTimeout(timeout);
+          ws.close();
+          const transactions = d.profit_table.transactions || [];
+
+          for (const trade of openTrades) {
+            // Find matching transaction by symbol and time
+            const tradeTime = new Date(trade.created_at).getTime() / 1000;
+            const match = transactions.find((t: any) => {
+              const tTime = t.purchase_time || 0;
+              return Math.abs(tTime - tradeTime) < 400; // within 400 seconds
+            });
+
+            if (match) {
+              const pnl    = parseFloat(match.sell_price || 0) - parseFloat(match.buy_price || trade.stake);
+              const result = pnl > 0 ? "win" : "loss";
+              await supabase.from("trades").update({ result, pnl }).eq("id", trade.id);
+              console.log(`✅ Trade ${trade.id} updated: ${result} pnl:$${pnl.toFixed(2)}`);
+            }
+          }
+          resolve();
+        }
+        if (d.error) { clearTimeout(timeout); ws.close(); resolve(); }
+      };
+      ws.onerror = () => { clearTimeout(timeout); resolve(); };
+    });
+  } catch(e) {
+    console.log(`⚠️ Trade result updater error: ${e}`);
+  }
+}
+
+// ─────────────────────────────────────────────
 // MAIN HANDLER
 // ─────────────────────────────────────────────
 Deno.serve(async (req) => {
@@ -911,20 +981,26 @@ Deno.serve(async (req) => {
   // ── MONTE CARLO DYNAMIC STAKE ──
   // Get recent performance stats
   const perf = await getRecentPerformance(supabase);
+  // FIX 4: If not enough real trade data, skip Monte Carlo adjustment
+  // Using Monte Carlo with no data gives wrong results
+  const hasEnoughData = (perf as any)._tradeCount >= 10;
   const isMult = (cfg.symbols || []).some((s: string) => s.startsWith("BOOM") || s.startsWith("CRASH"));
   const minStk = isMult ? 1.00 : 0.35;
   const maxStk = isMult ? 9.00 : balance * 0.05; // max 5% of balance for CALL/PUT
 
-  const mc = monteCarloStake(
-    balance,
-    riskPct,
-    perf.winRate,
-    perf.avgWinPct,
-    perf.avgLossPct,
-    minStk,
-    maxStk
-  );
-  const stake = mc.stake;
+  // Only use Monte Carlo if enough real trade data exists
+  let mc: any;
+  let stake: number;
+  if (hasEnoughData) {
+    mc = monteCarloStake(balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk);
+    stake = mc.stake;
+    console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation} ror:${(mc.riskOfRuin*100).toFixed(1)}%)`);
+  } else {
+    // Not enough data — use flat risk_pct directly
+    stake = Math.max(minStk, Math.min(maxStk, parseFloat(((balance * riskPct) / 100).toFixed(2))));
+    mc = { stake, riskOfRuin: 0, expectedGrowth: 0, recommendation: "insufficient_data", base_stake: stake, final_stake: stake };
+    console.log(`💰 Flat stake: $${stake} (Monte Carlo needs 10+ trades, has ${(perf as any)._tradeCount || 0})`);
+  }
   const baseStake = Math.max(minStk, parseFloat(((balance * riskPct) / 100).toFixed(2)));
   console.log(`💰 Base stake: $${baseStake} → Monte Carlo adjusted: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
   const minConf = cfg.min_confidence || 65;
@@ -935,6 +1011,9 @@ Deno.serve(async (req) => {
 
   // AI Brain learns from recent completed trades every cycle
   await aiBrainLearn(supabase);
+
+  // Fix 5: Update open trade results so AI Brain has real win/loss data
+  await updateOpenTradeResults(supabase, token);
 
   // Load ML models
   const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
@@ -979,12 +1058,20 @@ Deno.serve(async (req) => {
 
       // ── STEP 2: HMM Regime Detection ──
       const regime = detectMarketRegime(c1m);
-      if (!regime.tradable) {
+      const isSpikeSym = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+
+      // BOOM/CRASH trade in ALL regimes — spikes happen even in ranging markets
+      // HMM only blocks forex/crypto/VIX in ranging/high-vol conditions
+      if (!regime.tradable && !isSpikeSym) {
         scanLog.push(`${symbol}: HMM→${regime.name} (skipping — unfavorable regime)`);
         console.log(`🚫 ${symbol}: HMM blocked — ${regime.name}`);
         continue;
       }
-      console.log(`✅ ${symbol}: HMM→${regime.name} (allowed:${regime.allowedAction})`);
+      if (!regime.tradable && isSpikeSym) {
+        console.log(`⚡ ${symbol}: HMM→${regime.name} but BOOM/CRASH allowed in all regimes`);
+      } else {
+        console.log(`✅ ${symbol}: HMM→${regime.name} (allowed:${regime.allowedAction})`);
+      }
 
       let sig: any;
       const features = buildFeatures(c1m, c5m);
@@ -1023,7 +1110,7 @@ Deno.serve(async (req) => {
 
         // Apply win pattern boost
         const finalConf = Math.min(95, sig.confidence + brainCheck.boost);
-        sig = { ...sig, confidence: finalConf, regime: regime.name, fingerprint };
+        sig = { ...sig, confidence: finalConf, regime: regime.name, fingerprint, features };
 
         const logLine = `${symbol}: ML→${sig.action} conf:${finalConf} HMM:${regime.name} (${sig.reason})`;
         scanLog.push(logLine);
@@ -1081,29 +1168,25 @@ Deno.serve(async (req) => {
   const best = signals[0];
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
-  // Calculate FPT optimal TP/SL
-  const bestFeatures = buildFeatures(
-    await fetchCandles(best.symbol, 60, 60),
-    await fetchCandles(best.symbol, 300, 20)
-  );
+  // ── FIX 3: Reuse already-fetched features from scan (no double fetch) ──
+  // best.features stored during signal scan below
+  const bestFeats = best.features || new Array(41).fill(0);
   const fpt = firstPassageTime(
     [], best.action, best.symbol,
-    Array.isArray(bestFeatures) ? bestFeatures[27] : 0.003, // garch_vol
-    Array.isArray(bestFeatures) ? bestFeatures[29] : 0,     // ou_zscore
+    bestFeats[27] || 0.003,  // garch_vol
+    bestFeats[29] || 0,      // ou_zscore
     best.confidence
   );
 
-  // Select dynamic multiplier
   const dynMult = selectMultiplier(
     best.symbol,
     best.confidence,
     best.regime || "WeakUptrend",
-    Array.isArray(bestFeatures) ? bestFeatures[23] : 0,  // kalman_velocity
-    Array.isArray(bestFeatures) ? bestFeatures[27] : 0.003 // garch_vol
+    bestFeats[23] || 0,      // kalman_velocity
+    bestFeats[27] || 0.003   // garch_vol
   );
 
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
-
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
   const success = result && !result.error;
 
