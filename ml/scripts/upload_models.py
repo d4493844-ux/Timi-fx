@@ -108,3 +108,17 @@ for sym in SYMBOLS:
 
 print("\n✅ All models uploaded to Supabase ml_models table")
 print("Edge function will load them on startup via REST")
+
+# ── Auto-retrain HMM after model upload ──
+import subprocess
+print("\n🧠 Retraining HMM with fresh data...")
+result = subprocess.run(
+    ["python3", "/workspaces/Timi-fx/ml/scripts/train_hmm.py"],
+    capture_output=True, text=True, timeout=300
+)
+if "✅ HMM uploaded" in result.stdout:
+    print("✅ HMM retrained and uploaded")
+elif "Upload failed" in result.stdout:
+    print("⚠️  HMM retrained but upload failed — run SQL first")
+else:
+    print(f"HMM output: {result.stdout[-200:]}")
