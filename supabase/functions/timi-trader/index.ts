@@ -253,6 +253,129 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
   ]; // total: 41 features
 }
 
+
+// ─────────────────────────────────────────────
+// TRUE HMM — VITERBI DECODER
+// Loads learned A, B, π matrices from Supabase
+// Runs Viterbi to find current hidden market state
+// States: 0=Uptrend 1=Downtrend 2=Ranging 3=HighVol
+// ─────────────────────────────────────────────
+let HMM_MODEL: any = null;
+
+async function loadHMMModel(supabase: any): Promise<void> {
+  if (HMM_MODEL) return; // already loaded
+  try {
+    const { data } = await supabase
+      .from("hmm_models")
+      .select("model_json")
+      .eq("model_id", "shared_hmm_v1")
+      .single();
+    if (data?.model_json) {
+      HMM_MODEL = typeof data.model_json === "string"
+        ? JSON.parse(data.model_json)
+        : data.model_json;
+      console.log(`✅ HMM loaded: ${HMM_MODEL.n_states} states`);
+    }
+  } catch(e) {
+    console.log(`⚠️ HMM load failed: ${e}`);
+  }
+}
+
+function hmmViterbi(obs: number[]): { state: number; name: string; tradable: boolean; allowedAction: string } {
+  if (!HMM_MODEL || obs.length === 0) {
+    return { state: 2, name: "Ranging", tradable: false, allowedAction: "NONE" };
+  }
+
+  const A  = HMM_MODEL.A  as number[][];
+  const B  = HMM_MODEL.B  as number[][];
+  const pi = HMM_MODEL.pi as number[];
+  const N  = pi.length;
+  const T  = obs.length;
+
+  // Log-space Viterbi
+  const logDelta = Array.from({length: T}, () => new Array(N).fill(-Infinity));
+  const psi      = Array.from({length: T}, () => new Array(N).fill(0));
+
+  // Initialize
+  for (let i = 0; i < N; i++) {
+    logDelta[0][i] = Math.log(pi[i] + 1e-300) + Math.log(B[i][obs[0]] + 1e-300);
+  }
+
+  // Recurse
+  for (let t = 1; t < T; t++) {
+    for (let j = 0; j < N; j++) {
+      let maxVal = -Infinity, maxIdx = 0;
+      for (let i = 0; i < N; i++) {
+        const val = logDelta[t-1][i] + Math.log(A[i][j] + 1e-300);
+        if (val > maxVal) { maxVal = val; maxIdx = i; }
+      }
+      logDelta[t][j] = maxVal + Math.log(B[j][obs[t]] + 1e-300);
+      psi[t][j] = maxIdx;
+    }
+  }
+
+  // Backtrack to find last state
+  let lastState = 0;
+  let maxVal = -Infinity;
+  for (let i = 0; i < N; i++) {
+    if (logDelta[T-1][i] > maxVal) { maxVal = logDelta[T-1][i]; lastState = i; }
+  }
+
+  const names = HMM_MODEL.state_names || ["Uptrend","Downtrend","Ranging","HighVolatility"];
+  const name  = names[lastState];
+
+  const tradable    = lastState !== 2 && lastState !== 3; // not Ranging or HighVol
+  const allowedAction = lastState === 0 ? "BUY"
+                      : lastState === 1 ? "SELL"
+                      : "NONE";
+
+  return { state: lastState, name, tradable, allowedAction };
+}
+
+function extractHMMObservations(candles1m: any[]): number[] {
+  const closes = candles1m.map((c: any) => parseFloat(c.close));
+  const highs  = candles1m.map((c: any) => parseFloat(c.high));
+  const lows   = candles1m.map((c: any) => parseFloat(c.low));
+  const n = closes.length;
+
+  const returns: number[] = [];
+  for (let i = 1; i < n; i++) {
+    returns.push((closes[i] - closes[i-1]) / (closes[i-1] + 1e-10));
+  }
+
+  // Rolling volatility (20-period)
+  const rollVol: number[] = [];
+  for (let i = 0; i < returns.length; i++) {
+    const w = returns.slice(Math.max(0, i-19), i+1).map(Math.abs);
+    rollVol.push(w.reduce((a,b)=>a+b,0) / w.length);
+  }
+
+  const sortedVol = [...rollVol].sort((a,b)=>a-b);
+  const volMed = sortedVol[Math.floor(sortedVol.length * 0.50)];
+  const volHi  = sortedVol[Math.floor(sortedVol.length * 0.75)];
+
+  // Direction consistency over 5 candles
+  const obs: number[] = [];
+  for (let i = 0; i < returns.length; i++) {
+    const r = returns[i];
+    const v = rollVol[i];
+    const window = returns.slice(Math.max(0,i-4), i+1);
+    const up = window.filter(x => x > 0).length / window.length;
+    const c  = Math.max(up, 1-up);
+
+    if (v < volMed) {
+      obs.push(c >= 0.70 && r > 0 ? 1 : c >= 0.70 && r < 0 ? 2 : 0);
+    } else if (v < volHi) {
+      obs.push(r > 0 && c >= 0.60 ? 4 : r < 0 && c >= 0.60 ? 5 : 3);
+    } else {
+      obs.push(r > 0 ? 6 : 7);
+    }
+  }
+
+  // Use last 60 observations for speed
+  return obs.slice(-60);
+}
+
 // ─────────────────────────────────────────────
 // HMM REGIME DETECTION
 // Detects 4 hidden market states from candle data:
@@ -899,162 +1022,113 @@ function selectMultiplier(
 
 
 // ─────────────────────────────────────────────
-// BAYESIAN PATH SIMULATOR
-// Learns from last 24hrs candle behavior and
-// simulates 10,000 forward paths to calculate:
-// - P(hit TP before SL) — win probability
-// - Expected time to TP in candles
-// - Confidence interval of price range
-//
-// Adapts to each symbol's actual behavior:
-// BOOM/CRASH: learns spike frequency/size
-// Forex: learns session drift and volatility
-// Crypto: learns momentum and mean reversion
-// VIX: learns known synthetic distribution
+// TRUE BAYESIAN WIN PROBABILITY
+// P(win|conditions) = P(conditions|win) × P(win)
+//                     ─────────────────────────
+//                          P(conditions)
+// Prior: symbol trained win rate
+// Likelihood: 7 market condition factors
+// Posterior: updated belief after seeing conditions
+// Runs in microseconds — pure math, no simulation
 // ─────────────────────────────────────────────
-function bayesianPathSimulator(
+function trueBayesianWinProb(
   candles1m: any[],
   action: string,
   symbol: string,
-  tpPct: number,
-  slPct: number,
-  simulations: number = 10000
-): { winProb: number; expectedCandles: number; confidenceHigh: number; confidenceLow: number; recommendation: string } {
+  features: number[],
+  priorWinRate: number,
+  hmmRegime: string,
+  sessionStrength: number
+): { winProb: number; recommendation: string; factors: Record<string, number> } {
 
-  if (candles1m.length < 100) {
-    return { winProb: 0.5, expectedCandles: 20, confidenceHigh: 0, confidenceLow: 0, recommendation: "insufficient_data" };
+  if (candles1m.length < 50) {
+    return { winProb: priorWinRate, recommendation: "prior_only", factors: {} };
   }
 
   const closes = candles1m.map((c: any) => parseFloat(c.close));
-
-  // ── Step 1: Learn from last 24hrs (1440 candles max, use what we have) ──
-  const lookback = Math.min(closes.length, 200);
-  const recent   = closes.slice(-lookback);
-
-  // Calculate per-candle returns
+  const n = closes.length;
   const returns: number[] = [];
-  for (let i = 1; i < recent.length; i++) {
-    returns.push((recent[i] - recent[i-1]) / (recent[i-1] + 1e-10));
+  for (let i = 1; i < n; i++) {
+    returns.push((closes[i] - closes[i-1]) / (closes[i-1] + 1e-10));
+  }
+  const rLen = returns.length;
+  const meanReturn = returns.reduce((a,b) => a+b, 0) / rLen;
+  const variance   = returns.reduce((a,b) => a+(b-meanReturn)**2, 0) / rLen;
+  const sigma      = Math.sqrt(variance) + 1e-8;
+
+  // Extract features
+  const kalmanVel = features[23] || 0;
+  const garchVol  = features[27] || 0.003;
+  const ouZscore  = features[29] || 0;
+  const rsi       = features[0]  || 50;
+  const emaBull   = features[4]  || 0;
+  const emaBear   = features[5]  || 0;
+
+  const prior     = Math.max(0.40, Math.min(0.95, priorWinRate));
+  const priorLoss = 1 - prior;
+  const factors: Record<string, number> = {};
+  const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+
+  // Factor 1: Kalman velocity alignment
+  const kalmanAligned = action === "BUY" ? kalmanVel > 0 : kalmanVel < 0;
+  const kalmanStrength = Math.abs(kalmanVel) / (sigma + 1e-10);
+  factors.kalman = kalmanAligned
+    ? (1.0 + Math.min(kalmanStrength, 2.0) * 0.15)
+    : (0.7 - Math.min(kalmanStrength, 1.0) * 0.10);
+
+  // Factor 2: GARCH volatility
+  const volRatio = garchVol / (sigma + 1e-10);
+  factors.volatility = volRatio > 2.0 ? 0.75
+                     : volRatio > 1.0 ? 0.90
+                     : volRatio < 0.5 ? 1.15
+                     : 1.0;
+
+  // Factor 3: OU zscore
+  const absZ = Math.abs(ouZscore);
+  if (isBoomCrash) {
+    factors.ouReversion = absZ > 1.5 ? 1.20 : absZ > 0.8 ? 1.05 : 0.90;
+  } else {
+    factors.ouReversion = absZ > 2.0 ? 0.75 : absZ > 1.0 ? 0.90 : 1.10;
   }
 
-  // Learned parameters from recent behavior
-  const n       = returns.length;
-  const mean    = returns.reduce((a, b) => a + b, 0) / n;
-  const variance= returns.reduce((a, b) => a + (b - mean)**2, 0) / n;
-  const sigma   = Math.sqrt(variance) + 1e-8;
+  // Factor 4: Session strength
+  factors.session = 0.80 + (sessionStrength * 0.40);
 
-  // Detect jump behavior (BOOM/CRASH spikes)
-  const jumpThreshold = sigma * 3;
-  const jumps = returns.filter(r => Math.abs(r) > jumpThreshold);
-  const jumpProb    = jumps.length / n;
-  const avgJumpSize = jumps.length > 0
-    ? jumps.reduce((a, b) => a + b, 0) / jumps.length
-    : 0;
+  // Factor 5: HMM Regime
+  factors.regime = (action === "BUY"  && hmmRegime.includes("Uptrend"))   ? 1.20
+                 : (action === "SELL" && hmmRegime.includes("Downtrend"))  ? 1.20
+                 : hmmRegime === "Ranging"                                  ? 0.85
+                 : hmmRegime === "HighVolatility"                           ? 0.75
+                 : 1.0;
 
-  // Detect mean reversion strength (OU theta estimate)
-  let theta = 0;
-  const mu = mean;
-  let xySum = 0, xxSum = 0;
-  for (let i = 0; i < returns.length - 1; i++) {
-    const x = mu - returns[i];
-    const y = returns[i+1] - returns[i];
-    xySum += x * y;
-    xxSum += x * x;
-  }
-  theta = xxSum > 1e-10 ? Math.max(0, Math.min(2, xySum / xxSum)) : 0;
+  // Factor 6: EMA stack
+  const emaAligned = (action === "BUY" && emaBull === 1) || (action === "SELL" && emaBear === 1);
+  factors.emaStack = emaAligned ? 1.10 : 0.92;
 
-  // Momentum factor — does recent trend continue?
-  const last10    = returns.slice(-10);
-  const momentum  = last10.reduce((a, b) => a + b, 0) / last10.length;
-  const momFactor = action === "BUY"
-    ? (momentum > 0 ? 1.0 + momentum * 10 : 1.0 - Math.abs(momentum) * 5)
-    : (momentum < 0 ? 1.0 + Math.abs(momentum) * 10 : 1.0 - momentum * 5);
-
-  // ── Step 2: Simulate 10,000 forward paths ──
-  let wins           = 0;
-  let totalCandles   = 0;
-  let winCandles     = 0;
-  const finalPrices: number[] = [];
-  const MAX_CANDLES  = 300; // max candles to wait (5hrs for 1min candles)
-  const currentPrice = recent[recent.length - 1];
-  const tpTarget     = action === "BUY"
-    ? currentPrice * (1 + tpPct)
-    : currentPrice * (1 - tpPct);
-  const slTarget     = action === "BUY"
-    ? currentPrice * (1 - slPct)
-    : currentPrice * (1 + slPct);
-
-  for (let sim = 0; sim < simulations; sim++) {
-    let price    = currentPrice;
-    let hit      = false;
-    let candle   = 0;
-
-    for (candle = 0; candle < MAX_CANDLES; candle++) {
-      // Bayesian return generation:
-      // Base: normal distribution with learned mean/sigma
-      // + Mean reversion pull (OU process)
-      // + Momentum factor
-      // + Jump process (for BOOM/CRASH spikes)
-
-      // Box-Muller normal sample
-      const u1 = Math.random() + 1e-10;
-      const u2 = Math.random();
-      const z  = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-
-      // Base return with learned drift
-      let ret = mean * momFactor + sigma * z;
-
-      // Mean reversion pull
-      const deviation = (price - currentPrice) / (currentPrice + 1e-10);
-      ret -= theta * deviation * 0.1;
-
-      // Jump process (spike simulation for BOOM/CRASH)
-      if (Math.random() < jumpProb && jumpProb > 0.01) {
-        const jumpDir = avgJumpSize > 0 ? 1 : -1;
-        ret += jumpDir * sigma * (3 + Math.random() * 3);
-      }
-
-      price = price * (1 + ret);
-
-      // Check if TP or SL hit
-      if (action === "BUY") {
-        if (price >= tpTarget) { wins++; winCandles += candle + 1; hit = true; break; }
-        if (price <= slTarget) { hit = true; break; }
-      } else {
-        if (price <= tpTarget) { wins++; winCandles += candle + 1; hit = true; break; }
-        if (price >= slTarget) { hit = true; break; }
-      }
-    }
-
-    totalCandles += candle + 1;
-    finalPrices.push(price);
+  // Factor 7: RSI zone
+  if (isBoomCrash) {
+    factors.rsi = (action === "BUY"  && rsi < 40) ? 1.15
+                : (action === "SELL" && rsi > 60) ? 1.15
+                : 1.0;
+  } else {
+    factors.rsi = (rsi >= 40 && rsi <= 60) ? 1.10
+                : (rsi >= 30 && rsi <= 70) ? 1.0
+                : 0.85;
   }
 
-  // ── Step 3: Calculate results ──
-  const winProb        = wins / simulations;
-  const expectedCandles= wins > 0 ? winCandles / wins : MAX_CANDLES;
+  // Bayes update: posterior_odds = prior_odds × likelihood_ratio
+  const likelihoodRatio = Object.values(factors).reduce((a, b) => a * b, 1.0);
+  const priorOdds       = prior / (priorLoss + 1e-10);
+  const posteriorOdds   = priorOdds * likelihoodRatio;
+  const winProb         = Math.max(0.20, Math.min(0.95, posteriorOdds / (1 + posteriorOdds)));
 
-  // Confidence interval of final price distribution
-  finalPrices.sort((a, b) => a - b);
-  const p10 = finalPrices[Math.floor(simulations * 0.10)];
-  const p90 = finalPrices[Math.floor(simulations * 0.90)];
+  const recommendation = winProb >= 0.72 ? "strong_trade"
+                       : winProb >= 0.62 ? "good_trade"
+                       : winProb >= 0.55 ? "marginal_trade"
+                       : "skip";
 
-  // Recommendation based on win probability
-  let recommendation: string;
-  if (winProb >= 0.70)      recommendation = "strong_trade";
-  else if (winProb >= 0.60) recommendation = "good_trade";
-  else if (winProb >= 0.52) recommendation = "marginal_trade";
-  else                       recommendation = "skip";
-
-  console.log(`🎲 Bayesian ${symbol} ${action}: P(win)=${(winProb*100).toFixed(1)}% ETA:${expectedCandles.toFixed(0)}candles rec:${recommendation}`);
-
-  return {
-    winProb,
-    expectedCandles,
-    confidenceHigh: p90,
-    confidenceLow:  p10,
-    recommendation
-  };
+  console.log(`🎲 Bayes ${symbol} ${action}: prior=${(prior*100).toFixed(0)}% → posterior=${(winProb*100).toFixed(1)}% LR=${likelihoodRatio.toFixed(2)} rec:${recommendation}`);
+  return { winProb, recommendation, factors };
 }
 
 // ─────────────────────────────────────────────
@@ -1169,6 +1243,9 @@ Deno.serve(async (req) => {
   const consec = await getConsecutiveLosses(supabase);
   if (consec >= 3) return new Response(JSON.stringify({ status: "paused", consecutive_losses: consec }), { headers: CORS });
 
+  // Load TRUE HMM model from Supabase
+  await loadHMMModel(supabase);
+
   // AI Brain learns from recent completed trades every cycle
   await aiBrainLearn(supabase);
 
@@ -1217,7 +1294,11 @@ Deno.serve(async (req) => {
       if (c1m.length < 60) { scanLog.push(`${symbol}: insufficient candles`); continue; }
 
       // ── STEP 2: HMM Regime Detection ──
-      const regime = detectMarketRegime(c1m);
+      // Use TRUE HMM Viterbi decoder if model loaded, else fall back to rule-based
+      const hmmObs = extractHMMObservations(c1m);
+      const regime = (HMM_MODEL && hmmObs.length > 0)
+        ? hmmViterbi(hmmObs)
+        : detectMarketRegime(c1m);
       const isSpikeSym = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
 
       // BOOM/CRASH trade in ALL regimes — spikes happen even in ranging markets
