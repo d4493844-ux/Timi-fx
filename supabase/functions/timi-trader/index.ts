@@ -1138,61 +1138,79 @@ function trueBayesianWinProb(
 // ─────────────────────────────────────────────
 async function updateOpenTradeResults(supabase: any, token: string): Promise<void> {
   try {
-    // Get trades marked as "open" in last 2 hours
-    const twoHrsAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    // Get trades marked as "open" in last 8 hours
+    const eightHrsAgo = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
     const { data: openTrades } = await supabase
       .from("trades")
       .select("id, symbol, stake, created_at")
       .eq("result", "open")
       .eq("account_name", "edge_function")
-      .gte("created_at", twoHrsAgo);
+      .gte("created_at", eightHrsAgo)
+      .limit(20);
 
     if (!openTrades || openTrades.length === 0) return;
-    console.log(`🔄 Checking ${openTrades.length} open trades for results...`);
+    console.log(`🔄 Checking ${openTrades.length} open trades...`);
 
-    // Get profit table from Deriv to find closed trades
     await new Promise<void>((resolve) => {
       const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const timeout = setTimeout(() => { ws.close(); resolve(); }, 15000);
+      const timeout = setTimeout(() => { ws.close(); resolve(); }, 20000);
+      let authed = false;
 
       ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
       ws.onmessage = async (e) => {
         const d = JSON.parse(e.data);
-        if (d.authorize) {
-          // Get recent profit table
+
+        if (d.authorize && !authed) {
+          authed = true;
+          // Use statement API — shows ALL transactions including closed MULT contracts
           ws.send(JSON.stringify({
-            profit_table: 1,
+            statement: 1,
             description: 1,
-            limit: 50,
-            sort: "DESC"
+            limit: 100,
+            action_type: "sell"  // only show closed/sold contracts
           }));
         }
-        if (d.profit_table) {
+
+        if (d.statement) {
           clearTimeout(timeout);
           ws.close();
-          const transactions = d.profit_table.transactions || [];
+          const transactions = d.statement.transactions || [];
+          console.log(`📊 Got ${transactions.length} closed transactions from Deriv`);
 
+          let updated = 0;
           for (const trade of openTrades) {
-            // Find matching transaction by symbol and time
             const tradeTime = new Date(trade.created_at).getTime() / 1000;
+
+            // Match by purchase time within 10 minutes
             const match = transactions.find((t: any) => {
-              const tTime = t.purchase_time || 0;
-              return Math.abs(tTime - tradeTime) < 400; // within 400 seconds
+              const purchaseTime = t.purchase_time || t.transaction_time || 0;
+              return Math.abs(purchaseTime - tradeTime) < 600;
             });
 
             if (match) {
-              const pnl    = parseFloat(match.sell_price || 0) - parseFloat(match.buy_price || trade.stake);
+              const pnl    = parseFloat(match.pnl || "0");
               const result = pnl > 0 ? "win" : "loss";
-              await supabase.from("trades").update({ result, pnl }).eq("id", trade.id);
-              console.log(`✅ Trade ${trade.id} updated: ${result} pnl:$${pnl.toFixed(2)}`);
+              await supabase.from("trades")
+                .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
+                .eq("id", trade.id);
+              console.log(`✅ ${trade.symbol}: ${result} pnl:$${pnl.toFixed(2)}`);
+              updated++;
             }
           }
+          console.log(`🔄 Updated ${updated}/${openTrades.length} open trades`);
           resolve();
         }
-        if (d.error) { clearTimeout(timeout); ws.close(); resolve(); }
+
+        if (d.error) {
+          console.log(`⚠️ Statement error: ${d.error.message}`);
+          clearTimeout(timeout);
+          ws.close();
+          resolve();
+        }
       };
       ws.onerror = () => { clearTimeout(timeout); resolve(); };
     });
+
   } catch(e) {
     console.log(`⚠️ Trade result updater error: ${e}`);
   }
