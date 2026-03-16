@@ -1370,10 +1370,11 @@ Deno.serve(async (req) => {
         // P(win|conditions) = P(conditions|win) × P(win) / P(conditions)
         // Uses trained win rate as prior, updates with 7 likelihood factors
         // Runs in microseconds — pure math, no simulation
-        const priorWR  = 0.65; // default prior — updated from ml_models WR
+        // Use actual trained win rate as Bayesian prior
+        const mlWinRate = mlRows?.find((r: any) => r.symbol === symbol)?.win_rate || 0.65;
         const bayesian = trueBayesianWinProb(
           c1m, sig.action, symbol, features,
-          priorWR, regime.name,
+          mlWinRate, regime.name,
           features[40] || 0.5  // session_strength (last feature)
         );
         if (bayesian.winProb < 0.55) {
