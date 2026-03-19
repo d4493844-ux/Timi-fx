@@ -1228,7 +1228,34 @@ Deno.serve(async (req) => {
 
   const token   = cfg.token;
   const riskPct = cfg.risk_pct || 2;
-  const balance = cfg.balance_cache || 10;
+
+  // ── Auto-sync real balance from Deriv every cycle ──
+  let balance = cfg.balance_cache || 10;
+  try {
+    const realBalance = await new Promise<number>((resolve) => {
+      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+      const t = setTimeout(() => { ws.close(); resolve(balance); }, 8000);
+      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+      ws.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.authorize) {
+          clearTimeout(t); ws.close();
+          resolve(parseFloat(d.authorize.balance || balance));
+        }
+        if (d.error) { clearTimeout(t); ws.close(); resolve(balance); }
+      };
+      ws.onerror = () => { clearTimeout(t); resolve(balance); };
+    });
+    if (realBalance > 0 && Math.abs(realBalance - balance) > 0.01) {
+      balance = realBalance;
+      await supabase.from("bot_config")
+        .update({ balance_cache: realBalance })
+        .eq("active", true);
+      console.log(`💰 Balance synced: $${realBalance}`);
+    }
+  } catch(e) {
+    console.log(`⚠️ Balance sync failed, using cache: $${balance}`);
+  }
 
   // ── MONTE CARLO DYNAMIC STAKE ──
   // Get recent performance stats
