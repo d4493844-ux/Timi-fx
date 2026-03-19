@@ -68,6 +68,134 @@ const c = {
   accCard:{ background: "#0a1e30", border: "1px solid #0a2540", borderRadius: 10, padding: 12, marginBottom: 8 },
 };
 
+
+// ── Platform Card Component ──
+function PlatformCard({ platform, label, description, isApiKey=false,
+  accounts=[], toggleAccount, removeAccount, updateToken,
+  editTokenId, setEditTokenId, editTokenVal, setEditTokenVal,
+  newAccName, setNewAccName, newAccToken, setNewAccToken, handleAddAccount,
+  platformConfig={}, onConfigChange, availableSymbols=[], platformSymbols=[], onSymbolToggle, c }) {
+
+  const [showSecret, setShowSecret] = useState(false);
+  const isEnabled = isApiKey ? platformConfig.enabled : accounts.some(a=>a.active);
+
+  return (
+    <div style={{...c.card, border:`1px solid ${isEnabled?"rgba(0,212,255,0.3)":"#0a2540"}`, marginBottom:12}}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontFamily:"'Orbitron',monospace",fontSize:11,color:"#c8e8ff",fontWeight:700}}>{label}</div>
+          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginTop:2}}>{description}</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:isEnabled?"#00ff9d":"#ff3366"}}>
+            {isEnabled?"● ACTIVE":"○ INACTIVE"}
+          </div>
+          {isApiKey && (
+            <button style={{...c.toggle(platformConfig.auto_trade),transform:"scale(0.8)"}}
+              onClick={()=>onConfigChange({auto_trade:!platformConfig.auto_trade, enabled:!platformConfig.auto_trade})}>
+              <div style={c.knob(platformConfig.auto_trade)}/>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Deriv token accounts */}
+      {!isApiKey && (
+        <div>
+          {accounts.map(acc=>(
+            <div key={acc.id} style={{background:"#020810",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #0a2540"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#c8e8ff"}}>{acc.name}</div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <button style={c.toggle(acc.active)} onClick={()=>toggleAccount?.(acc.id)}>
+                    <div style={c.knob(acc.active)}/>
+                  </button>
+                  <button style={{...c.btn,...c.btnD,padding:"4px 8px",fontSize:9}} onClick={()=>removeAccount?.(acc.id)}>✕</button>
+                </div>
+              </div>
+              {editTokenId===acc.id ? (
+                <div style={{display:"flex",gap:6,marginTop:8}}>
+                  <input style={{...c.inp,marginTop:0,flex:1}} placeholder="New token"
+                    value={editTokenVal} onChange={e=>setEditTokenVal(e.target.value)}/>
+                  <button style={{...c.btn,...c.btnP,padding:"6px 12px"}} onClick={async()=>{
+                    if(!editTokenVal||editTokenVal.length<5) return;
+                    const {error} = await supabase.from("bot_config").update({token:editTokenVal}).eq("active",true);
+                    if(!error){updateToken?.(acc.id,editTokenVal);setEditTokenId(null);}
+                  }}>Save</button>
+                </div>
+              ) : (
+                <button style={{...c.btn,background:"transparent",color:"#3a6080",fontSize:9,padding:"4px 0",marginTop:4}}
+                  onClick={()=>{setEditTokenId(acc.id);setEditTokenVal(acc.token);}}>
+                  ✏️ Edit Token
+                </button>
+              )}
+            </div>
+          ))}
+          <input style={c.inp} placeholder="Account name" value={newAccName} onChange={e=>setNewAccName(e.target.value)}/>
+          <input style={{...c.inp,marginTop:8}} placeholder="Deriv API token" type="password"
+            value={newAccToken} onChange={e=>setNewAccToken(e.target.value)}/>
+          <button style={{...c.btn,...c.btnP,width:"100%",marginTop:10}} onClick={handleAddAccount}>+ ADD ACCOUNT</button>
+        </div>
+      )}
+
+      {/* API Key platforms (Binance, Exness) */}
+      {isApiKey && (
+        <div>
+          <div style={{marginBottom:8}}>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginBottom:4}}>API KEY</div>
+            <input style={c.inp} placeholder={`${label} API Key`} type="password"
+              value={platformConfig.api_key||""} onChange={e=>onConfigChange({api_key:e.target.value})}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginBottom:4}}>API SECRET</div>
+            <input style={c.inp} placeholder={`${label} API Secret`} type="password"
+              value={platformConfig.api_secret||""} onChange={e=>onConfigChange({api_secret:e.target.value})}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080"}}>Risk per trade</div>
+            <div style={{fontFamily:"'Orbitron',monospace",fontSize:13,color:"#00d4ff"}}>{platformConfig.risk_pct||1}%</div>
+          </div>
+          <input type="range" min={0.5} max={5} step={0.5}
+            value={platformConfig.risk_pct||1}
+            onChange={e=>onConfigChange({risk_pct:parseFloat(e.target.value)})}
+            style={{width:"100%",accentColor:"#00d4ff",marginBottom:12}}/>
+          {(!platformConfig.api_key) && (
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#ffcc00",
+              background:"rgba(255,204,0,0.08)",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+              ⚠️ Add API credentials to enable {label} trading
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Symbol selector */}
+      <div style={{marginTop:12}}>
+        <div style={{fontFamily:"'Orbitron',monospace",fontSize:9,color:"#3a6080",letterSpacing:2,marginBottom:8}}>
+          SYMBOLS TO TRADE
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+          {availableSymbols.map(sym=>{
+            const active = platformSymbols.includes(sym.id);
+            return (
+              <button key={sym.id}
+                style={{background:active?"rgba(0,212,255,0.1)":"#020810",
+                  border:`1px solid ${active?"#00d4ff":"#0a2540"}`,
+                  borderRadius:8,padding:"8px 10px",cursor:"pointer",
+                  display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                onClick={()=>onSymbolToggle(sym.id)}>
+                <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:10,
+                  color:active?"#00d4ff":"#3a6080"}}>{sym.label}</span>
+                <span style={{fontSize:10,color:active?"#00ff9d":"#3a6080"}}>{active?"✓":""}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings({
   autoTrade, setAutoTrade,
   activeSymbols = [], updateSymbols,
@@ -89,7 +217,27 @@ export default function Settings({
   const [trainQueue,   setTrainQueue]   = useState([]);       // symbols queued for training
   const [mlSaving,     setMlSaving]     = useState(false);
   const [mlFlash,      setMlFlash]      = useState("");
-  const [tab,          setTab]          = useState("general"); // general | ml | markets | accounts
+  const [tab,          setTab]          = useState("general");
+  const [platformConfig,  setPlatformConfig]  = useState({binance:{enabled:false,api_key:"",api_secret:"",auto_trade:false,risk_pct:1},exness:{enabled:false,api_key:"",api_secret:"",auto_trade:false,risk_pct:1}});
+  const [platformSymbols, setPlatformSymbols] = useState({deriv:[],binance:[],exness:[]});
+
+  const togglePlatformSymbol = (platform, sym) => {
+    setPlatformSymbols(prev => {
+      const current = prev[platform] || [];
+      const updated = current.includes(sym) ? current.filter(s=>s!==sym) : [...current, sym];
+      // Save to Supabase
+      supabase.from("bot_config").update({
+        platforms: {...platformConfig, [platform]: {...(platformConfig[platform]||{}), symbols: updated}}
+      }).eq("active", true);
+      return {...prev, [platform]: updated};
+    });
+  };
+
+  const updatePlatformConfig = (platform, cfg) => {
+    const updated = {...platformConfig, [platform]: {...(platformConfig[platform]||{}), ...cfg}};
+    setPlatformConfig(updated);
+    supabase.from("bot_config").update({platforms: updated}).eq("active", true);
+  };
 
   useEffect(() => {
     setSavedFlash("✅ Saved!");
@@ -452,55 +600,108 @@ export default function Settings({
 
       {/* ── ACCOUNTS TAB ── */}
       {tab === "accounts" && (
-        <motion.div style={c.card} initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }}>
-          <div style={c.ct}>TRADING ACCOUNTS</div>
-          {accounts.map(acc => (
-            <div key={acc.id} style={c.accCard}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 11, color: acc.active ? "#00d4ff" : "#3a6080" }}>{acc.name}</div>
-                  <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 10, color: "#00ff9d", marginTop: 2 }}>{acc.currency} {acc.balance}</div>
-                </div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <button style={c.toggle(acc.active)} onClick={() => toggleAccount?.(acc.id)}>
-                    <div style={c.knob(acc.active)} />
-                  </button>
-                  {acc.id !== "primary" && (
-                    <button style={{ ...c.btn, ...c.btnD, padding: "4px 8px", fontSize: 9 }} onClick={() => removeAccount?.(acc.id)}>✕</button>
-                  )}
-                </div>
-              </div>
-              {editTokenId === acc.id ? (
-                <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                  <input style={{ ...c.inp, marginTop: 0, flex: 1 }} placeholder="New token"
-                    value={editTokenVal} onChange={e => setEditTokenVal(e.target.value)} />
-                  <button style={{ ...c.btn, ...c.btnP, padding: "6px 10px" }}
-                    onClick={async () => {
-                      if (!editTokenVal || editTokenVal.length < 5) return;
-                      const { error } = await supabase.from("bot_config").update({ token: editTokenVal }).eq("active", true);
-                      if (error) { alert("❌ " + error.message); return; }
-                      updateToken?.(acc.id, editTokenVal);
-                      setEditTokenId(null);
-                      alert("✅ Token saved!");
-                    }}>✓</button>
-                </div>
-              ) : (
-                <button style={{ ...c.btn, background: "rgba(0,212,255,0.08)", border: "1px solid rgba(0,212,255,0.2)", color: "#00d4ff", marginTop: 8, fontSize: 9 }}
-                  onClick={() => { setEditTokenId(acc.id); setEditTokenVal(acc.token); }}>
-                  ✏️ Edit Token
-                </button>
-              )}
+        <motion.div initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }}>
+
+          {/* ── GLOBAL LIMITS ── */}
+          <div style={c.card}>
+            <div style={c.ct}>// GLOBAL RISK LIMITS</div>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginBottom:12,lineHeight:1.8}}>
+              These limits apply across ALL platforms combined.<br/>
+              Bot will pause if total exposure exceeds these limits.
             </div>
-          ))}
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: "#3a6080", letterSpacing: 2, marginBottom: 8 }}>ADD ACCOUNT</div>
-            <input style={c.inp} placeholder="Account name" value={newAccName} onChange={e => setNewAccName(e.target.value)} />
-            <input style={{ ...c.inp, marginTop: 8 }} placeholder="Deriv API token" type="password"
-              value={newAccToken} onChange={e => setNewAccToken(e.target.value)} />
-            <button style={{ ...c.btn, ...c.btnP, width: "100%", marginTop: 10 }} onClick={handleAddAccount}>+ ADD ACCOUNT</button>
+            {[
+              {key:"max_trades", label:"Max Concurrent Trades", min:1, max:10, step:1, suffix:"", desc:"Across all platforms"},
+              {key:"risk_pct",   label:"Risk Per Trade",        min:0.5, max:10, step:0.5, suffix:"%", desc:"% of balance per trade"},
+              {key:"min_confidence", label:"Min ML Confidence", min:30, max:95, step:5, suffix:"%", desc:"Minimum signal strength"},
+            ].map(({key,label,min,max,step,suffix,desc})=>(
+              <div key={key} style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <div>
+                    <div style={{fontFamily:"'Orbitron',monospace",fontSize:9,color:"#c8e8ff"}}>{label}</div>
+                    <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#3a6080"}}>{desc}</div>
+                  </div>
+                  <div style={{fontFamily:"'Orbitron',monospace",fontSize:16,fontWeight:700,color:"#00d4ff"}}>
+                    {riskParams[key]}{suffix}
+                  </div>
+                </div>
+                <input type="range" min={min} max={max} step={step}
+                  value={riskParams[key]||min}
+                  onChange={e=>setRiskParams(p=>({...p,[key]:parseFloat(e.target.value)}))}
+                  style={{width:"100%",accentColor:"#00d4ff"}}/>
+              </div>
+            ))}
           </div>
+
+          {/* ── DERIV PLATFORM ── */}
+          <PlatformCard
+            platform="deriv"
+            label="🔷 DERIV"
+            description="Synthetics, Forex, Crypto multipliers & binary options"
+            accounts={accounts}
+            toggleAccount={toggleAccount}
+            removeAccount={removeAccount}
+            updateToken={updateToken}
+            editTokenId={editTokenId}
+            setEditTokenId={setEditTokenId}
+            editTokenVal={editTokenVal}
+            setEditTokenVal={setEditTokenVal}
+            newAccName={newAccName}
+            setNewAccName={setNewAccName}
+            newAccToken={newAccToken}
+            setNewAccToken={setNewAccToken}
+            handleAddAccount={handleAddAccount}
+            availableSymbols={[
+              {id:"BOOM500",label:"BOOM 500"},{id:"BOOM1000",label:"BOOM 1000"},
+              {id:"CRASH500",label:"CRASH 500"},{id:"CRASH1000",label:"CRASH 1000"},
+              {id:"R_25",label:"VIX 25"},{id:"R_50",label:"VIX 50"},
+              {id:"R_75",label:"VIX 75"},{id:"R_100",label:"VIX 100"},
+              {id:"frxUSDJPY",label:"USD/JPY"},{id:"frxEURUSD",label:"EUR/USD"},
+              {id:"frxGBPUSD",label:"GBP/USD"},{id:"frxXAUUSD",label:"Gold/USD"},
+              {id:"cryBTCUSD",label:"BTC/USD"},{id:"cryETHUSD",label:"ETH/USD"},
+            ]}
+            platformSymbols={platformSymbols.deriv || []}
+            onSymbolToggle={(sym)=>togglePlatformSymbol("deriv",sym)}
+            c={c}
+          />
+
+          {/* ── BINANCE PLATFORM ── */}
+          <PlatformCard
+            platform="binance"
+            label="🟡 BINANCE"
+            description="Crypto spot & futures — real market, real volume"
+            isApiKey={true}
+            platformConfig={platformConfig.binance || {}}
+            onConfigChange={(cfg)=>updatePlatformConfig("binance",cfg)}
+            availableSymbols={[
+              {id:"BTCUSDT",label:"BTC/USDT"},{id:"ETHUSDT",label:"ETH/USDT"},
+              {id:"BNBUSDT",label:"BNB/USDT"},{id:"SOLUSDT",label:"SOL/USDT"},
+              {id:"XRPUSDT",label:"XRP/USDT"},{id:"ADAUSDT",label:"ADA/USDT"},
+            ]}
+            platformSymbols={platformSymbols.binance || []}
+            onSymbolToggle={(sym)=>togglePlatformSymbol("binance",sym)}
+            c={c}
+          />
+
+          {/* ── EXNESS PLATFORM ── */}
+          <PlatformCard
+            platform="exness"
+            label="🟢 EXNESS"
+            description="Real forex ECN — tighter spreads, real order book"
+            isApiKey={true}
+            platformConfig={platformConfig.exness || {}}
+            onConfigChange={(cfg)=>updatePlatformConfig("exness",cfg)}
+            availableSymbols={[
+              {id:"EURUSD",label:"EUR/USD"},{id:"USDJPY",label:"USD/JPY"},
+              {id:"GBPUSD",label:"GBP/USD"},{id:"XAUUSD",label:"Gold/USD"},
+              {id:"GBPJPY",label:"GBP/JPY"},{id:"AUDUSD",label:"AUD/USD"},
+              {id:"USDCAD",label:"USD/CAD"},{id:"USDCHF",label:"USD/CHF"},
+            ]}
+            platformSymbols={platformSymbols.exness || []}
+            onSymbolToggle={(sym)=>togglePlatformSymbol("exness",sym)}
+            c={c}
+          />
+
         </motion.div>
-      )}
-    </div>
+      )}    </div>
   );
 }
