@@ -196,6 +196,134 @@ function PlatformCard({ platform, label, description, isApiKey=false,
   );
 }
 
+
+// ── Platform Card Component ──
+function PlatformCard({ platform, label, description, isApiKey=false,
+  accounts=[], toggleAccount, removeAccount, updateToken,
+  editTokenId, setEditTokenId, editTokenVal, setEditTokenVal,
+  newAccName, setNewAccName, newAccToken, setNewAccToken, handleAddAccount,
+  platformConfig={}, onConfigChange, availableSymbols=[], platformSymbols=[], onSymbolToggle, c }) {
+
+  const [showSecret, setShowSecret] = useState(false);
+  const isEnabled = isApiKey ? platformConfig.enabled : accounts.some(a=>a.active);
+
+  return (
+    <div style={{...c.card, border:`1px solid ${isEnabled?"rgba(0,212,255,0.3)":"#0a2540"}`, marginBottom:12}}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontFamily:"'Orbitron',monospace",fontSize:11,color:"#c8e8ff",fontWeight:700}}>{label}</div>
+          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginTop:2}}>{description}</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:isEnabled?"#00ff9d":"#ff3366"}}>
+            {isEnabled?"● ACTIVE":"○ INACTIVE"}
+          </div>
+          {isApiKey && (
+            <button style={{...c.toggle(platformConfig.auto_trade),transform:"scale(0.8)"}}
+              onClick={()=>onConfigChange({auto_trade:!platformConfig.auto_trade, enabled:!platformConfig.auto_trade})}>
+              <div style={c.knob(platformConfig.auto_trade)}/>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Deriv token accounts */}
+      {!isApiKey && (
+        <div>
+          {accounts.map(acc=>(
+            <div key={acc.id} style={{background:"#020810",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #0a2540"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#c8e8ff"}}>{acc.name}</div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <button style={c.toggle(acc.active)} onClick={()=>toggleAccount?.(acc.id)}>
+                    <div style={c.knob(acc.active)}/>
+                  </button>
+                  <button style={{...c.btn,...c.btnD,padding:"4px 8px",fontSize:9}} onClick={()=>removeAccount?.(acc.id)}>✕</button>
+                </div>
+              </div>
+              {editTokenId===acc.id ? (
+                <div style={{display:"flex",gap:6,marginTop:8}}>
+                  <input style={{...c.inp,marginTop:0,flex:1}} placeholder="New token"
+                    value={editTokenVal} onChange={e=>setEditTokenVal(e.target.value)}/>
+                  <button style={{...c.btn,...c.btnP,padding:"6px 12px"}} onClick={async()=>{
+                    if(!editTokenVal||editTokenVal.length<5) return;
+                    const {error} = await supabase.from("bot_config").update({token:editTokenVal}).eq("active",true);
+                    if(!error){updateToken?.(acc.id,editTokenVal);setEditTokenId(null);}
+                  }}>Save</button>
+                </div>
+              ) : (
+                <button style={{...c.btn,background:"transparent",color:"#3a6080",fontSize:9,padding:"4px 0",marginTop:4}}
+                  onClick={()=>{setEditTokenId(acc.id);setEditTokenVal(acc.token);}}>
+                  ✏️ Edit Token
+                </button>
+              )}
+            </div>
+          ))}
+          <input style={c.inp} placeholder="Account name" value={newAccName} onChange={e=>setNewAccName(e.target.value)}/>
+          <input style={{...c.inp,marginTop:8}} placeholder="Deriv API token" type="password"
+            value={newAccToken} onChange={e=>setNewAccToken(e.target.value)}/>
+          <button style={{...c.btn,...c.btnP,width:"100%",marginTop:10}} onClick={handleAddAccount}>+ ADD ACCOUNT</button>
+        </div>
+      )}
+
+      {/* API Key platforms (Binance, Exness) */}
+      {isApiKey && (
+        <div>
+          <div style={{marginBottom:8}}>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginBottom:4}}>API KEY</div>
+            <input style={c.inp} placeholder={`${label} API Key`} type="password"
+              value={platformConfig.api_key||""} onChange={e=>onConfigChange({api_key:e.target.value})}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginBottom:4}}>API SECRET</div>
+            <input style={c.inp} placeholder={`${label} API Secret`} type="password"
+              value={platformConfig.api_secret||""} onChange={e=>onConfigChange({api_secret:e.target.value})}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080"}}>Risk per trade</div>
+            <div style={{fontFamily:"'Orbitron',monospace",fontSize:13,color:"#00d4ff"}}>{platformConfig.risk_pct||1}%</div>
+          </div>
+          <input type="range" min={0.5} max={5} step={0.5}
+            value={platformConfig.risk_pct||1}
+            onChange={e=>onConfigChange({risk_pct:parseFloat(e.target.value)})}
+            style={{width:"100%",accentColor:"#00d4ff",marginBottom:12}}/>
+          {(!platformConfig.api_key) && (
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#ffcc00",
+              background:"rgba(255,204,0,0.08)",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+              ⚠️ Add API credentials to enable {label} trading
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Symbol selector */}
+      <div style={{marginTop:12}}>
+        <div style={{fontFamily:"'Orbitron',monospace",fontSize:9,color:"#3a6080",letterSpacing:2,marginBottom:8}}>
+          SYMBOLS TO TRADE
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+          {availableSymbols.map(sym=>{
+            const active = platformSymbols.includes(sym.id);
+            return (
+              <button key={sym.id}
+                style={{background:active?"rgba(0,212,255,0.1)":"#020810",
+                  border:`1px solid ${active?"#00d4ff":"#0a2540"}`,
+                  borderRadius:8,padding:"8px 10px",cursor:"pointer",
+                  display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                onClick={()=>onSymbolToggle(sym.id)}>
+                <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:10,
+                  color:active?"#00d4ff":"#3a6080"}}>{sym.label}</span>
+                <span style={{fontSize:10,color:active?"#00ff9d":"#3a6080"}}>{active?"✓":""}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings({
   autoTrade, setAutoTrade,
   activeSymbols = [], updateSymbols,
