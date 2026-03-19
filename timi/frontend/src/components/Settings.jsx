@@ -74,9 +74,12 @@ function PlatformCard({ platform, label, description, isApiKey=false,
   accounts=[], toggleAccount, removeAccount, updateToken,
   editTokenId, setEditTokenId, editTokenVal, setEditTokenVal,
   newAccName, setNewAccName, newAccToken, setNewAccToken, handleAddAccount,
-  platformConfig={}, onConfigChange, availableSymbols=[], platformSymbols=[], onSymbolToggle, c }) {
+  platformConfig={}, onConfigChange, onSave, saving=false, saved=false,
+  availableSymbols=[], platformSymbols=[], onSymbolToggle, c }) {
 
   const [showSecret, setShowSecret] = useState(false);
+  const [localKey,    setLocalKey]    = useState(platformConfig.api_key||"");
+  const [localSecret, setLocalSecret] = useState(platformConfig.api_secret||"");
   const isEnabled = isApiKey ? platformConfig.enabled : accounts.some(a=>a.active);
 
   return (
@@ -145,12 +148,12 @@ function PlatformCard({ platform, label, description, isApiKey=false,
           <div style={{marginBottom:8}}>
             <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginBottom:4}}>API KEY</div>
             <input style={c.inp} placeholder={`${label} API Key`} type="password"
-              value={platformConfig.api_key||""} onChange={e=>onConfigChange({api_key:e.target.value})}/>
+              value={localKey} onChange={e=>setLocalKey(e.target.value)}/>
           </div>
           <div style={{marginBottom:12}}>
             <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginBottom:4}}>API SECRET</div>
             <input style={c.inp} placeholder={`${label} API Secret`} type="password"
-              value={platformConfig.api_secret||""} onChange={e=>onConfigChange({api_secret:e.target.value})}/>
+              value={localSecret} onChange={e=>setLocalSecret(e.target.value)}/>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080"}}>Risk per trade</div>
@@ -160,7 +163,17 @@ function PlatformCard({ platform, label, description, isApiKey=false,
             value={platformConfig.risk_pct||1}
             onChange={e=>onConfigChange({risk_pct:parseFloat(e.target.value)})}
             style={{width:"100%",accentColor:"#00d4ff",marginBottom:12}}/>
-          {(!platformConfig.api_key) && (
+          {/* Save button */}
+          <button
+            style={{width:"100%",padding:"10px",borderRadius:10,border:"none",cursor:"pointer",
+              fontFamily:"'Orbitron',monospace",fontSize:10,letterSpacing:1,marginBottom:8,
+              background:saved?"linear-gradient(90deg,#00ff9d,#00d4ff)":"linear-gradient(90deg,#00d4ff,#0080ff)",
+              color:"#020810",fontWeight:700}}
+            onClick={()=>onSave?.({...platformConfig, api_key:localKey, api_secret:localSecret, enabled:!!(localKey&&localSecret)})}>
+            {saving?"SAVING...":saved?"✅ SAVED!":"💾 SAVE CREDENTIALS"}
+          </button>
+
+          {(!localKey||!localSecret) && (
             <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#ffcc00",
               background:"rgba(255,204,0,0.08)",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
               ⚠️ Add API credentials to enable {label} trading
@@ -220,25 +233,65 @@ export default function Settings({
   const [mlSaving,     setMlSaving]     = useState(false);
   const [mlFlash,      setMlFlash]      = useState("");
   const [tab,          setTab]          = useState("general");
-  const [platformConfig,  setPlatformConfig]  = useState({binance:{enabled:false,api_key:"",api_secret:"",auto_trade:false,risk_pct:1},exness:{enabled:false,api_key:"",api_secret:"",auto_trade:false,risk_pct:1}});
+  const [platformConfig,  setPlatformConfig]  = useState({
+    binance:{enabled:false,api_key:"",api_secret:"",auto_trade:false,risk_pct:1,symbols:[]},
+    exness: {enabled:false,api_key:"",api_secret:"",auto_trade:false,risk_pct:1,symbols:[]}
+  });
   const [platformSymbols, setPlatformSymbols] = useState({deriv:[],binance:[],exness:[]});
+  const [binanceSaving,   setBinanceSaving]   = useState(false);
+  const [binanceSaved,    setBinanceSaved]    = useState(false);
+
+  // Load platform config from Supabase on mount
+  useEffect(()=>{
+    supabase.from("bot_config")
+      .select("binance_key,binance_secret,binance_enabled,binance_symbols,binance_risk_pct")
+      .eq("active",true).single()
+      .then(({data})=>{
+        if(data) {
+          setPlatformConfig(prev=>({...prev,
+            binance:{
+              enabled:    data.binance_enabled||false,
+              api_key:    data.binance_key||"",
+              api_secret: data.binance_secret||"",
+              auto_trade: data.binance_enabled||false,
+              risk_pct:   data.binance_risk_pct||1,
+              symbols:    data.binance_symbols||[]
+            }
+          }));
+          setPlatformSymbols(prev=>({...prev, binance: data.binance_symbols||[]}));
+        }
+      });
+  },[]);
 
   const togglePlatformSymbol = (platform, sym) => {
     setPlatformSymbols(prev => {
       const current = prev[platform] || [];
       const updated = current.includes(sym) ? current.filter(s=>s!==sym) : [...current, sym];
-      // Save to Supabase
-      supabase.from("bot_config").update({
-        platforms: {...platformConfig, [platform]: {...(platformConfig[platform]||{}), symbols: updated}}
-      }).eq("active", true);
+      if(platform === "binance") {
+        supabase.from("bot_config")
+          .update({binance_symbols: updated})
+          .eq("active", true);
+      }
       return {...prev, [platform]: updated};
     });
   };
 
+  const saveBinanceConfig = async (cfg) => {
+    setBinanceSaving(true);
+    const updated = {...platformConfig.binance, ...cfg};
+    setPlatformConfig(prev=>({...prev, binance: updated}));
+    const {error} = await supabase.from("bot_config").update({
+      binance_key:     updated.api_key,
+      binance_secret:  updated.api_secret,
+      binance_enabled: updated.enabled,
+      binance_risk_pct: updated.risk_pct,
+    }).eq("active", true);
+    setBinanceSaving(false);
+    if(!error){ setBinanceSaved(true); setTimeout(()=>setBinanceSaved(false),2000); }
+  };
+
   const updatePlatformConfig = (platform, cfg) => {
-    const updated = {...platformConfig, [platform]: {...(platformConfig[platform]||{}), ...cfg}};
-    setPlatformConfig(updated);
-    supabase.from("bot_config").update({platforms: updated}).eq("active", true);
+    setPlatformConfig(prev=>({...prev, [platform]:{...prev[platform],...cfg}}));
   };
 
   useEffect(() => {
@@ -674,6 +727,9 @@ export default function Settings({
             isApiKey={true}
             platformConfig={platformConfig.binance || {}}
             onConfigChange={(cfg)=>updatePlatformConfig("binance",cfg)}
+            onSave={(cfg)=>saveBinanceConfig(cfg)}
+            saving={binanceSaving}
+            saved={binanceSaved}
             availableSymbols={[
               {id:"BTCUSDT",label:"BTC/USDT"},{id:"ETHUSDT",label:"ETH/USDT"},
               {id:"BNBUSDT",label:"BNB/USDT"},{id:"SOLUSDT",label:"SOL/USDT"},
