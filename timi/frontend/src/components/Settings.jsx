@@ -75,7 +75,7 @@ function PlatformCard({ platform, label, description, isApiKey=false,
   editTokenId, setEditTokenId, editTokenVal, setEditTokenVal,
   newAccName, setNewAccName, newAccToken, setNewAccToken, handleAddAccount,
   platformConfig={}, onConfigChange, onSave, saving=false, saved=false,
-  availableSymbols=[], platformSymbols=[], onSymbolToggle, c }) {
+  symbolGroups=[], availableSymbols=[], platformSymbols=[], onSymbolToggle, c }) {
 
   const [showSecret, setShowSecret] = useState(false);
   const [localKey,    setLocalKey]    = useState(platformConfig.api_key||"");
@@ -182,28 +182,34 @@ function PlatformCard({ platform, label, description, isApiKey=false,
         </div>
       )}
 
-      {/* Symbol selector */}
+      {/* Symbol selector — grouped */}
       <div style={{marginTop:12}}>
         <div style={{fontFamily:"'Orbitron',monospace",fontSize:9,color:"#3a6080",letterSpacing:2,marginBottom:8}}>
           SYMBOLS TO TRADE
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-          {availableSymbols.map(sym=>{
-            const active = platformSymbols.includes(sym.id);
-            return (
-              <button key={sym.id}
-                style={{background:active?"rgba(0,212,255,0.1)":"#020810",
-                  border:`1px solid ${active?"#00d4ff":"#0a2540"}`,
-                  borderRadius:8,padding:"8px 10px",cursor:"pointer",
-                  display:"flex",justifyContent:"space-between",alignItems:"center"}}
-                onClick={()=>onSymbolToggle(sym.id)}>
-                <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:10,
-                  color:active?"#00d4ff":"#3a6080"}}>{sym.label}</span>
-                <span style={{fontSize:10,color:active?"#00ff9d":"#3a6080"}}>{active?"✓":""}</span>
-              </button>
-            );
-          })}
-        </div>
+        {(symbolGroups.length > 0 ? symbolGroups : [{group:"ALL",symbols:availableSymbols}]).map(({group,symbols})=>(
+          <div key={group} style={{marginBottom:10}}>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#3a6080",
+              letterSpacing:2,marginBottom:5,paddingLeft:2}}>{group}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+              {symbols.map(sym=>{
+                const active = platformSymbols.includes(sym.id);
+                return (
+                  <button key={sym.id}
+                    style={{background:active?"rgba(0,212,255,0.1)":"#020810",
+                      border:`1px solid ${active?"#00d4ff":"#0a2540"}`,
+                      borderRadius:6,padding:"6px 8px",cursor:"pointer",
+                      display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                    onClick={()=>onSymbolToggle(sym.id)}>
+                    <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,
+                      color:active?"#00d4ff":"#3a6080"}}>{sym.label}</span>
+                    <span style={{fontSize:9,color:active?"#00ff9d":"#3a6080"}}>{active?"✓":""}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
