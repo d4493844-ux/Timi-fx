@@ -697,7 +697,7 @@ export default function Settings({
           <PlatformCard
             platform="deriv"
             label="🔷 DERIV"
-            description="Synthetics, Forex, Crypto multipliers & binary options"
+            description="Synthetics, Forex, Crypto, Commodities & Indices"
             accounts={accounts}
             toggleAccount={toggleAccount}
             removeAccount={removeAccount}
@@ -711,14 +711,63 @@ export default function Settings({
             newAccToken={newAccToken}
             setNewAccToken={setNewAccToken}
             handleAddAccount={handleAddAccount}
-            availableSymbols={[
-              {id:"BOOM500",label:"BOOM 500"},{id:"BOOM1000",label:"BOOM 1000"},
-              {id:"CRASH500",label:"CRASH 500"},{id:"CRASH1000",label:"CRASH 1000"},
-              {id:"R_25",label:"VIX 25"},{id:"R_50",label:"VIX 50"},
-              {id:"R_75",label:"VIX 75"},{id:"R_100",label:"VIX 100"},
-              {id:"frxUSDJPY",label:"USD/JPY"},{id:"frxEURUSD",label:"EUR/USD"},
-              {id:"frxGBPUSD",label:"GBP/USD"},{id:"frxXAUUSD",label:"Gold/USD"},
-              {id:"cryBTCUSD",label:"BTC/USD"},{id:"cryETHUSD",label:"ETH/USD"},
+            symbolGroups={[
+              { group:"BOOM/CRASH", symbols:[
+                {id:"BOOM50",label:"Boom 50"},{id:"BOOM150N",label:"Boom 150"},
+                {id:"BOOM300N",label:"Boom 300"},{id:"BOOM500",label:"Boom 500"},
+                {id:"BOOM600",label:"Boom 600"},{id:"BOOM900",label:"Boom 900"},
+                {id:"BOOM1000",label:"Boom 1000"},
+                {id:"CRASH50",label:"Crash 50"},{id:"CRASH150N",label:"Crash 150"},
+                {id:"CRASH300N",label:"Crash 300"},{id:"CRASH500",label:"Crash 500"},
+                {id:"CRASH600",label:"Crash 600"},{id:"CRASH900",label:"Crash 900"},
+                {id:"CRASH1000",label:"Crash 1000"},
+              ]},
+              { group:"VOLATILITY", symbols:[
+                {id:"R_10",label:"VIX 10"},{id:"R_25",label:"VIX 25"},
+                {id:"R_50",label:"VIX 50"},{id:"R_75",label:"VIX 75"},
+                {id:"R_100",label:"VIX 100"},
+                {id:"1HZ10V",label:"VIX 10(1s)"},{id:"1HZ25V",label:"VIX 25(1s)"},
+                {id:"1HZ50V",label:"VIX 50(1s)"},{id:"1HZ75V",label:"VIX 75(1s)"},
+                {id:"1HZ100V",label:"VIX 100(1s)"},
+              ]},
+              { group:"JUMP & STEP", symbols:[
+                {id:"JD10",label:"Jump 10"},{id:"JD25",label:"Jump 25"},
+                {id:"JD50",label:"Jump 50"},{id:"JD75",label:"Jump 75"},
+                {id:"JD100",label:"Jump 100"},
+                {id:"stpRNG",label:"Step 100"},{id:"stpRNG2",label:"Step 200"},
+                {id:"RB100",label:"Range Break 100"},{id:"RB200",label:"Range Break 200"},
+              ]},
+              { group:"FOREX", symbols:[
+                {id:"frxEURUSD",label:"EUR/USD"},{id:"frxGBPUSD",label:"GBP/USD"},
+                {id:"frxUSDJPY",label:"USD/JPY"},{id:"frxAUDUSD",label:"AUD/USD"},
+                {id:"frxUSDCAD",label:"USD/CAD"},{id:"frxUSDCHF",label:"USD/CHF"},
+                {id:"frxGBPJPY",label:"GBP/JPY"},{id:"frxEURJPY",label:"EUR/JPY"},
+                {id:"frxEURGBP",label:"EUR/GBP"},{id:"frxAUDJPY",label:"AUD/JPY"},
+                {id:"frxGBPAUD",label:"GBP/AUD"},{id:"frxEURCAD",label:"EUR/CAD"},
+                {id:"frxNZDUSD",label:"NZD/USD"},{id:"frxUSDMXN",label:"USD/MXN"},
+                {id:"frxAUDCAD",label:"AUD/CAD"},{id:"frxAUDCHF",label:"AUD/CHF"},
+                {id:"frxAUDNZD",label:"AUD/NZD"},{id:"frxEURAUD",label:"EUR/AUD"},
+                {id:"frxEURCHF",label:"EUR/CHF"},{id:"frxEURNZD",label:"EUR/NZD"},
+                {id:"frxGBPCAD",label:"GBP/CAD"},{id:"frxGBPCHF",label:"GBP/CHF"},
+                {id:"frxGBPNZD",label:"GBP/NZD"},{id:"frxNZDJPY",label:"NZD/JPY"},
+                {id:"frxUSDNOK",label:"USD/NOK"},{id:"frxUSDSEK",label:"USD/SEK"},
+                {id:"frxUSDPLN",label:"USD/PLN"},{id:"frxGBPNOK",label:"GBP/NOK"},
+              ]},
+              { group:"CRYPTO", symbols:[
+                {id:"cryBTCUSD",label:"BTC/USD"},{id:"cryETHUSD",label:"ETH/USD"},
+              ]},
+              { group:"COMMODITIES", symbols:[
+                {id:"frxXAUUSD",label:"Gold/USD"},{id:"frxXAGUSD",label:"Silver/USD"},
+                {id:"frxXPDUSD",label:"Palladium/USD"},{id:"frxXPTUSD",label:"Platinum/USD"},
+              ]},
+              { group:"INDICES", symbols:[
+                {id:"OTC_DJI",label:"Wall St 30"},{id:"OTC_SPC",label:"US 500"},
+                {id:"OTC_NDX",label:"US Tech 100"},{id:"OTC_FTSE",label:"UK 100"},
+                {id:"OTC_GDAXI",label:"Germany 40"},{id:"OTC_FCHI",label:"France 40"},
+                {id:"OTC_SX5E",label:"Euro 50"},{id:"OTC_N225",label:"Japan 225"},
+                {id:"OTC_HSI",label:"HK 50"},{id:"OTC_AS51",label:"Australia 200"},
+                {id:"OTC_AEX",label:"Netherlands 25"},{id:"OTC_SSMI",label:"Swiss 20"},
+              ]},
             ]}
             platformSymbols={platformSymbols.deriv || []}
             onSymbolToggle={(sym)=>togglePlatformSymbol("deriv",sym)}
@@ -736,10 +785,21 @@ export default function Settings({
             onSave={(cfg)=>saveBinanceConfig(cfg)}
             saving={binanceSaving}
             saved={binanceSaved}
-            availableSymbols={[
-              {id:"BTCUSDT",label:"BTC/USDT"},{id:"ETHUSDT",label:"ETH/USDT"},
-              {id:"BNBUSDT",label:"BNB/USDT"},{id:"SOLUSDT",label:"SOL/USDT"},
-              {id:"XRPUSDT",label:"XRP/USDT"},{id:"ADAUSDT",label:"ADA/USDT"},
+            symbolGroups={[
+              { group:"CRYPTO SPOT", symbols:[
+                {id:"BTCUSDT",label:"BTC/USDT"},{id:"ETHUSDT",label:"ETH/USDT"},
+                {id:"BNBUSDT",label:"BNB/USDT"},{id:"SOLUSDT",label:"SOL/USDT"},
+                {id:"XRPUSDT",label:"XRP/USDT"},{id:"ADAUSDT",label:"ADA/USDT"},
+                {id:"DOGEUSDT",label:"DOGE/USDT"},{id:"MATICUSDT",label:"MATIC/USDT"},
+                {id:"DOTUSDT",label:"DOT/USDT"},{id:"AVAXUSDT",label:"AVAX/USDT"},
+                {id:"LINKUSDT",label:"LINK/USDT"},{id:"UNIUSDT",label:"UNI/USDT"},
+                {id:"ATOMUSDT",label:"ATOM/USDT"},{id:"LTCUSDT",label:"LTC/USDT"},
+              ]},
+              { group:"CRYPTO FUTURES", symbols:[
+                {id:"BTCUSDT_FUTURES",label:"BTC Futures"},{id:"ETHUSDT_FUTURES",label:"ETH Futures"},
+                {id:"BNBUSDT_FUTURES",label:"BNB Futures"},{id:"SOLUSDT_FUTURES",label:"SOL Futures"},
+                {id:"XRPUSDT_FUTURES",label:"XRP Futures"},{id:"ADAUSDT_FUTURES",label:"ADA Futures"},
+              ]},
             ]}
             platformSymbols={platformSymbols.binance || []}
             onSymbolToggle={(sym)=>togglePlatformSymbol("binance",sym)}
@@ -754,11 +814,35 @@ export default function Settings({
             isApiKey={true}
             platformConfig={platformConfig.exness || {}}
             onConfigChange={(cfg)=>updatePlatformConfig("exness",cfg)}
-            availableSymbols={[
-              {id:"EURUSD",label:"EUR/USD"},{id:"USDJPY",label:"USD/JPY"},
-              {id:"GBPUSD",label:"GBP/USD"},{id:"XAUUSD",label:"Gold/USD"},
-              {id:"GBPJPY",label:"GBP/JPY"},{id:"AUDUSD",label:"AUD/USD"},
-              {id:"USDCAD",label:"USD/CAD"},{id:"USDCHF",label:"USD/CHF"},
+            symbolGroups={[
+              { group:"MAJOR FOREX", symbols:[
+                {id:"EURUSD",label:"EUR/USD"},{id:"GBPUSD",label:"GBP/USD"},
+                {id:"USDJPY",label:"USD/JPY"},{id:"AUDUSD",label:"AUD/USD"},
+                {id:"USDCAD",label:"USD/CAD"},{id:"USDCHF",label:"USD/CHF"},
+                {id:"NZDUSD",label:"NZD/USD"},
+              ]},
+              { group:"CROSS FOREX", symbols:[
+                {id:"GBPJPY",label:"GBP/JPY"},{id:"EURJPY",label:"EUR/JPY"},
+                {id:"EURGBP",label:"EUR/GBP"},{id:"AUDJPY",label:"AUD/JPY"},
+                {id:"GBPAUD",label:"GBP/AUD"},{id:"EURCAD",label:"EUR/CAD"},
+                {id:"AUDCAD",label:"AUD/CAD"},{id:"AUDCHF",label:"AUD/CHF"},
+                {id:"EURCHF",label:"EUR/CHF"},{id:"GBPCAD",label:"GBP/CAD"},
+                {id:"GBPCHF",label:"GBP/CHF"},{id:"NZDJPY",label:"NZD/JPY"},
+              ]},
+              { group:"COMMODITIES", symbols:[
+                {id:"XAUUSD",label:"Gold/USD"},{id:"XAGUSD",label:"Silver/USD"},
+                {id:"XPTUSD",label:"Platinum/USD"},{id:"USOIL",label:"Crude Oil"},
+              ]},
+              { group:"INDICES", symbols:[
+                {id:"US30",label:"Wall St 30"},{id:"US500",label:"US 500"},
+                {id:"US100",label:"US Tech 100"},{id:"UK100",label:"UK 100"},
+                {id:"GER40",label:"Germany 40"},{id:"FRA40",label:"France 40"},
+                {id:"JPN225",label:"Japan 225"},{id:"AUS200",label:"Australia 200"},
+              ]},
+              { group:"CRYPTO", symbols:[
+                {id:"BTCUSD",label:"BTC/USD"},{id:"ETHUSD",label:"ETH/USD"},
+                {id:"LTCUSD",label:"LTC/USD"},{id:"XRPUSD",label:"XRP/USD"},
+              ]},
             ]}
             platformSymbols={platformSymbols.exness || []}
             onSymbolToggle={(sym)=>togglePlatformSymbol("exness",sym)}
