@@ -5,22 +5,13 @@ import os
 import urllib.request
 
 WIN_RATES = {
-    "BOOM500": 0.776,
-    "CRASH500": 0.764,
-    "BOOM1000": 0.828,
-    "CRASH1000": 0.86,
-    "frxUSDJPY": 0.656,
-    "cryBTCUSD": 0.653,
-    "R_25": 0.646,
-    "R_50": 0.646,
-    "R_75": 0.689,
-    "R_100": 0.654,
-    "frxEURUSD": 0.677,
-    "frxGBPUSD": 0.625,
-    "frxXAUUSD": 0.696,
-    "cryETHUSD": 0.626,
-    "frxEURGBP": 0.663,
-    "frxXAGUSD": 0.678
+    "BOOM500": 0.780, "CRASH500": 0.761,
+    "BOOM1000": 0.841, "CRASH1000": 0.811,
+    "frxUSDJPY": 0.657, "cryBTCUSD": 0.632,
+    "R_25": 0.627, "R_50": 0.599, "R_75": 0.628, "R_100": 0.593,
+    "frxEURUSD": 0.639, "frxGBPUSD": 0.608,
+    "frxXAUUSD": 0.628, "cryETHUSD": 0.631,
+    "frxEURGBP": 0.512, "frxXAGUSD": 0.584
 }
 
 SUPABASE_URL = "https://pedbupgjxlcumidwoktc.supabase.co"

@@ -158,6 +158,343 @@ def session_features(epochs):
 
     return is_asian, is_london, is_ny, is_overlap, is_night, session_strength
 
+
+# ─────────────────────────────────────────────
+# FRACTIONAL DIFFERENCING
+# Preserves long-term memory destroyed by d=1
+# ─────────────────────────────────────────────
+def fractional_diff(prices, d=0.4, threshold=1e-4):
+    """
+    Fractionally differentiate price series
+    d=0 → raw prices (full memory)
+    d=1 → returns (no memory)
+    d=0.3-0.5 → optimal: memory preserved + stationarity
+    """
+    w = [1.0]
+    k = 1
+    while abs(w[-1]) > threshold:
+        w.append(-w[-1] * (d - k + 1) / k)
+        k += 1
+    w = np.array(w[::-1])
+    n = len(prices)
+    fd = np.zeros(n)
+    wlen = len(w)
+    for i in range(wlen - 1, n):
+        fd[i] = np.dot(w, prices[i - wlen + 1:i + 1])
+    return fd
+
+def compute_dltm(prices, window=100):
+    """
+    Estimate optimal d (dLTM) for each window
+    using ADF test stationarity boundary
+    """
+    from scipy import stats
+    n = len(prices)
+    dltm = np.zeros(n)
+    for i in range(window, n):
+        p = prices[i-window:i]
+        # Try different d values, find minimum d for stationarity
+        best_d = 0.5  # default
+        for d_try in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]:
+            fd = fractional_diff(p, d=d_try)
+            fd = fd[fd != 0]
+            if len(fd) < 10:
+                continue
+            # Simple stationarity check: rolling mean stability
+            half = len(fd) // 2
+            mean1 = np.mean(fd[:half])
+            mean2 = np.mean(fd[half:])
+            if abs(mean1 - mean2) < np.std(fd) * 0.5:
+                best_d = d_try
+                break
+        dltm[i] = best_d
+    return dltm
+
+# ─────────────────────────────────────────────
+# VISIBILITY GRAPH — Hurst & Fractal Detection
+# ─────────────────────────────────────────────
+def visibility_graph_features(prices, window=60):
+    """
+    Compute visibility graph features:
+    1. Hurst exponent (memory measure)
+    2. Degree distribution alpha (fractal measure)
+    3. Hub density (big move predictor)
+    """
+    n = len(prices)
+    hurst_arr   = np.zeros(n)
+    alpha_arr   = np.zeros(n)
+    hub_arr     = np.zeros(n)
+
+    for i in range(window, n):
+        p = prices[i-window:i]
+
+        # Build visibility graph
+        degrees = np.zeros(window)
+        for a in range(window):
+            for b in range(a+1, window):
+                # Check visibility: no point between a,b blocks view
+                visible = True
+                for c in range(a+1, b):
+                    # Linear interpolation between a and b
+                    interp = p[a] + (p[b] - p[a]) * (c - a) / (b - a)
+                    if p[c] >= interp:
+                        visible = False
+                        break
+                if visible:
+                    degrees[a] += 1
+                    degrees[b] += 1
+
+        # Hurst exponent via R/S analysis on prices
+        # Simple estimate from degree distribution
+        mean_deg = np.mean(degrees)
+        std_deg  = np.std(degrees) + 1e-10
+        # High degree variance = high Hurst (trending)
+        # Low degree variance = low Hurst (mean reverting)
+        hurst = 0.5 + 0.3 * np.tanh((std_deg / mean_deg - 0.5) * 2)
+        hurst_arr[i] = np.clip(hurst, 0.1, 0.9)
+
+        # Power law alpha from degree distribution
+        deg_nonzero = degrees[degrees > 0]
+        if len(deg_nonzero) > 5:
+            # Fit power law: log-log regression
+            log_k = np.log(np.sort(deg_nonzero)[::-1] + 1)
+            log_rank = np.log(np.arange(1, len(deg_nonzero)+1))
+            if np.std(log_k) > 0:
+                alpha = -np.polyfit(log_rank, log_k, 1)[0]
+                alpha_arr[i] = np.clip(alpha, 0.5, 4.0)
+            else:
+                alpha_arr[i] = 1.0
+        else:
+            alpha_arr[i] = 1.0
+
+        # Hub density: fraction of nodes with degree > 2x mean
+        hub_threshold = mean_deg * 2
+        hub_arr[i] = np.sum(degrees > hub_threshold) / window
+
+    return hurst_arr, alpha_arr, hub_arr
+
+# Fast Hurst estimation (R/S method — O(n log n))
+def hurst_rs(prices, min_window=10):
+    """
+    Fast R/S Hurst exponent estimation
+    H > 0.5 = trending (persistent)
+    H < 0.5 = mean reverting (anti-persistent)
+    H = 0.5 = random walk
+    """
+    n = len(prices)
+    if n < min_window * 2:
+        return 0.5
+
+    returns = np.diff(np.log(prices + 1e-10))
+    if len(returns) < 4:
+        return 0.5
+
+    # R/S at multiple scales
+    scales = []
+    rs_vals = []
+
+    for scale in [8, 16, 32, min(64, len(returns)//2)]:
+        if scale > len(returns) // 2:
+            continue
+        n_chunks = len(returns) // scale
+        if n_chunks < 1:
+            continue
+        rs_chunk = []
+        for j in range(n_chunks):
+            chunk = returns[j*scale:(j+1)*scale]
+            mean_c = np.mean(chunk)
+            dev    = np.cumsum(chunk - mean_c)
+            R      = np.max(dev) - np.min(dev)
+            S      = np.std(chunk) + 1e-10
+            rs_chunk.append(R / S)
+        if rs_chunk:
+            scales.append(np.log(scale))
+            rs_vals.append(np.log(np.mean(rs_chunk) + 1e-10))
+
+    if len(scales) < 2:
+        return 0.5
+
+    H = np.polyfit(scales, rs_vals, 1)[0]
+    return float(np.clip(H, 0.1, 0.9))
+
+# ─────────────────────────────────────────────
+# RETAIL EXHAUSTION TIMER
+# Based on RetailFlow research: retail traders
+# flip collective position at known intervals
+# ─────────────────────────────────────────────
+RETAIL_FLIP_TIMES = {
+    # Symbol pattern → avg flip time in 1-min candles
+    "frxEURUSD": 30,   "frxEURCAD": 45,  "frxEURGBP": 55,
+    "frxEURJPY": 60,   "frxEURCHF": 70,  "frxEURNZD": 80,
+    "frxGBPUSD": 116,  "frxGBPJPY": 130, "frxGBPAUD": 140,
+    "frxGBPCAD": 150,  "frxGBPCHF": 160, "frxGBPNZD": 170,
+    "frxAUDUSD": 230,  "frxAUDJPY": 250, "frxAUDCAD": 260,
+    "frxAUDCHF": 270,  "frxAUDNZD": 280,
+    "frxUSDJPY": 190,  "frxUSDCAD": 200, "frxUSDCHF": 210,
+    "frxNZDUSD": 240,  "frxNZDJPY": 260,
+    "frxXAUUSD": 45,   "frxXAGUSD": 60,
+    "cryBTCUSD": 120,  "cryETHUSD": 100,
+    # Synthetics — spike-driven, shorter cycles
+    "BOOM500":  15,  "BOOM1000":  18,
+    "CRASH500": 15,  "CRASH1000": 18,
+    "R_25": 20, "R_50": 22, "R_75": 25, "R_100": 28,
+}
+
+def retail_exhaustion_features(closes, symbol, window=300):
+    """
+    Detect how close we are to retail position flip
+    Returns:
+    - exhaustion_score: 0-1 (1 = flip imminent)
+    - cycles_completed: how many flips detected
+    - time_in_current_cycle: candles since last reversal
+    """
+    n = len(closes)
+    flip_time = RETAIL_FLIP_TIMES.get(symbol, 60)
+
+    exhaustion = np.zeros(n)
+    cycle_pos  = np.zeros(n)
+
+    for i in range(window, n):
+        p = closes[i-window:i]
+
+        # Detect direction changes (reversals)
+        returns = np.diff(p)
+        # Rolling direction (positive or negative)
+        direction = np.sign(pd.Series(returns).rolling(5).mean().fillna(0).values)
+
+        # Find last reversal point
+        last_reversal = 0
+        for j in range(len(direction)-1, 0, -1):
+            if direction[j] != direction[j-1] and direction[j-1] != 0:
+                last_reversal = len(direction) - j
+                break
+
+        # How far through the expected cycle are we?
+        cycle_progress = last_reversal / (flip_time + 1e-10)
+        exhaustion[i]  = np.clip(cycle_progress, 0, 1)
+        cycle_pos[i]   = last_reversal
+
+    return exhaustion, cycle_pos
+
+# ─────────────────────────────────────────────
+# FLOW TOXICITY SCORE
+# Low toxicity = retail dominant = our edge highest
+# High toxicity = smart money active = avoid
+# ─────────────────────────────────────────────
+def flow_toxicity_features(closes, highs, lows, window=20):
+    """
+    Estimate flow toxicity from price action:
+    - Large consistent moves = toxic (smart money)
+    - Small choppy moves = benign (retail flow)
+    - Sudden gaps = very toxic
+    """
+    n = len(closes)
+    toxicity = np.zeros(n)
+    benign   = np.zeros(n)
+
+    for i in range(window, n):
+        c = closes[i-window:i]
+        h = highs[i-window:i]
+        l = lows[i-window:i]
+
+        returns  = np.abs(np.diff(c) / (c[:-1] + 1e-10))
+        hl_range = (h - l) / (l + 1e-10)
+
+        # Toxicity indicators:
+        # 1. Large consistent directional moves
+        net_move = abs(c[-1] - c[0]) / (c[0] + 1e-10)
+        total_move = np.sum(returns)
+        efficiency = net_move / (total_move + 1e-10)  # 1=perfectly directional
+
+        # 2. Sudden acceleration (smart money entering)
+        recent_vol  = np.std(returns[-5:]) + 1e-10
+        baseline_vol = np.std(returns) + 1e-10
+        vol_spike   = recent_vol / baseline_vol
+
+        # 3. Candle body vs wick ratio (smart money = large bodies)
+        bodies = np.abs(np.diff(c))
+        wicks  = hl_range[1:] - bodies / (c[:-1] + 1e-10)
+        body_ratio = np.mean(bodies) / (np.mean(hl_range[1:]) + 1e-10)
+
+        # Combined toxicity score (0=benign retail, 1=toxic smart money)
+        tox = np.clip(efficiency * 0.4 + (vol_spike - 1) * 0.3 + body_ratio * 0.3, 0, 1)
+        toxicity[i] = tox
+        benign[i]   = 1 - tox
+
+    return toxicity, benign
+
+# ─────────────────────────────────────────────
+# GRAM-CHARLIER DISTRIBUTION FEATURES
+# Captures fat tails and skewness
+# ─────────────────────────────────────────────
+def gram_charlier_features(closes, window=60):
+    """
+    Calculate higher-order distribution moments:
+    - Skewness: asymmetry of returns
+    - Excess kurtosis: fat-tail measure
+    - GC weight: deviation from normality
+    """
+    from scipy import stats
+    n = len(closes)
+    skew_arr  = np.zeros(n)
+    kurt_arr  = np.zeros(n)
+    gc_weight = np.zeros(n)
+
+    for i in range(window, n):
+        returns = np.diff(closes[i-window:i+1]) / (closes[i-window:i] + 1e-10)
+        if len(returns) < 10:
+            continue
+        s = float(stats.skew(returns))
+        k = float(stats.kurtosis(returns))  # excess kurtosis
+        skew_arr[i]  = np.clip(s, -3, 3)
+        kurt_arr[i]  = np.clip(k, -2, 10)
+        # GC weight: high = very non-normal = spike environment
+        gc_weight[i] = np.clip(abs(s) * 0.3 + abs(k) * 0.1, 0, 1)
+
+    return skew_arr, kurt_arr, gc_weight
+
+# ─────────────────────────────────────────────
+# CONTRARIAN COMPOSITE SCORE
+# Combines all retail psychology signals
+# ─────────────────────────────────────────────
+def contrarian_composite(rsi, ou_zscore, exhaustion, toxicity,
+                          hurst, kalman_vel, window=1):
+    """
+    Score 0-1 measuring how ripe conditions are
+    for a contrarian trade (fade retail crowd)
+    
+    High score = retail maximally wrong = our edge
+    """
+    n = len(rsi)
+    score = np.zeros(n)
+
+    for i in range(n):
+        s = 0.0
+        # RSI extreme (retail overstretched)
+        if rsi[i] > 65:   s += 0.20  # overbought retail
+        elif rsi[i] < 35: s += 0.20  # oversold retail
+        else:              s += 0.05  # neutral
+
+        # OU zscore stretched (price far from mean)
+        abs_z = min(abs(ou_zscore[i]), 3)
+        s += (abs_z / 3) * 0.20
+
+        # Retail exhaustion near flip
+        s += exhaustion[i] * 0.20
+
+        # Low toxicity (retail dominant, not smart money)
+        s += (1 - toxicity[i]) * 0.20
+
+        # Hurst < 0.5 = mean reverting conditions
+        if hurst[i] < 0.4:   s += 0.20
+        elif hurst[i] < 0.5: s += 0.10
+        else:                  s += 0.0
+
+        score[i] = np.clip(s, 0, 1)
+
+    return score
+
+
 def engineer_features(df):
     c = df['close'].values
     h = df['high'].values
@@ -243,6 +580,97 @@ def engineer_features(df):
     df['session_night']    = is_night
     df['session_strength'] = sess_strength
 
+
+    # ── FRACTIONAL DIFFERENCING (2 features) ──
+    fd_03 = fractional_diff(c, d=0.3)
+    fd_04 = fractional_diff(c, d=0.4)
+    df['fd_price_03'] = fd_03          # 70% memory preserved
+    df['fd_price_04'] = fd_04          # 60% memory preserved
+
+    # ── dLTM SCORE (1 feature) ──
+    df['dltm_score'] = compute_dltm(c, window=100)
+
+    # ── HURST EXPONENT — Fast R/S (1 feature) ──
+    hurst_vals = np.zeros(len(c))
+    for i in range(60, len(c)):
+        hurst_vals[i] = hurst_rs(c[max(0,i-60):i])
+    df['hurst_exponent'] = hurst_vals
+
+    # ── VISIBILITY GRAPH (3 features) ──
+    # Use fast approximation for large datasets
+    vg_hurst = np.zeros(len(c))
+    vg_alpha = np.zeros(len(c))
+    vg_hub   = np.zeros(len(c))
+    # Use smaller window for speed (30 candles)
+    for i in range(30, len(c), 5):  # step=5 for speed
+        p = c[i-30:i]
+        degrees = np.zeros(30)
+        for a in range(30):
+            for b in range(a+1, min(a+10, 30)):  # limit lookahead
+                visible = True
+                for cc in range(a+1, b):
+                    interp = p[a] + (p[b]-p[a])*(cc-a)/(b-a)
+                    if p[cc] >= interp:
+                        visible = False
+                        break
+                if visible:
+                    degrees[a] += 1
+                    degrees[b] += 1
+        mean_d = np.mean(degrees) + 1e-10
+        std_d  = np.std(degrees) + 1e-10
+        vg_hurst[i] = np.clip(0.5 + 0.3*np.tanh((std_d/mean_d-0.5)*2), 0.1, 0.9)
+        hub_mask = degrees > mean_d * 2
+        vg_hub[i] = np.sum(hub_mask) / 30
+        deg_nz = degrees[degrees > 0]
+        if len(deg_nz) > 3:
+            lk = np.log(np.sort(deg_nz)[::-1]+1)
+            lr = np.log(np.arange(1,len(deg_nz)+1))
+            vg_alpha[i] = np.clip(-np.polyfit(lr,lk,1)[0], 0.5, 4.0)
+        # Fill gaps with forward fill
+        if i > 30:
+            vg_hurst[i-4:i] = vg_hurst[i]
+            vg_hub[i-4:i]   = vg_hub[i]
+            vg_alpha[i-4:i] = vg_alpha[i]
+
+    df['vg_hurst']     = vg_hurst
+    df['vg_alpha']     = vg_alpha
+    df['vg_hub_density'] = vg_hub
+
+    # ── RETAIL EXHAUSTION (2 features) ──
+    sym = df['symbol'].iloc[0] if 'symbol' in df.columns else "unknown"
+    exhaustion, cycle_pos = retail_exhaustion_features(c, sym)
+    df['retail_exhaustion'] = exhaustion
+    df['retail_cycle_pos']  = cycle_pos / 300  # normalized
+
+    # ── FLOW TOXICITY (2 features) ──
+    toxicity, benign = flow_toxicity_features(c, h, l)
+    df['flow_toxicity'] = toxicity
+    df['flow_benign']   = benign
+
+    # ── GRAM-CHARLIER DISTRIBUTION (3 features) ──
+    from scipy import stats as scipy_stats
+    skew_arr  = np.zeros(len(c))
+    kurt_arr  = np.zeros(len(c))
+    gc_weight = np.zeros(len(c))
+    for i in range(60, len(c)):
+        rets = np.diff(c[i-60:i+1]) / (c[i-60:i] + 1e-10)
+        skew_arr[i]  = np.clip(float(scipy_stats.skew(rets)), -3, 3)
+        kurt_arr[i]  = np.clip(float(scipy_stats.kurtosis(rets)), -2, 10)
+        gc_weight[i] = np.clip(abs(skew_arr[i])*0.3 + abs(kurt_arr[i])*0.1, 0, 1)
+    df['gc_skewness']  = skew_arr
+    df['gc_kurtosis']  = kurt_arr
+    df['gc_weight']    = gc_weight
+
+    # ── CONTRARIAN COMPOSITE (1 feature) ──
+    df['contrarian_score'] = contrarian_composite(
+        df['rsi'].values,
+        df['ou_zscore'].values,
+        exhaustion,
+        toxicity,
+        vg_hurst,
+        df['kalman_velocity'].values
+    )
+
     return df
 
 def label_trades(df, lookahead=4):
@@ -316,3 +744,5 @@ async def main():
     print(f"\n✅ Done! Collected: {results}")
 
 asyncio.run(main())
+
+# ── THIS FILE IS BEING PATCHED - DO NOT RUN OLD VERSION ──

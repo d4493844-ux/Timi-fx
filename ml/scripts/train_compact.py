@@ -48,7 +48,24 @@ FEATURES = [
     # 6 Session
     'session_asian', 'session_london', 'session_ny',
     'session_overlap', 'session_night', 'session_strength',
+    # 2 Fractional Differencing (Bhatti research)
+    'fd_price_03', 'fd_price_04',
+    # 1 dLTM Score
+    'dltm_score',
+    # 1 Hurst Exponent (R/S method)
+    'hurst_exponent',
+    # 3 Visibility Graph (fractal structure)
+    'vg_hurst', 'vg_alpha', 'vg_hub_density',
+    # 2 Retail Exhaustion (RetailFlow research)
+    'retail_exhaustion', 'retail_cycle_pos',
+    # 2 Flow Toxicity
+    'flow_toxicity', 'flow_benign',
+    # 3 Gram-Charlier Distribution
+    'gc_skewness', 'gc_kurtosis', 'gc_weight',
+    # 1 Contrarian Composite
+    'contrarian_score',
 ]
+# Total: 65 features
 
 def train(symbol):
     path = f"/workspaces/Timi-fx/ml/data/{symbol}.csv"

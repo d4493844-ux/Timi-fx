@@ -119,6 +119,194 @@ function sessionFeatures(): { asian:number; london:number; ny:number; overlap:nu
   return { asian:0, london:0, ny:0, overlap:0, night:1, strength:0.2 };
 }
 
+
+// ─────────────────────────────────────────────
+// FRACTIONAL DIFFERENCING
+// Preserves market memory (Bhatti research)
+// ─────────────────────────────────────────────
+function fractionalDiff(prices: number[], d: number, threshold = 1e-4): number[] {
+  const w: number[] = [1.0];
+  let k = 1;
+  while (Math.abs(w[w.length-1]) > threshold) {
+    w.push(-w[w.length-1] * (d - k + 1) / k);
+    k++;
+  }
+  const wRev = w.reverse();
+  const wLen = wRev.length;
+  const fd   = new Array(prices.length).fill(0);
+  for (let i = wLen - 1; i < prices.length; i++) {
+    let val = 0;
+    for (let j = 0; j < wLen; j++) val += wRev[j] * prices[i - wLen + 1 + j];
+    fd[i] = val;
+  }
+  return fd;
+}
+
+// ─────────────────────────────────────────────
+// HURST EXPONENT — R/S method
+// H > 0.5 = trending, H < 0.5 = mean reverting
+// ─────────────────────────────────────────────
+function hurstRS(prices: number[]): number {
+  if (prices.length < 20) return 0.5;
+  const returns: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    returns.push(Math.log((prices[i] + 1e-10) / (prices[i-1] + 1e-10)));
+  }
+  const scales = [8, 16, 32];
+  const logScales: number[] = [], logRS: number[] = [];
+  for (const scale of scales) {
+    if (scale > returns.length / 2) continue;
+    const nChunks = Math.floor(returns.length / scale);
+    if (nChunks < 1) continue;
+    const rsVals: number[] = [];
+    for (let j = 0; j < nChunks; j++) {
+      const chunk = returns.slice(j*scale, (j+1)*scale);
+      const mean  = chunk.reduce((a,b)=>a+b,0)/chunk.length;
+      const dev   = chunk.reduce((acc,v,i2) => { acc.push((acc[i2-1]||0)+(v-mean)); return acc; }, [] as number[]);
+      const R = Math.max(...dev) - Math.min(...dev);
+      const S = Math.sqrt(chunk.reduce((a,b)=>a+(b-mean)**2,0)/chunk.length) + 1e-10;
+      rsVals.push(R/S);
+    }
+    if (rsVals.length > 0) {
+      logScales.push(Math.log(scale));
+      logRS.push(Math.log(rsVals.reduce((a,b)=>a+b,0)/rsVals.length + 1e-10));
+    }
+  }
+  if (logScales.length < 2) return 0.5;
+  const n = logScales.length;
+  const sumX = logScales.reduce((a,b)=>a+b,0);
+  const sumY = logRS.reduce((a,b)=>a+b,0);
+  const sumXY = logScales.reduce((a,b,i)=>a+b*logRS[i],0);
+  const sumX2 = logScales.reduce((a,b)=>a+b*b,0);
+  const H = (n*sumXY - sumX*sumY) / (n*sumX2 - sumX*sumX);
+  return Math.max(0.1, Math.min(0.9, H));
+}
+
+// ─────────────────────────────────────────────
+// VISIBILITY GRAPH — fast approximation
+// Returns: vg_hurst, vg_alpha, vg_hub_density
+// ─────────────────────────────────────────────
+function visibilityGraphFeatures(prices: number[]): { vgHurst: number; vgAlpha: number; vgHub: number } {
+  const n = Math.min(prices.length, 30);
+  const p = prices.slice(-n);
+  const degrees = new Array(n).fill(0);
+  for (let a = 0; a < n; a++) {
+    for (let b = a+1; b < Math.min(a+10, n); b++) {
+      let visible = true;
+      for (let c = a+1; c < b; c++) {
+        const interp = p[a] + (p[b]-p[a])*(c-a)/(b-a);
+        if (p[c] >= interp) { visible = false; break; }
+      }
+      if (visible) { degrees[a]++; degrees[b]++; }
+    }
+  }
+  const meanD = degrees.reduce((a,b)=>a+b,0)/n + 1e-10;
+  const stdD  = Math.sqrt(degrees.reduce((a,b)=>a+(b-meanD)**2,0)/n) + 1e-10;
+  const vgHurst = Math.max(0.1, Math.min(0.9, 0.5 + 0.3*Math.tanh((stdD/meanD-0.5)*2)));
+  const hubCount = degrees.filter(d => d > meanD*2).length;
+  const vgHub    = hubCount / n;
+  const nonZero  = degrees.filter(d=>d>0).sort((a,b)=>b-a);
+  let vgAlpha = 1.0;
+  if (nonZero.length > 3) {
+    const logK = nonZero.map((d,i)=>Math.log(d+1));
+    const logR = nonZero.map((_,i)=>Math.log(i+1));
+    const n2 = logK.length;
+    const sx = logR.reduce((a,b)=>a+b,0), sy = logK.reduce((a,b)=>a+b,0);
+    const sxy = logR.reduce((a,b,i)=>a+b*logK[i],0);
+    const sx2 = logR.reduce((a,b)=>a+b*b,0);
+    const denom = n2*sx2 - sx*sx;
+    if (Math.abs(denom) > 1e-10) vgAlpha = Math.max(0.5, Math.min(4, -(n2*sxy-sx*sy)/denom));
+  }
+  return { vgHurst, vgAlpha, vgHub };
+}
+
+// ─────────────────────────────────────────────
+// RETAIL EXHAUSTION TIMER
+// ─────────────────────────────────────────────
+const RETAIL_FLIP_TIMES: Record<string,number> = {
+  "frxEURUSD":30,"frxGBPUSD":116,"frxAUDUSD":230,"frxUSDJPY":190,
+  "frxUSDCAD":200,"frxUSDCHF":210,"frxXAUUSD":45,"frxXAGUSD":60,
+  "cryBTCUSD":120,"cryETHUSD":100,
+  "BOOM500":15,"BOOM1000":18,"CRASH500":15,"CRASH1000":18,
+  "R_25":20,"R_50":22,"R_75":25,"R_100":28,
+};
+
+function retailExhaustionFeatures(closes: number[], symbol: string): { exhaustion: number; cyclePos: number } {
+  const flipTime = RETAIL_FLIP_TIMES[symbol] || 60;
+  const window = Math.min(closes.length, 200);
+  const p = closes.slice(-window);
+  const returns = p.slice(1).map((v,i)=>(v-p[i])/(p[i]+1e-10));
+
+  // Find last direction reversal
+  let lastReversal = 0;
+  let prevDir = Math.sign(returns[0]);
+  for (let i = 1; i < returns.length; i++) {
+    const dir = Math.sign(returns[i]);
+    if (dir !== 0 && dir !== prevDir) {
+      lastReversal = returns.length - i;
+      prevDir = dir;
+    }
+  }
+  const exhaustion = Math.min(1, lastReversal / (flipTime + 1e-10));
+  return { exhaustion, cyclePos: lastReversal / 300 };
+}
+
+// ─────────────────────────────────────────────
+// FLOW TOXICITY
+// Low = retail dominant = our edge highest
+// ─────────────────────────────────────────────
+function flowToxicityFeatures(closes: number[], highs: number[], lows: number[]): { toxicity: number; benign: number } {
+  const n = Math.min(closes.length, 20);
+  const c = closes.slice(-n), h = highs.slice(-n), l = lows.slice(-n);
+  const returns = c.slice(1).map((v,i)=>Math.abs((v-c[i])/(c[i]+1e-10)));
+  const netMove = Math.abs(c[n-1]-c[0])/(c[0]+1e-10);
+  const totalMove = returns.reduce((a,b)=>a+b,0) + 1e-10;
+  const efficiency = netMove / totalMove;
+  const recentVol  = returns.slice(-5).reduce((a,b)=>a+b,0)/5 + 1e-10;
+  const baseVol    = returns.reduce((a,b)=>a+b,0)/returns.length + 1e-10;
+  const volSpike   = recentVol / baseVol;
+  const hlRange    = h.map((hi,i)=>(hi-l[i])/(l[i]+1e-10));
+  const bodies     = c.slice(1).map((v,i)=>Math.abs(v-c[i]));
+  const bodyRatio  = (bodies.reduce((a,b)=>a+b,0)/bodies.length) / (hlRange.slice(1).reduce((a,b)=>a+b,0)/hlRange.slice(1).length + 1e-10);
+  const toxicity   = Math.min(1, efficiency*0.4 + Math.max(0,volSpike-1)*0.3 + bodyRatio*0.3);
+  return { toxicity, benign: 1-toxicity };
+}
+
+// ─────────────────────────────────────────────
+// GRAM-CHARLIER DISTRIBUTION FEATURES
+// ─────────────────────────────────────────────
+function gramCharlierFeatures(closes: number[]): { skewness: number; kurtosis: number; gcWeight: number } {
+  const n = Math.min(closes.length, 60);
+  const returns = closes.slice(-n).slice(1).map((v,i,arr)=>(v-closes.slice(-n)[i])/(closes.slice(-n)[i]+1e-10));
+  const m = returns.length;
+  const mean = returns.reduce((a,b)=>a+b,0)/m;
+  const variance = returns.reduce((a,b)=>a+(b-mean)**2,0)/m + 1e-10;
+  const std = Math.sqrt(variance);
+  const skewness = returns.reduce((a,b)=>a+((b-mean)/std)**3,0)/m;
+  const kurtosis = returns.reduce((a,b)=>a+((b-mean)/std)**4,0)/m - 3;
+  const gcWeight = Math.min(1, Math.abs(skewness)*0.3 + Math.abs(kurtosis)*0.1);
+  return {
+    skewness: Math.max(-3, Math.min(3, skewness)),
+    kurtosis: Math.max(-2, Math.min(10, kurtosis)),
+    gcWeight
+  };
+}
+
+// ─────────────────────────────────────────────
+// CONTRARIAN COMPOSITE SCORE
+// ─────────────────────────────────────────────
+function contrarianComposite(rsi: number, ouZscore: number, exhaustion: number,
+  toxicity: number, hurst: number): number {
+  let s = 0;
+  if (rsi > 65 || rsi < 35) s += 0.20; else s += 0.05;
+  s += Math.min(Math.abs(ouZscore)/3, 1) * 0.20;
+  s += exhaustion * 0.20;
+  s += (1-toxicity) * 0.20;
+  if (hurst < 0.4) s += 0.20;
+  else if (hurst < 0.5) s += 0.10;
+  return Math.min(1, s);
+}
+
 // ─────────────────────────────────────────────
 // KALMAN FILTER — adaptive price smoother
 // ─────────────────────────────────────────────
@@ -231,6 +419,43 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
   // ── SESSION (6 features) ──
   const sess = sessionFeatures();
 
+  // ── NEW: 15 additional features ──
+  const prices = c;
+
+  // Fractional differencing (2)
+  const fd03  = fractionalDiff(prices, 0.3);
+  const fd04  = fractionalDiff(prices, 0.4);
+  const fd_03 = fd03[fd03.length-1] / (price + 1e-10);
+  const fd_04 = fd04[fd04.length-1] / (price + 1e-10);
+
+  // dLTM score (1) — simplified rolling optimal d
+  const dltm_score = Math.abs(fd_03 - fd_04) < 0.001 ? 0.3 : 0.4;
+
+  // Hurst exponent R/S (1)
+  const hurst_exponent = hurstRS(prices);
+
+  // Visibility graph (3)
+  const vg = visibilityGraphFeatures(prices);
+
+  // Retail exhaustion (2)
+  // symbol passed from outer scope via closure — use sess as proxy
+  const re = retailExhaustionFeatures(prices, "");
+  const retail_exhaustion = re.exhaustion;
+  const retail_cycle_pos  = re.cyclePos;
+
+  // Flow toxicity (2)
+  const ft = flowToxicityFeatures(
+    candles1m.map((x:any)=>parseFloat(x.close)),
+    candles1m.map((x:any)=>parseFloat(x.high)),
+    candles1m.map((x:any)=>parseFloat(x.low))
+  );
+
+  // Gram-Charlier (3)
+  const gc = gramCharlierFeatures(prices);
+
+  // Contrarian composite (1)
+  const contrarian = contrarianComposite(rsi, ou.zscore, retail_exhaustion, ft.toxicity, hurst_exponent);
+
   return [
     // Base 21
     rsi, macd_hist, bb_pos, bb_width, ema_bull, ema_bear,
@@ -249,8 +474,24 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
     // VWAP 2
     vwap.dist, vwap.direction,
     // Session 6
-    sess.asian, sess.london, sess.ny, sess.overlap, sess.night, sess.strength
-  ]; // total: 41 features
+    sess.asian, sess.london, sess.ny, sess.overlap, sess.night, sess.strength,
+    // Fractional Diff 2
+    fd_03, fd_04,
+    // dLTM 1
+    dltm_score,
+    // Hurst 1
+    hurst_exponent,
+    // Visibility Graph 3
+    vg.vgHurst, vg.vgAlpha, vg.vgHub,
+    // Retail Exhaustion 2
+    retail_exhaustion, retail_cycle_pos,
+    // Flow Toxicity 2
+    ft.toxicity, ft.benign,
+    // Gram-Charlier 3
+    gc.skewness, gc.kurtosis, gc.gcWeight,
+    // Contrarian Composite 1
+    contrarian
+  ]; // total: 56 features
 }
 
 
