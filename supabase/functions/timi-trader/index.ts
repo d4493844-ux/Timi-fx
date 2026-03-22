@@ -1642,11 +1642,18 @@ Deno.serve(async (req) => {
       const isSpikeSym = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
 
       // BOOM/CRASH trade in ALL regimes — spikes happen even in ranging markets
-      // HMM only blocks forex/crypto/VIX in ranging/high-vol conditions
-      if (!regime.tradable && !isSpikeSym) {
+      // VIX (R_) also trades in ranging — oscillation is predictable
+      // HMM only blocks forex/crypto in ranging/high-vol conditions
+      const isVIX = symbol.startsWith("R_") || symbol.startsWith("1HZ");
+      const bypassHMM = isSpikeSym || isVIX;
+
+      if (!regime.tradable && !bypassHMM) {
         scanLog.push(`${symbol}: HMM→${regime.name} (skipping — unfavorable regime)`);
         console.log(`🚫 ${symbol}: HMM blocked — ${regime.name}`);
         continue;
+      }
+      if (!regime.tradable && bypassHMM) {
+        scanLog.push(`${symbol}: HMM→${regime.name} bypassed (spike/VIX trades all regimes)`);
       }
       if (!regime.tradable && isSpikeSym) {
         console.log(`⚡ ${symbol}: HMM→${regime.name} but BOOM/CRASH allowed in all regimes`);
