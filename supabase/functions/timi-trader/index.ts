@@ -1837,8 +1837,16 @@ Deno.serve(async (req) => {
   const minConf = cfg.min_confidence || 65;
 
   // Circuit breaker — 3 consecutive losses → pause
+  // BUT: if a high-confidence signal appears (85%+) → allow it through
+  // This prevents the bot from missing genuinely good setups during pause
   const consec = await getConsecutiveLosses(supabase);
-  if (consec >= 3) return new Response(JSON.stringify({ status: "paused", consecutive_losses: consec }), { headers: CORS });
+  if (consec >= 3) {
+    console.log(`⚠️ Circuit breaker active (${consec} losses) — only high confidence trades allowed`);
+    // Don't return here — let the pipeline run but boost minimum confidence
+    // The scan will naturally filter low confidence signals
+    // We just raise the bar during losing streaks
+    cfg.min_confidence = Math.max(cfg.min_confidence || 65, 85); // require 85%+ to trade
+  }
 
   // Load TRUE HMM model from Supabase
   await loadHMMModel(supabase);
