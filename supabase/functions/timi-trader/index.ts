@@ -1404,7 +1404,6 @@ async function getRecentPerformance(supabase: any): Promise<{ winRate: number; a
       winRate:    Math.max(0.35, Math.min(0.95, winRate)),
       avgWinPct:  Math.max(0.50, Math.min(1.50, avgWinPct)),
       avgLossPct: Math.max(0.50, Math.min(1.00, avgLossPct)),
-      _tradeCount: data.length,
     };
   } catch(e) {
     return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90, _tradeCount: 0 };
@@ -1822,8 +1821,8 @@ Deno.serve(async (req) => {
   if (hasEnoughData) {
     mc = monteCarloStake(
         balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
-        features[53] || 0,   // gc_skewness
-        features[54] || 1    // gc_kurtosis
+        Array.isArray(features) && features.length > 53 ? (features[53] || 0) : 0,   // gc_skewness
+        Array.isArray(features) && features.length > 54 ? (features[54] || 1) : 1    // gc_kurtosis
       );
     stake = mc.stake;
     console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation} ror:${(mc.riskOfRuin*100).toFixed(1)}%)`);
@@ -1831,7 +1830,7 @@ Deno.serve(async (req) => {
     // Not enough data — use flat risk_pct directly
     stake = Math.max(minStk, Math.min(maxStk, parseFloat(((balance * riskPct) / 100).toFixed(2))));
     mc = { stake, riskOfRuin: 0, expectedGrowth: 0, recommendation: "insufficient_data", base_stake: stake, final_stake: stake };
-    console.log(`💰 Flat stake: $${stake} (Monte Carlo needs 10+ trades, has ${(perf as any)._tradeCount || 0})`);
+    console.log(`💰 Flat stake: $${stake} (Monte Carlo needs 10+ trades)`);
   }
   const baseStake = Math.max(minStk, parseFloat(((balance * riskPct) / 100).toFixed(2)));
   console.log(`💰 Base stake: $${baseStake} → Monte Carlo adjusted: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
@@ -2119,7 +2118,7 @@ Deno.serve(async (req) => {
   const features = buildFeatures(
     await fetchCandles(best.symbol, 60, 200),
     await fetchCandles(best.symbol, 300, 100)
-  ).catch(() => new Array(21).fill(0));
+  );
 
   await supabase.from("trades").insert({
     symbol:       best.symbol,
