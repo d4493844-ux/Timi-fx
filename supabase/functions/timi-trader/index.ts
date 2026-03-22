@@ -1662,83 +1662,100 @@ function trueBayesianWinProb(
 // ─────────────────────────────────────────────
 async function updateOpenTradeResults(supabase: any, token: string): Promise<void> {
   try {
-    // Get trades marked as "open" in last 8 hours
-    const eightHrsAgo = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
     const { data: openTrades } = await supabase
       .from("trades")
       .select("id, symbol, stake, created_at")
       .eq("result", "open")
       .eq("account_name", "edge_function")
-      .gte("created_at", eightHrsAgo)
-      .limit(20);
+      .order("created_at", { ascending: false })
+      .limit(30);
 
     if (!openTrades || openTrades.length === 0) return;
     console.log(`🔄 Checking ${openTrades.length} open trades...`);
 
-    await new Promise<void>((resolve) => {
+    // Fetch statement from Deriv
+    const transactions: any[] = await new Promise((resolve) => {
       const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const timeout = setTimeout(() => { ws.close(); resolve(); }, 20000);
+      const timeout = setTimeout(() => { ws.close(); resolve([]); }, 20000);
       let authed = false;
+      let allTx: any[] = [];
+      let pending = 2;
 
-      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-      ws.onmessage = async (e) => {
-        const d = JSON.parse(e.data);
-
-        if (d.authorize && !authed) {
-          authed = true;
-          // Use statement API — shows ALL transactions including closed MULT contracts
-          ws.send(JSON.stringify({
-            statement: 1,
-            description: 1,
-            limit: 100,
-            action_type: "sell"  // only show closed/sold contracts
-          }));
-        }
-
-        if (d.statement) {
+      const done = () => {
+        pending--;
+        if (pending <= 0) {
           clearTimeout(timeout);
           ws.close();
-          const transactions = d.statement.transactions || [];
-          console.log(`📊 Got ${transactions.length} closed transactions from Deriv`);
-
-          let updated = 0;
-          for (const trade of openTrades) {
-            const tradeTime = new Date(trade.created_at).getTime() / 1000;
-
-            // Match by purchase time within 10 minutes
-            const match = transactions.find((t: any) => {
-              const purchaseTime = t.purchase_time || t.transaction_time || 0;
-              return Math.abs(purchaseTime - tradeTime) < 600;
-            });
-
-            if (match) {
-              const pnl    = parseFloat(match.pnl || "0");
-              const result = pnl > 0 ? "win" : "loss";
-              await supabase.from("trades")
-                .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
-                .eq("id", trade.id);
-              console.log(`✅ ${trade.symbol}: ${result} pnl:$${pnl.toFixed(2)}`);
-              updated++;
-            }
-          }
-          console.log(`🔄 Updated ${updated}/${openTrades.length} open trades`);
-          resolve();
-        }
-
-        if (d.error) {
-          console.log(`⚠️ Statement error: ${d.error.message}`);
-          clearTimeout(timeout);
-          ws.close();
-          resolve();
+          resolve(allTx);
         }
       };
-      ws.onerror = () => { clearTimeout(timeout); resolve(); };
+
+      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+      ws.onmessage = (e: any) => {
+        const d = JSON.parse(e.data);
+        if (d.authorize && !authed) {
+          authed = true;
+          ws.send(JSON.stringify({ statement: 1, description: 1, limit: 200 }));
+          ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
+        }
+        if (d.statement) {
+          allTx = allTx.concat(d.statement.transactions || []);
+          done();
+        }
+        if (d.profit_table) {
+          allTx = allTx.concat(d.profit_table.transactions || []);
+          done();
+        }
+        if (d.error) { done(); }
+      };
+      ws.onerror = () => { clearTimeout(timeout); resolve([]); };
     });
+
+    console.log(`📊 Got ${transactions.length} transactions from Deriv`);
+
+    let updated = 0;
+    const twoHrsAgo = new Date(Date.now() - 2*60*60*1000).toISOString();
+
+    for (const trade of openTrades) {
+      const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
+
+      // Find matching transaction
+      const match = transactions.find((t: any) => {
+        const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
+        return pt > 0 && Math.abs(pt - tradeTimeSec) < 900;
+      }) || transactions.find((t: any) => {
+        const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
+        const buyPrice = parseFloat(t.buy_price || t.amount || "0");
+        return Math.abs(buyPrice - (trade.stake || 0)) < 0.5 && Math.abs(pt - tradeTimeSec) < 1800;
+      });
+
+      if (match) {
+        let pnl = 0;
+        if (match.pnl != null)        pnl = parseFloat(match.pnl);
+        else if (match.sell_price != null && match.buy_price != null)
+          pnl = parseFloat(match.sell_price) - parseFloat(match.buy_price);
+        else if (match.profit != null) pnl = parseFloat(match.profit);
+
+        const result = pnl >= 0 ? "win" : "loss";
+        await supabase.from("trades")
+          .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
+          .eq("id", trade.id);
+        console.log(`✅ ${trade.symbol}: ${result} pnl=$${pnl.toFixed(2)}`);
+        updated++;
+      } else if (trade.created_at < twoHrsAgo) {
+        // Stale trade — mark expired
+        await supabase.from("trades")
+          .update({ result: "expired" })
+          .eq("id", trade.id);
+      }
+    }
+    console.log(`🔄 Updated ${updated}/${openTrades.length} trades`);
 
   } catch(e) {
     console.log(`⚠️ Trade result updater error: ${e}`);
   }
 }
+
 
 // ─────────────────────────────────────────────
 // MAIN HANDLER
