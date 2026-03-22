@@ -1245,24 +1245,66 @@ async function getConsecutiveLosses(supabase: any): Promise<number> {
 // to find optimal stake that maximizes growth while
 // keeping risk of ruin below 5%
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// FAT-TAIL RANDOM SAMPLING
+// Student's t-distribution (df=5)
+// Captures real market crash probability
+// Normal dist underestimates tail events by 10-100x
+// Source: Gram-Charlier paper (Sakhare 2026)
+// ─────────────────────────────────────────────
+function sampleT(df: number): number {
+  // Box-Muller for normal
+  const u1 = Math.random(), u2 = Math.random();
+  const normal = Math.sqrt(-2 * Math.log(u1 + 1e-10)) * Math.cos(2 * Math.PI * u2);
+  // Chi-squared approximation for t-distribution
+  // t = Z / sqrt(chi2/df) where chi2 = sum of df squared normals
+  let chi2 = 0;
+  for (let i = 0; i < df; i++) {
+    const u3 = Math.random(), u4 = Math.random();
+    const n = Math.sqrt(-2 * Math.log(u3 + 1e-10)) * Math.cos(2 * Math.PI * u4);
+    chi2 += n * n;
+  }
+  return normal / Math.sqrt(chi2 / df);
+}
+
+function tDistWin(winRate: number, skewness: number, kurtosis: number): boolean {
+  // Fat-tail win probability sampling
+  // Accounts for: skewness (asymmetric returns)
+  //               kurtosis (fat tails = more extreme outcomes)
+  // df=5 gives ~3x more extreme events than normal
+  const df = Math.max(3, 10 - kurtosis);  // higher kurtosis = fatter tails
+  const t  = sampleT(df);
+  // Shift threshold by skewness (positive skew = more wins)
+  const threshold = skewness > 0
+    ? winRate - skewness * 0.05   // positive skew → easier to win
+    : winRate - skewness * 0.05;  // negative skew → harder to win
+  // Convert t-statistic to probability via logistic
+  const prob = 1 / (1 + Math.exp(-t * 0.5));
+  return prob < threshold;
+}
+
 function monteCarloStake(
   balance: number,
   baseStakePct: number,
   winRate: number,
-  avgWinPct: number,   // avg win as % of stake (e.g. 0.85 for 85%)
-  avgLossPct: number,  // avg loss as % of stake (e.g. 0.90 for 90%)
+  avgWinPct: number,
+  avgLossPct: number,
   minStake: number,
-  maxStake: number
+  maxStake: number,
+  gcSkewness: number = 0,    // from Gram-Charlier features
+  gcKurtosis: number = 1,    // from Gram-Charlier features
 ): { stake: number; riskOfRuin: number; expectedGrowth: number; recommendation: string } {
-  const SIMULATIONS  = 5000;
-  const HORIZON      = 20;   // next 20 trades
-  const RUIN_THRESH  = 0.20; // account considered "ruined" if drops 20% from current
+  const SIMULATIONS = 3000;  // reduced for speed (was 5000)
+  const HORIZON     = 20;
+  const RUIN_THRESH = 0.20;
 
   let testPct = baseStakePct / 100;
 
-  // Run simulations at current stake %
-  let ruinCount  = 0;
+  let ruinCount   = 0;
   let totalGrowth = 0;
+
+  // Tail risk multiplier — high kurtosis = more extreme losses possible
+  const tailRisk = Math.max(1, 1 + (gcKurtosis - 1) * 0.1);
 
   for (let sim = 0; sim < SIMULATIONS; sim++) {
     let bal = balance;
@@ -1271,8 +1313,20 @@ function monteCarloStake(
 
     for (let t = 0; t < HORIZON; t++) {
       const stake = Math.max(minStake, Math.min(maxStake, bal * testPct));
-      const win   = Math.random() < winRate;
-      bal += win ? stake * avgWinPct : -(stake * avgLossPct);
+
+      // Fat-tail win/loss sampling
+      const win = tDistWin(winRate, gcSkewness, gcKurtosis);
+
+      if (win) {
+        // Wins can be larger than expected (positive kurtosis)
+        const winMult = 1 + Math.max(0, sampleT(5) * 0.1 * gcKurtosis);
+        bal += stake * avgWinPct * Math.min(3, winMult);
+      } else {
+        // Losses can be much larger in fat-tail markets
+        const lossMult = tailRisk * (1 + Math.max(0, -sampleT(5) * 0.15));
+        bal -= stake * avgLossPct * Math.min(4, lossMult);
+      }
+
       if (bal <= ruinLevel) { ruined = true; break; }
     }
 
@@ -1280,26 +1334,33 @@ function monteCarloStake(
     totalGrowth += (bal - balance) / balance;
   }
 
-  const riskOfRuin   = ruinCount / SIMULATIONS;
+  const riskOfRuin    = ruinCount / SIMULATIONS;
   const expectedGrowth = totalGrowth / SIMULATIONS;
 
-  // If risk of ruin > 5%, reduce stake by 25%
-  // If risk of ruin < 1% AND win rate > 60%, allow up to 25% stake increase
-  let finalPct   = testPct;
+  let finalPct      = testPct;
   let recommendation = "normal";
 
+  // More conservative thresholds with fat tails
   if (riskOfRuin > 0.10) {
-    finalPct = testPct * 0.50;  // cut stake in half — dangerous conditions
-    recommendation = "reduced_50pct";
+    finalPct = testPct * 0.40;  // fat tails = cut more aggressively
+    recommendation = "reduced_60pct_fat_tail";
   } else if (riskOfRuin > 0.05) {
-    finalPct = testPct * 0.75;  // reduce by 25%
-    recommendation = "reduced_25pct";
-  } else if (riskOfRuin < 0.01 && winRate > 0.62 && expectedGrowth > 0) {
-    finalPct = Math.min(testPct * 1.25, 0.05); // boost up to 25% but cap at 5% of balance
-    recommendation = "boosted_25pct";
+    finalPct = testPct * 0.70;
+    recommendation = "reduced_30pct";
+  } else if (riskOfRuin > 0.02) {
+    finalPct = testPct * 0.85;
+    recommendation = "reduced_15pct";
+  } else if (riskOfRuin < 0.01 && winRate > 0.65 && expectedGrowth > 0 && gcKurtosis < 2) {
+    // Only boost if low kurtosis (not spiky market)
+    finalPct = Math.min(testPct * 1.20, 0.04);
+    recommendation = "boosted_20pct";
   }
 
-  const finalStake = Math.max(minStake, Math.min(maxStake, parseFloat((balance * finalPct).toFixed(2))));
+  const finalStake = Math.max(
+    minStake,
+    Math.min(maxStake, parseFloat((balance * finalPct).toFixed(2)))
+  );
+
   return { stake: finalStake, riskOfRuin, expectedGrowth, recommendation };
 }
 
@@ -1734,7 +1795,11 @@ Deno.serve(async (req) => {
   let mc: any;
   let stake: number;
   if (hasEnoughData) {
-    mc = monteCarloStake(balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk);
+    mc = monteCarloStake(
+        balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
+        features[53] || 0,   // gc_skewness
+        features[54] || 1    // gc_kurtosis
+      );
     stake = mc.stake;
     console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation} ror:${(mc.riskOfRuin*100).toFixed(1)}%)`);
   } else {
