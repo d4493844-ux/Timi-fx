@@ -1658,8 +1658,27 @@ Deno.serve(async (req) => {
       const features = buildFeatures(c1m, c5m);
 
       if (ML_MODELS[symbol]) {
-        // ── STEP 3: ML Prediction ──
-        sig = mlPredict(ML_MODELS[symbol], features);
+        // ── STEP 3: ML Prediction — Specialist Routing ──
+        const specData   = SPECIALIST_MODELS[symbol];
+        const hurst_val  = features[44] || 0.5;
+        const kurt_val   = features[52] || 1.0;
+        const specRegime = hurst_val > 0.58 ? "trending" : (hurst_val < 0.42 || kurt_val > 3.0) ? "volatile" : "ranging";
+
+        if (specData) {
+          const specResult = mlPredictSpecialist(specData, specRegime, features);
+          if (specResult && specResult.action !== "HOLD") {
+            sig = specResult;
+            scanLog.push(`${symbol}: specialist_${specRegime}→${sig.action} ${sig.confidence}%`);
+          } else {
+            sig = mlPredict(ML_MODELS[symbol], features);
+            if (specResult?.action === "HOLD") {
+              scanLog.push(`${symbol}: spec_blocked, general→${sig.action}`);
+            }
+          }
+        } else {
+          sig = mlPredict(ML_MODELS[symbol], features);
+        }
+
         if (sig.action === "HOLD") {
           scanLog.push(`${symbol}: ML→HOLD (${sig.reason})`); continue;
         }
