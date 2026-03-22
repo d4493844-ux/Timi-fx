@@ -10,6 +10,67 @@ const CORS = {
 };
 
 // ─────────────────────────────────────────────
+// ECONOMIC CALENDAR — News Guard
+// ─────────────────────────────────────────────
+const FOREX_PAIRS_CURRENCIES: Record<string, string[]> = {
+  "frxEURUSD":["EUR","USD"],"frxGBPUSD":["GBP","USD"],
+  "frxUSDJPY":["USD","JPY"],"frxAUDUSD":["AUD","USD"],
+  "frxUSDCAD":["USD","CAD"],"frxUSDCHF":["USD","CHF"],
+  "frxEURGBP":["EUR","GBP"],"frxEURJPY":["EUR","JPY"],
+  "frxGBPJPY":["GBP","JPY"],"frxXAUUSD":["XAU","USD"],
+  "frxXAGUSD":["XAG","USD"],"frxNZDUSD":["NZD","USD"],
+};
+
+let NEWS_CACHE: Array<{currency:string;impact:string;time:Date;title:string}> = [];
+let NEWS_CACHE_TIME = 0;
+
+async function checkNewsGuard(symbol: string): Promise<{blocked:boolean;reason:string}> {
+  const pairs = FOREX_PAIRS_CURRENCIES[symbol];
+  if (!pairs) return { blocked: false, reason: "" };
+
+  try {
+    // Refresh cache every 60 minutes
+    if (Date.now() - NEWS_CACHE_TIME > 60 * 60 * 1000) {
+      const today = new Date().toISOString().split("T")[0];
+      const resp  = await fetch(
+        `https://economic-calendar.tradingview.com/events?from=${today}T00:00:00&to=${today}T23:59:59&countries=US,EU,GB,JP,AU,CA,CH`,
+        { headers: { "User-Agent": "Mozilla/5.0" } }
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        NEWS_CACHE = [];
+        for (const ev of (data.result || data || [])) {
+          if ((ev.importance || 0) < 3) continue; // only HIGH impact
+          NEWS_CACHE.push({
+            currency: ev.currency || "",
+            impact:   "HIGH",
+            time:     new Date(ev.date || ev.datetime || 0),
+            title:    ev.title || ev.name || "News",
+          });
+        }
+        NEWS_CACHE_TIME = Date.now();
+        console.log(`📅 Calendar: ${NEWS_CACHE.length} high-impact events today`);
+      }
+    }
+
+    const now = new Date();
+    const win = 30 * 60 * 1000; // 30 min window
+    for (const ev of NEWS_CACHE) {
+      if (!pairs.includes(ev.currency)) continue;
+      const diff = Math.abs(ev.time.getTime() - now.getTime());
+      if (diff < win) {
+        const mins = Math.round((ev.time.getTime() - now.getTime()) / 60000);
+        const dir  = mins > 0 ? `in ${mins}min` : `${Math.abs(mins)}min ago`;
+        return { blocked: true, reason: `news_guard:${ev.currency} "${ev.title}" ${dir}` };
+      }
+    }
+  } catch(e) {
+    // Fail open — don't block if calendar unavailable
+  }
+  return { blocked: false, reason: "" };
+}
+
+// ─────────────────────────────────────────────
 // ML HELPERS
 // ─────────────────────────────────────────────
 function predictTree(node: any, f: number[]): number {
@@ -1659,6 +1720,13 @@ Deno.serve(async (req) => {
         console.log(`⚡ ${symbol}: HMM→${regime.name} but BOOM/CRASH allowed in all regimes`);
       } else {
         console.log(`✅ ${symbol}: HMM→${regime.name} (allowed:${regime.allowedAction})`);
+      }
+
+      // ── News Guard — skip forex during high-impact events ──
+      const newsCheck = await checkNewsGuard(symbol);
+      if (newsCheck.blocked) {
+        scanLog.push(`${symbol}: ${newsCheck.reason}`);
+        continue;
       }
 
       let sig: any;
