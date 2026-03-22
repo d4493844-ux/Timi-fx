@@ -31,25 +31,33 @@ async function checkNewsGuard(symbol: string): Promise<{blocked:boolean;reason:s
   try {
     // Refresh cache every 60 minutes
     if (Date.now() - NEWS_CACHE_TIME > 60 * 60 * 1000) {
-      const today = new Date().toISOString().split("T")[0];
-      const resp  = await fetch(
-        `https://economic-calendar.tradingview.com/events?from=${today}T00:00:00&to=${today}T23:59:59&countries=US,EU,GB,JP,AU,CA,CH`,
-        { headers: { "User-Agent": "Mozilla/5.0" } }
-      );
-      if (resp.ok) {
-        const data = await resp.json();
-        NEWS_CACHE = [];
-        for (const ev of (data.result || data || [])) {
-          if ((ev.importance || 0) < 3) continue; // only HIGH impact
-          NEWS_CACHE.push({
-            currency: ev.currency || "",
-            impact:   "HIGH",
-            time:     new Date(ev.date || ev.datetime || 0),
-            title:    ev.title || ev.name || "News",
-          });
+      NEWS_CACHE_TIME = Date.now(); // mark as refreshed even if fetch fails
+      try {
+        const today = new Date().toISOString().split("T")[0];
+        const controller = new AbortController();
+        const fetchTimeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
+        const resp = await fetch(
+          `https://economic-calendar.tradingview.com/events?from=${today}T00:00:00&to=${today}T23:59:59&countries=US,EU,GB,JP,AU,CA,CH`,
+          { headers: { "User-Agent": "Mozilla/5.0" }, signal: controller.signal }
+        ).catch(() => null);
+        clearTimeout(fetchTimeout);
+        if (resp && resp.ok) {
+          const data = await resp.json().catch(() => ({}));
+          NEWS_CACHE = [];
+          for (const ev of (data.result || data || [])) {
+            if ((ev.importance || 0) < 3) continue;
+            NEWS_CACHE.push({
+              currency: ev.currency || "",
+              impact:   "HIGH",
+              time:     new Date(ev.date || ev.datetime || 0),
+              title:    ev.title || ev.name || "News",
+            });
+          }
+          NEWS_CACHE_TIME = Date.now();
+          console.log(`📅 Calendar: ${NEWS_CACHE.length} high-impact events`);
         }
-        NEWS_CACHE_TIME = Date.now();
-        console.log(`📅 Calendar: ${NEWS_CACHE.length} high-impact events today`);
+      } catch(calErr) {
+        console.log(`⚠️ Calendar skipped: ${calErr}`);
       }
     }
 
