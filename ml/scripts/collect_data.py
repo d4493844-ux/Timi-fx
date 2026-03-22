@@ -673,16 +673,102 @@ def engineer_features(df):
 
     return df
 
-def label_trades(df, lookahead=4):
-    closes = df['close'].values
-    labels = []
-    for i in range(len(closes)):
-        if i + lookahead >= len(closes):
-            labels.append(np.nan)
+# ─────────────────────────────────────────────
+# PROPER LABELING — BUY / SELL / HOLD per market
+# Based on actual move size vs noise threshold
+# ─────────────────────────────────────────────
+
+# Minimum move required to be a real signal
+# Below this = noise, label as HOLD
+SIGNAL_THRESHOLDS = {
+    # Synthetics — use small threshold, meta model filters spikes
+    # BOOM always goes up, CRASH always goes down
+    # Train on ALL directional moves, meta learns spike conditions
+    "BOOM500":   0.00015,  # 0.015% — captures regular upward moves
+    "BOOM1000":  0.00012,
+    "CRASH500":  0.00015,
+    "CRASH1000": 0.00012,
+    # VIX — moderate volatility
+    "R_25":  0.00030,
+    "R_50":  0.00050,
+    "R_75":  0.00070,
+    "R_100": 0.00090,
+    # Forex — tight moves
+    "frxUSDJPY": 0.00012,
+    "frxEURUSD": 0.00010,
+    "frxGBPUSD": 0.00012,
+    "frxEURGBP": 0.00008,
+    "frxAUDUSD": 0.00010,
+    "frxUSDCAD": 0.00010,
+    "frxUSDCHF": 0.00010,
+    "frxGBPJPY": 0.00015,
+    "frxEURJPY": 0.00012,
+    # Crypto
+    "cryBTCUSD": 0.00040,
+    "cryETHUSD": 0.00050,
+    # Commodities
+    "frxXAUUSD": 0.00025,
+    "frxXAGUSD": 0.00040,
+}
+
+def label_trades(df, symbol="unknown", lookahead=4):
+    """
+    Proper tri-class labeling:
+      1  = BUY  (price goes up significantly)
+     -1  = SELL (price goes down significantly)
+      0  = HOLD (move too small = noise)
+    
+    Threshold is per-symbol based on typical move size
+    This prevents training on noise for forex
+    """
+    closes   = df["close"].values
+    n        = len(closes)
+    threshold = SIGNAL_THRESHOLDS.get(symbol, 0.0003)
+    
+    labels   = np.zeros(n)
+    strength = np.zeros(n)
+
+    # Unidirectional symbols — force correct label direction
+    boom_symbols  = ["BOOM500","BOOM1000","BOOM300N","BOOM150N","BOOM600","BOOM900","BOOM50"]
+    crash_symbols = ["CRASH500","CRASH1000","CRASH300N","CRASH150N","CRASH600","CRASH900","CRASH50"]
+    is_boom  = any(b in symbol for b in boom_symbols)
+    is_crash = any(c in symbol for c in crash_symbols)
+
+    for i in range(n - lookahead):
+        future  = closes[i + lookahead]
+        current = closes[i] + 1e-10
+        move    = (future - current) / current
+        abs_move = abs(move)
+
+        strength[i] = abs_move
+
+        if is_boom:
+            # BOOM only spikes UP — only BUY signals
+            labels[i] = 1 if move > threshold else 0
+        elif is_crash:
+            # CRASH only spikes DOWN — only SELL signals
+            labels[i] = -1 if move < -threshold else 0
         else:
-            labels.append(1 if closes[i+lookahead] > closes[i] else 0)
-    df['label'] = labels
-    df['label_strength'] = abs(df['close'].shift(-lookahead) - df['close']) / df['close']
+            # Bidirectional markets
+            if abs_move >= threshold:
+                labels[i] = 1 if move > 0 else -1
+            else:
+                labels[i] = 0  # HOLD — move too small
+
+    # Last lookahead rows — no future data
+    labels[-lookahead:]   = np.nan
+    strength[-lookahead:] = np.nan
+
+    df["label"]          = labels
+    df["label_strength"] = strength
+
+    # Print distribution
+    buy  = int(np.sum(labels == 1))
+    sell = int(np.sum(labels == -1))
+    hold = int(np.sum(labels == 0))
+    total = buy + sell + hold
+    print(f"  Labels: BUY={buy} SELL={sell} HOLD={hold} | threshold={threshold:.4%}")
+
     return df
 
 async def collect_symbol(symbol):
@@ -703,7 +789,7 @@ async def collect_symbol(symbol):
     df['epoch'] = df['epoch'].astype(int)
 
     df = engineer_features(df)
-    df = label_trades(df, lookahead=4)
+    df = label_trades(df, symbol=symbol, lookahead=4)
     df = df.dropna()
     df['symbol'] = symbol
 
