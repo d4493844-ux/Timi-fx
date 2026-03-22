@@ -282,6 +282,113 @@ function visibilityGraphFeatures(prices: number[]): { vgHurst: number; vgAlpha: 
 }
 
 // ─────────────────────────────────────────────
+// OGD ENSEMBLE REGIME DETECTION
+// Combines HMM + Rule-based + Momentum detector
+// Online reweighting after every trade outcome
+// Paper: Guibert & Cuervo-Paloma 2025 → 51%→80%
+// ─────────────────────────────────────────────
+let OGD_WEIGHTS = { hmm: 0.5, rules: 0.3, momentum: 0.2 };
+let OGD_LOSSES  = { hmm: 0, rules: 0, momentum: 0 };
+const OGD_LR    = 0.1; // learning rate
+
+function rulesRegime(features: number[]): string {
+  // Rule-based regime detector (fast, no model needed)
+  const rsi       = features[0]  || 50;
+  const atr_pct   = features[3]  || 0.001;
+  const mom10     = features[5]  || 0;
+  const vg_hurst  = features[9]  || 0.5;
+  const gc_kurt   = features[12] || 1.0;
+
+  if (gc_kurt > 4.0 || atr_pct > 0.005) return "HighVolatility";
+  if (Math.abs(mom10) > 0.002 && vg_hurst > 0.58) return "Uptrend";
+  if (Math.abs(mom10) > 0.002 && vg_hurst < 0.42) return "Downtrend";
+  return "Ranging";
+}
+
+function momentumRegime(candles: any[]): string {
+  // Momentum-based regime detector
+  if (candles.length < 20) return "Ranging";
+  const closes  = candles.slice(-20).map((c:any) => parseFloat(c.close));
+  const returns = closes.slice(1).map((c,i) => (c - closes[i]) / (closes[i] + 1e-10));
+  const mean    = returns.reduce((a,b)=>a+b,0) / returns.length;
+  const vol     = Math.sqrt(returns.reduce((a,b)=>a+(b-mean)**2,0)/returns.length);
+  const recent  = returns.slice(-5).reduce((a,b)=>a+b,0) / 5;
+  const sharpe  = vol > 0 ? recent / vol : 0;
+
+  if (sharpe > 1.5)  return "Uptrend";
+  if (sharpe < -1.5) return "Downtrend";
+  if (vol < 0.0003)  return "Ranging";
+  return "HighVolatility";
+}
+
+function ogdEnsembleRegime(
+  hmmRegime: string, features: number[], candles: any[]
+): { name: string; tradable: boolean; allowedAction: string; confidence: number } {
+  // Get predictions from all 3 detectors
+  const rulesR    = rulesRegime(features);
+  const momentumR = momentumRegime(candles);
+
+  // Vote with current weights
+  const votes: Record<string, number> = {
+    "Uptrend": 0, "Downtrend": 0, "Ranging": 0, "HighVolatility": 0
+  };
+  votes[hmmRegime]   = (votes[hmmRegime]   || 0) + OGD_WEIGHTS.hmm;
+  votes[rulesR]      = (votes[rulesR]      || 0) + OGD_WEIGHTS.rules;
+  votes[momentumR]   = (votes[momentumR]   || 0) + OGD_WEIGHTS.momentum;
+
+  // Find winning regime
+  const winner = Object.entries(votes).reduce((a,b) => b[1]>a[1] ? b : a)[0];
+  const confidence = votes[winner];
+
+  // Agreement bonus — all 3 agree = higher confidence
+  const allAgree = hmmRegime === rulesR && rulesR === momentumR;
+  const finalConf = allAgree ? Math.min(1, confidence * 1.3) : confidence;
+
+  // Tradability rules
+  const tradable     = winner !== "Ranging" || allAgree;
+  const allowedAction =
+    winner === "Uptrend"       ? "BUY"  :
+    winner === "Downtrend"     ? "SELL" :
+    winner === "HighVolatility" ? "ANY"  : "ANY";
+
+  return { name: winner, tradable, allowedAction, confidence: finalConf };
+}
+
+async function ogdUpdateWeights(supabase: any): Promise<void> {
+  // Load recent trade outcomes and update OGD weights
+  try {
+    const { data: trades } = await supabase
+      .from("trades")
+      .select("result,session")
+      .eq("account_name","edge_function")
+      .in("result",["win","loss","WIN","LOSS"])
+      .order("created_at",{ascending:false})
+      .limit(50);
+
+    if (!trades || trades.length < 10) return;
+
+    // Simple update: if recent win rate > 60% keep weights, else shift
+    const wins = trades.filter((t:any) => ["win","WIN"].includes(t.result)).length;
+    const wr   = wins / trades.length;
+
+    if (wr < 0.50) {
+      // Shift more weight to momentum (more reactive)
+      OGD_WEIGHTS.hmm      = Math.max(0.2, OGD_WEIGHTS.hmm - OGD_LR * 0.5);
+      OGD_WEIGHTS.momentum = Math.min(0.6, OGD_WEIGHTS.momentum + OGD_LR * 0.3);
+      OGD_WEIGHTS.rules    = 1 - OGD_WEIGHTS.hmm - OGD_WEIGHTS.momentum;
+    } else if (wr > 0.70) {
+      // Shift more weight to HMM (more stable)
+      OGD_WEIGHTS.hmm      = Math.min(0.7, OGD_WEIGHTS.hmm + OGD_LR * 0.3);
+      OGD_WEIGHTS.momentum = Math.max(0.1, OGD_WEIGHTS.momentum - OGD_LR * 0.2);
+      OGD_WEIGHTS.rules    = 1 - OGD_WEIGHTS.hmm - OGD_WEIGHTS.momentum;
+    }
+    console.log(`⚖️ OGD weights: HMM=${OGD_WEIGHTS.hmm.toFixed(2)} Rules=${OGD_WEIGHTS.rules.toFixed(2)} Mom=${OGD_WEIGHTS.momentum.toFixed(2)} WR=${(wr*100).toFixed(0)}%`);
+  } catch(e) {
+    console.log(`⚠️ OGD update failed: ${e}`);
+  }
+}
+
+// ─────────────────────────────────────────────
 // RETAIL EXHAUSTION TIMER
 // ─────────────────────────────────────────────
 const RETAIL_FLIP_TIMES: Record<string,number> = {
@@ -1694,12 +1801,32 @@ Deno.serve(async (req) => {
       const [c1m, c5m] = await Promise.all([fetchCandles(symbol, 60, 200), fetchCandles(symbol, 300, 100)]);
       if (c1m.length < 60) { scanLog.push(`${symbol}: insufficient candles`); continue; }
 
-      // ── STEP 2: HMM Regime Detection ──
-      // Use TRUE HMM Viterbi decoder if model loaded, else fall back to rule-based
-      const hmmObs = extractHMMObservations(c1m);
-      const regime = (HMM_MODEL && hmmObs.length > 0)
+      // ── STEP 2: HMM + OGD Ensemble Regime Detection ──
+      // TRUE HMM Viterbi → then OGD ensemble combines with rules + momentum
+      const hmmObs     = extractHMMObservations(c1m);
+      const hmmResult  = (HMM_MODEL && hmmObs.length > 0)
         ? hmmViterbi(hmmObs)
         : detectMarketRegime(c1m);
+
+      // Build features early for OGD (need for rules-based detector)
+      const featuresEarly = buildFeatures(c1m, c5m);
+
+      // OGD Ensemble: combines HMM + rules + momentum with learned weights
+      const ogdResult = ogdEnsembleRegime(hmmResult.name, featuresEarly, c1m);
+
+      // Use OGD ensemble result as final regime
+      const regime = {
+        state:         hmmResult.state,
+        name:          ogdResult.name,
+        tradable:      ogdResult.tradable,
+        allowedAction: ogdResult.allowedAction,
+      };
+
+      // Log ensemble decision
+      if (ogdResult.name !== hmmResult.name) {
+        console.log(`⚖️ ${symbol}: HMM=${hmmResult.name} → OGD=${ogdResult.name} (conf=${ogdResult.confidence.toFixed(2)})`);
+      }
+
       const isSpikeSym = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
 
       // BOOM/CRASH trade in ALL regimes — spikes happen even in ranging markets
@@ -1730,7 +1857,7 @@ Deno.serve(async (req) => {
       }
 
       let sig: any;
-      const features = buildFeatures(c1m, c5m);
+      const features = featuresEarly; // reuse features computed for OGD
 
       if (ML_MODELS[symbol]) {
         // ── STEP 3: ML Prediction — Specialist Routing ──
