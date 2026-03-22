@@ -1888,7 +1888,8 @@ Deno.serve(async (req) => {
         // ── STEP 4: HMM direction alignment ──
         // Only allow signal if it matches HMM regime direction
         // Exception: weak trends allow both directions if confidence is very high
-        if (regime.allowedAction !== "NONE" && regime.name !== "WeakUptrend" && regime.name !== "WeakDowntrend") {
+        if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
+           regime.name !== "WeakUptrend" && regime.name !== "WeakDowntrend") {
           if (sig.action !== regime.allowedAction) {
             scanLog.push(`${symbol}: HMM_direction_blocked — regime says ${regime.allowedAction} but ML says ${sig.action}`);
             continue;
