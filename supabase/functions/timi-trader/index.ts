@@ -2111,7 +2111,63 @@ Deno.serve(async (req) => {
     patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}`,
   });
 
-  if (success) await supabase.from("bot_config").update({ balance_cache: balance - stake }).eq("active", true);
+  if (success) {
+    await supabase.from("bot_config").update({ balance_cache: balance - stake }).eq("active", true);
+
+    // ── BINANCE SIGNAL ROUTING ──
+    // Only route if:
+    // 1. Symbol has a Binance equivalent
+    // 2. That equivalent is in user's Binance selected symbols
+    // 3. Binance is enabled
+    // 4. Confidence >= 75% (higher bar for cross-platform)
+    const derivToBinance: Record<string,string> = {
+      "cryBTCUSD": "BTCUSDT",
+      "cryETHUSD": "ETHUSDT",
+    };
+    const binanceSym = derivToBinance[best.symbol];
+
+    if (binanceSym && best.confidence >= 75) {
+      try {
+        const { data: bCfg } = await supabase
+          .from("bot_config")
+          .select("binance_enabled,binance_symbols")
+          .eq("active", true).single();
+
+        // Respect user's Binance symbol selection
+        const binanceEnabled  = bCfg?.binance_enabled === true;
+        const binanceSymbols  = bCfg?.binance_symbols || [];
+        const symbolSelected  = binanceSymbols.includes(binanceSym);
+
+        if (binanceEnabled && symbolSelected) {
+          const binanceUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/timi-binance`;
+          const binanceResp = await fetch(binanceUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${Deno.env.get("SUPABASE_ANON_KEY") || ""}`,
+            },
+            body: JSON.stringify({
+              symbol:     best.symbol,
+              action:     best.action,
+              confidence: best.confidence,
+            })
+          });
+          const binanceResult = await binanceResp.json().catch(() => ({}));
+          if (binanceResult.status === "trade_placed") {
+            console.log(`🟡 Binance routed: ${binanceSym} ${best.action} $${binanceResult.stake}`);
+          } else {
+            console.log(`⚠️ Binance skip: ${binanceResult.status} — ${binanceResult.message||""}`);
+          }
+        } else if (!binanceEnabled) {
+          console.log(`⚠️ Binance routing skipped — Binance disabled in settings`);
+        } else if (!symbolSelected) {
+          console.log(`⚠️ Binance routing skipped — ${binanceSym} not selected in Binance symbols`);
+        }
+      } catch(binErr) {
+        console.log(`⚠️ Binance routing error: ${binErr}`);
+      }
+    }
+  }
 
   return new Response(JSON.stringify({
     status:          success ? "trade_placed" : "trade_failed",
