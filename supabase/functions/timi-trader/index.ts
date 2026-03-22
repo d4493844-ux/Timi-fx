@@ -502,6 +502,60 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
 // States: 0=Uptrend 1=Downtrend 2=Ranging 3=HighVol
 // ─────────────────────────────────────────────
 let HMM_MODEL: any = null;
+let SPECIALIST_MODELS: Record<string, any> = {};
+
+async function loadSpecialistModels(supabase: any): Promise<void> {
+  if (Object.keys(SPECIALIST_MODELS).length > 0) return;
+  try {
+    const { data } = await supabase
+      .from("specialist_models")
+      .select("symbol,model_json");
+    if (data) {
+      for (const row of data) {
+        try {
+          SPECIALIST_MODELS[row.symbol] = typeof row.model_json === "string"
+            ? JSON.parse(row.model_json)
+            : row.model_json;
+        } catch(e) {}
+      }
+      console.log(`🧠 Specialist models loaded: ${Object.keys(SPECIALIST_MODELS).join(", ")}`);
+    }
+  } catch(e) {
+    console.log(`⚠️ Specialist models load failed: ${e}`);
+  }
+}
+
+function getSpecialistRegime(hurst: number, gcKurtosis: number): string {
+  if (hurst > 0.58) return "trending";
+  if (hurst < 0.42 || gcKurtosis > 3.0) return "volatile";
+  return "ranging";
+}
+
+function mlPredictSpecialist(
+  specialistData: any, regime: string, featVals: number[]
+): { action: string; confidence: number; reason: string } | null {
+  const specialists = specialistData?.specialists;
+  if (!specialists || !specialists[regime]) return null;
+
+  const spec = specialists[regime];
+  if (!spec.main_trees || spec.main_trees.length === 0) return null;
+
+  try {
+    const mainSum  = spec.main_trees.reduce((s: number, t: any) => s + predictTree(t, featVals), 0);
+    const mlProb   = sigmoid(mainSum);
+    const pred     = mlProb > 0.5 ? 1 : 0;
+    const metaF    = [...featVals, mlProb];
+    const metaSum  = spec.meta_trees.reduce((s: number, t: any) => s + predictTree(t, metaF), 0);
+    const metaConf = sigmoid(metaSum);
+    const threshold = spec.meta_threshold || 0.55;
+    if (metaConf < threshold) return { action: "HOLD", confidence: 0, reason: `spec_meta_blocked:${metaConf.toFixed(2)}` };
+    const action     = pred === 1 ? "BUY" : "SELL";
+    const confidence = Math.min(95, Math.round(metaConf * 100));
+    return { action, confidence, reason: `specialist_${regime}:${mlProb.toFixed(2)}` };
+  } catch(e) {
+    return null;
+  }
+}
 
 async function loadHMMModel(supabase: any): Promise<void> {
   if (HMM_MODEL) return; // already loaded
