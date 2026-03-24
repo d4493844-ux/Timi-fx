@@ -1180,9 +1180,22 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
           // e.g. stake=$1, mult=x200, tpPct=0.5% → TP = 1 × 200 × 0.005 = $1.00
           takeProfit = parseFloat((adjStake * dynMultiplier * fptTpPct).toFixed(2));
           stopLoss   = parseFloat(Math.min(adjStake * dynMultiplier * fptSlPct, adjStake * 0.9).toFixed(2));
-          // Ensure TP is at least $0.10 and SL at least $0.10
-          takeProfit = Math.max(takeProfit, 0.10);
-          stopLoss   = Math.max(stopLoss, 0.10);
+          // Deriv MULT contract limits:
+          // TP must be >= stake (can't TP for less than you risked)
+          // SL must be <= stake (can't lose more than stake)
+          // TP must be <= stake * multiplier * 0.95 (max profit)
+          const minTP = adjStake;                          // at least 1x stake
+          const maxTP = adjStake * dynMultiplier * 0.95;  // max 95% of full move
+          const minSL = 0.50;                              // Deriv minimum $0.50
+          const maxSL = adjStake * 0.90;                  // max 90% of stake
+
+          takeProfit = Math.max(minTP, Math.min(maxTP, takeProfit));
+          stopLoss   = Math.max(minSL, Math.min(maxSL, stopLoss));
+
+          // Ensure TP > SL always (positive expectancy)
+          if (takeProfit <= stopLoss) {
+            takeProfit = stopLoss * 2;
+          }
         } else {
           // Fallback: confidence-based multipliers
           const tpMult = confidence >= 85 ? 3.0
