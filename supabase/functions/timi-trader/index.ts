@@ -1470,9 +1470,11 @@ function firstPassageTime(
     tpPct = adjVol * 2.0;
   }
 
-  // SL always 1.5x TP to ensure P(win) > 60%
-  // But capped at 90% of stake (Deriv max)
-  const slPct = Math.min(tpPct * 1.5, 0.90);
+  // SL must be SMALLER than TP for positive expectancy
+  // With 64% WR: need avg_win > avg_loss × (36/64) = 0.5625
+  // Set SL = 0.5 × TP → win/loss ratio = 2.0
+  // Even at 55% WR: EV = 0.55×2 - 0.45×1 = +0.65 per unit ✅
+  const slPct = Math.min(tpPct * 0.5, 0.90);
 
   // Calculate actual win probability
   const winProb = slPct / (tpPct + slPct);
@@ -1502,8 +1504,8 @@ function selectMultiplier(
 ): number {
   // Available multipliers per symbol type (confirmed from Deriv API)
   const MULT_RANGES: Record<string, number[]> = {
-    "BOOM":  [100, 150, 200, 300, 400],
-    "CRASH": [100, 150, 200, 300, 400],
+    "BOOM":  [100, 150, 200],
+    "CRASH": [100, 150, 200],
     "R_":    [50,  100, 200, 300, 500],
     "forex": [100, 200, 300, 500, 800],
     "cry":   [100, 200, 300, 500, 800],
