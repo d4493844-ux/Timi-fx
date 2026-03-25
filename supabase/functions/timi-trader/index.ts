@@ -1961,6 +1961,16 @@ Deno.serve(async (req) => {
         console.log(`✅ ${symbol}: HMM→${regime.name} (allowed:${regime.allowedAction})`);
       }
 
+      // ── Minimum stake check — skip if stake too small for MULT ──
+      const isMULT = symbol.startsWith("BOOM") || symbol.startsWith("CRASH") ||
+                     symbol.startsWith("R_") || symbol.startsWith("1HZ");
+      const minViableStake = isMULT ? 1.00 : 0.35;
+      const projectedStake = Math.max(minViableStake, parseFloat(((balance * (cfg.risk_pct || 2)) / 100).toFixed(2)));
+      if (projectedStake < minViableStake) {
+        scanLog.push(`${symbol}: stake_too_small ($${projectedStake.toFixed(2)} < $${minViableStake})`);
+        continue;
+      }
+
       // ── News Guard — skip forex during high-impact events ──
       const newsCheck = await checkNewsGuard(symbol);
       if (newsCheck.blocked) {
@@ -2136,6 +2146,11 @@ Deno.serve(async (req) => {
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
   const success = result && !result.error;
+  
+  // If trade errored due to TP/SL rejection — mark as error not loss
+  // AI Brain should NOT learn from placement errors
+  const tradeResult = !success && result?.tp_sl_error ? "error" :
+                      !success ? "error" : "open";
 
   // Log trade with extra fields for AI Brain to learn from
   const features = buildFeatures(
