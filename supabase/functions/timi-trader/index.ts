@@ -2497,10 +2497,11 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
     for (const trade of openTrades) {
       const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
 
-      // Find matching transaction
+      // Find matching transaction — STRICT matching to prevent wrong assignment
+      // Strategy 1: exact purchase_time within 120 seconds (was 900 — too loose!)
       const match = transactions.find((t: any) => {
         const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
-        return pt > 0 && Math.abs(pt - tradeTimeSec) < 900;
+        return pt > 0 && Math.abs(pt - tradeTimeSec) < 120;
       }) || transactions.find((t: any) => {
         const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
         const buyPrice = parseFloat(t.buy_price || t.amount || "0");
@@ -2509,12 +2510,29 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
 
       if (match) {
         let pnl = 0;
-        if (match.pnl != null)        pnl = parseFloat(match.pnl);
-        else if (match.sell_price != null && match.buy_price != null)
+        // Extract PnL correctly — Deriv uses different fields per contract type
+        if (match.pnl != null && match.pnl !== "") {
+          pnl = parseFloat(match.pnl);
+        } else if (match.profit != null && match.profit !== "") {
+          pnl = parseFloat(match.profit);
+        } else if (match.sell_price != null && match.buy_price != null) {
+          // sell_price = what we received, buy_price = what we paid
           pnl = parseFloat(match.sell_price) - parseFloat(match.buy_price);
-        else if (match.profit != null) pnl = parseFloat(match.profit);
+        }
 
-        const result = pnl >= 0 ? "win" : "loss";
+        // Validate PnL is real — reject if suspiciously large or zero match
+        const stakeVal = parseFloat(trade.stake || "1");
+        if (Math.abs(pnl) > stakeVal * 300) {
+          console.log(`⚠️ Suspicious PnL $${pnl} for stake $${stakeVal} — skipping`);
+          continue; // don't update with wrong data
+        }
+
+        // Double-check: if pnl=0 and contract shows sell_price>0, recalculate
+        if (pnl === 0 && match.sell_price) {
+          pnl = parseFloat(match.sell_price) - parseFloat(match.buy_price || "0");
+        }
+
+        const result = pnl > 0 ? "win" : "loss"; // strictly > 0 for win
         await supabase.from("trades")
           .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
           .eq("id", trade.id);
@@ -3008,7 +3026,7 @@ Deno.serve(async (req) => {
     macd_hist:    Array.isArray(features) ? features[1] : null,
     bb_position:  Array.isArray(features) ? features[2] : null,
     ema_stack:    Array.isArray(features) ? (features[4] ? 1 : features[5] ? -1 : 0) : null,
-    patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}`,
+    patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}|contract_id:${result?.contract_id || result?.buy?.contract_id || ""}`,
   });
 
   if (success) {
