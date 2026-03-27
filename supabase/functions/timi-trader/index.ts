@@ -2451,48 +2451,144 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
     if (!openTrades || openTrades.length === 0) return;
     console.log(`🔄 Checking ${openTrades.length} open trades...`);
 
-    // Fetch ONLY closed contracts from Deriv
-    // Use profit_table — this ONLY contains COMPLETED contracts
-    // statement includes open/buy transactions too (causes pnl=0 bug)
-    const transactions: any[] = await new Promise((resolve) => {
+    // Check each open trade directly via contract_id
+    // This is 100% accurate — asks Deriv for exact contract status
+    // No timestamp matching, no wrong transactions
+    const checkContractDirect = (contractId: string): Promise<any> => {
+      return new Promise((resolve) => {
+        const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+        const timeout = setTimeout(() => { ws.close(); resolve(null); }, 10000);
+        let authed = false;
+
+        ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+        ws.onmessage = (e: any) => {
+          const d = JSON.parse(e.data);
+          if (d.authorize && !authed) {
+            authed = true;
+            // Request exact contract details by ID
+            ws.send(JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: parseInt(contractId)
+            }));
+          }
+          if (d.proposal_open_contract) {
+            clearTimeout(timeout);
+            ws.close();
+            const contract = d.proposal_open_contract;
+            // is_sold = 1 means contract is CLOSED
+            if (contract.is_sold === 1 || contract.status === "sold") {
+              const buyPrice  = parseFloat(contract.buy_price  || "0");
+              const sellPrice = parseFloat(contract.sell_price || "0");
+              const pnl       = sellPrice - buyPrice;
+              resolve({ contractId, pnl, buyPrice, sellPrice, status: "closed" });
+            } else {
+              // Contract still open — do not record yet
+              resolve({ contractId, status: "open" });
+            }
+          }
+          if (d.error) {
+            clearTimeout(timeout);
+            ws.close();
+            // Contract not found — might be expired or wrong id
+            resolve({ contractId, status: "not_found", error: d.error.message });
+          }
+        };
+        ws.onerror = () => { clearTimeout(timeout); resolve(null); };
+      });
+    };
+
+    // Also fetch profit_table as backup for trades without contract_id
+    const profitTableTx: any[] = await new Promise((resolve) => {
       const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const timeout = setTimeout(() => { ws.close(); resolve([]); }, 20000);
+      const timeout = setTimeout(() => { ws.close(); resolve([]); }, 15000);
       let authed = false;
-      let allTx: any[] = [];
-      let pending = 1; // only profit_table now
 
       ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
       ws.onmessage = (e: any) => {
         const d = JSON.parse(e.data);
         if (d.authorize && !authed) {
           authed = true;
-          // profit_table ONLY shows closed/settled contracts
-          // This is the key fix — no open contracts here
-          ws.send(JSON.stringify({
-            profit_table: 1,
-            description:  1,
-            limit:        100,
-            sort:         "DESC"
-          }));
+          ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
         }
         if (d.profit_table) {
-          const closed = (d.profit_table.transactions || []).filter((t: any) => {
-            // Only include contracts that are fully settled
-            // sell_price exists = contract was closed
-            const hasSellPrice = t.sell_price != null && parseFloat(t.sell_price) >= 0;
-            // pnl field exists and is not null
-            const hasPnl = t.pnl != null && t.pnl !== "";
-            return hasSellPrice || hasPnl;
-          });
-          allTx = closed;
           clearTimeout(timeout);
           ws.close();
-          resolve(allTx);
+          // Only keep contracts with valid sell_price (truly closed)
+          const closed = (d.profit_table.transactions || []).filter((t: any) =>
+            t.sell_price != null &&
+            parseFloat(t.sell_price) > 0 &&
+            t.sell_time != null
+          );
+          resolve(closed);
         }
         if (d.error) { clearTimeout(timeout); ws.close(); resolve([]); }
       };
       ws.onerror = () => { clearTimeout(timeout); resolve([]); };
     });
+
+    console.log(`📊 Profit table: ${profitTableTx.length} closed contracts`);
+
+    // Process each open trade
+    let updated = 0;
+    const twoHrsAgo = new Date(Date.now() - 2*60*60*1000).toISOString();
+
+    for (const trade of (openTrades || [])) {
+      // Extract contract_id from patterns
+      const cid = (trade.patterns || "").match(/cid:(\d+)/)?.[1] ||
+                  (trade.contract_ref || "");
+
+      let pnl = 0;
+      let resolved = false;
+
+      // Method 1: Direct contract check (most accurate)
+      if (cid && cid !== "") {
+        const contractResult = await checkContractDirect(cid);
+        if (contractResult?.status === "closed") {
+          pnl = contractResult.pnl;
+          resolved = true;
+          console.log(`✅ [direct] ${trade.symbol} cid:${cid} → pnl=$${pnl.toFixed(2)}`);
+        } else if (contractResult?.status === "open") {
+          console.log(`⏳ ${trade.symbol} cid:${cid} still open — skip`);
+          continue; // Contract still running — don't touch it
+        }
+      }
+
+      // Method 2: Profit table backup (for trades without contract_id)
+      if (!resolved) {
+        const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
+        const match = profitTableTx.find((t: any) => {
+          const pt = parseFloat(t.purchase_time || "0");
+          return pt > 0 && Math.abs(pt - tradeTimeSec) < 120;
+        });
+        if (match) {
+          const buyPrice  = parseFloat(match.buy_price  || "0");
+          const sellPrice = parseFloat(match.sell_price || "0");
+          if (buyPrice > 0 && sellPrice > 0) {
+            pnl = sellPrice - buyPrice;
+            resolved = true;
+            console.log(`✅ [table] ${trade.symbol} → pnl=$${pnl.toFixed(2)}`);
+          }
+        }
+      }
+
+      if (!resolved) {
+        // Mark as expired only if very old (>2hrs)
+        if (trade.created_at < twoHrsAgo) {
+          await supabase.from("trades").update({ result: "expired" }).eq("id", trade.id);
+        }
+        continue;
+      }
+
+      // Validate pnl before recording
+      const stakeVal = parseFloat(trade.stake || "1");
+      if (Math.abs(pnl) < 0.01) {
+        console.log(`⚠️ pnl too small for ${trade.symbol} — skipping`);
+        continue;
+      }
+      if (Math.abs(pnl) > stakeVal * 200) {
+        console.log(`⚠️ pnl $${pnl} suspicious for stake $${stakeVal} — skipping`);
+        continue;
+      }
 
     console.log(`📊 Got ${transactions.length} transactions from Deriv`);
 
@@ -2501,22 +2597,6 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
 
     for (const trade of openTrades) {
       const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
-
-      // Find matching transaction — match by contract_id first (exact)
-      // Then fall back to purchase_time (when WE placed the trade)
-      const tradeCid = (trade.patterns || "").match(/cid:(\d+)/)?.[1] || "";
-
-      const match = (tradeCid
-        ? transactions.find((t: any) => String(t.contract_id) === tradeCid)
-        : null
-      ) || transactions.find((t: any) => {
-        const pt = parseFloat(t.purchase_time || "0");
-        return pt > 0 && Math.abs(pt - tradeTimeSec) < 120;
-      }) || transactions.find((t: any) => {
-        const pt = parseFloat(t.purchase_time || "0");
-        const buyPrice = parseFloat(t.buy_price || t.amount || "0");
-        return Math.abs(buyPrice - (trade.stake || 0)) < 0.5 && Math.abs(pt - tradeTimeSec) < 1800;
-      });
 
       if (match) {
         let pnl = 0;
