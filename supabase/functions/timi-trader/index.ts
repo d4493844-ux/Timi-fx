@@ -2804,7 +2804,7 @@ Deno.serve(async (req) => {
 
           // QIRL strong skip overrides RL if uncertainty is low
           if (qirlDecision.action === 0 && qirlDecision.uncertainty < 0.05 && sig.confidence < 85) {
-            scanLog.push(\`\${symbol}: QIRL_skip (uncertainty:\${qirlDecision.uncertainty.toFixed(3)})\`);
+            scanLog.push(`${symbol}: QIRL_skip`);
             continue;
           }
         }
