@@ -2555,10 +2555,24 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
 
       // Method 2: Profit table backup (for trades without contract_id)
       if (!resolved) {
-        const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
-        const match = profitTableTx.find((t: any) => {
+        // Deriv timestamps are UTC Unix seconds
+      // Supabase created_at is UTC ISO string
+      // Must ensure both are in UTC — no local timezone
+      const tradeTimeMs  = new Date(trade.created_at).getTime();
+      const tradeTimeSec = tradeTimeMs / 1000;
+
+      // Also try with +1hr and -1hr offset to handle any timezone drift
+      const tradeSecPlus1  = tradeTimeSec + 3600;
+      const tradeSecMinus1 = tradeTimeSec - 3600;
+
+      const match = profitTableTx.find((t: any) => {
           const pt = parseFloat(t.purchase_time || "0");
-          return pt > 0 && Math.abs(pt - tradeTimeSec) < 120;
+          // Check exact UTC, UTC+1, and UTC-1
+          return pt > 0 && (
+            Math.abs(pt - tradeTimeSec)  < 120 ||
+            Math.abs(pt - tradeSecPlus1) < 120 ||
+            Math.abs(pt - tradeSecMinus1) < 120
+          );
         });
         if (match) {
           const buyPrice  = parseFloat(match.buy_price  || "0");
