@@ -2451,40 +2451,45 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
     if (!openTrades || openTrades.length === 0) return;
     console.log(`🔄 Checking ${openTrades.length} open trades...`);
 
-    // Fetch statement from Deriv
+    // Fetch ONLY closed contracts from Deriv
+    // Use profit_table — this ONLY contains COMPLETED contracts
+    // statement includes open/buy transactions too (causes pnl=0 bug)
     const transactions: any[] = await new Promise((resolve) => {
       const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
       const timeout = setTimeout(() => { ws.close(); resolve([]); }, 20000);
       let authed = false;
       let allTx: any[] = [];
-      let pending = 2;
-
-      const done = () => {
-        pending--;
-        if (pending <= 0) {
-          clearTimeout(timeout);
-          ws.close();
-          resolve(allTx);
-        }
-      };
+      let pending = 1; // only profit_table now
 
       ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
       ws.onmessage = (e: any) => {
         const d = JSON.parse(e.data);
         if (d.authorize && !authed) {
           authed = true;
-          ws.send(JSON.stringify({ statement: 1, description: 1, limit: 200 }));
-          ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
-        }
-        if (d.statement) {
-          allTx = allTx.concat(d.statement.transactions || []);
-          done();
+          // profit_table ONLY shows closed/settled contracts
+          // This is the key fix — no open contracts here
+          ws.send(JSON.stringify({
+            profit_table: 1,
+            description:  1,
+            limit:        100,
+            sort:         "DESC"
+          }));
         }
         if (d.profit_table) {
-          allTx = allTx.concat(d.profit_table.transactions || []);
-          done();
+          const closed = (d.profit_table.transactions || []).filter((t: any) => {
+            // Only include contracts that are fully settled
+            // sell_price exists = contract was closed
+            const hasSellPrice = t.sell_price != null && parseFloat(t.sell_price) >= 0;
+            // pnl field exists and is not null
+            const hasPnl = t.pnl != null && t.pnl !== "";
+            return hasSellPrice || hasPnl;
+          });
+          allTx = closed;
+          clearTimeout(timeout);
+          ws.close();
+          resolve(allTx);
         }
-        if (d.error) { done(); }
+        if (d.error) { clearTimeout(timeout); ws.close(); resolve([]); }
       };
       ws.onerror = () => { clearTimeout(timeout); resolve([]); };
     });
