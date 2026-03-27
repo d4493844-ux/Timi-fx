@@ -2532,7 +2532,12 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
           pnl = parseFloat(match.sell_price) - parseFloat(match.buy_price || "0");
         }
 
-        const result = pnl > 0 ? "win" : "loss"; // strictly > 0 for win
+        // pnl=0 means bad match — skip this trade, don't corrupt AI Brain
+        if (pnl === 0 || Math.abs(pnl) < 0.01) {
+          console.log(`⚠️ pnl=0 for ${trade.symbol} — bad match, skipping`);
+          continue;
+        }
+        const result = pnl > 0 ? "win" : "loss";
         await supabase.from("trades")
           .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
           .eq("id", trade.id);
@@ -3017,6 +3022,7 @@ Deno.serve(async (req) => {
   await supabase.from("trades").insert({
     symbol:       best.symbol,
     type:         best.action,
+    contract_ref: String(result?.contract_id || ""),
     stake,
     result:       success ? "open" : "error",
     confidence:   best.confidence,
@@ -3026,7 +3032,7 @@ Deno.serve(async (req) => {
     macd_hist:    Array.isArray(features) ? features[1] : null,
     bb_position:  Array.isArray(features) ? features[2] : null,
     ema_stack:    Array.isArray(features) ? (features[4] ? 1 : features[5] ? -1 : 0) : null,
-    patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}|contract_id:${result?.contract_id || result?.buy?.contract_id || ""}`,
+    patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}|cid:${result?.contract_id || ""}`,
   });
 
   if (success) {
