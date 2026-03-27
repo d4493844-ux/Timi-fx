@@ -2502,47 +2502,49 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
     for (const trade of openTrades) {
       const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
 
-      // Find matching transaction — STRICT matching to prevent wrong assignment
-      // Strategy 1: exact purchase_time within 120 seconds (was 900 — too loose!)
-      const match = transactions.find((t: any) => {
-        const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
+      // Find matching transaction — match by contract_id first (exact)
+      // Then fall back to purchase_time (when WE placed the trade)
+      const tradeCid = (trade.patterns || "").match(/cid:(\d+)/)?.[1] || "";
+
+      const match = (tradeCid
+        ? transactions.find((t: any) => String(t.contract_id) === tradeCid)
+        : null
+      ) || transactions.find((t: any) => {
+        const pt = parseFloat(t.purchase_time || "0");
         return pt > 0 && Math.abs(pt - tradeTimeSec) < 120;
       }) || transactions.find((t: any) => {
-        const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
+        const pt = parseFloat(t.purchase_time || "0");
         const buyPrice = parseFloat(t.buy_price || t.amount || "0");
         return Math.abs(buyPrice - (trade.stake || 0)) < 0.5 && Math.abs(pt - tradeTimeSec) < 1800;
       });
 
       if (match) {
         let pnl = 0;
-        // Extract PnL correctly — Deriv uses different fields per contract type
-        if (match.pnl != null && match.pnl !== "") {
-          pnl = parseFloat(match.pnl);
-        } else if (match.profit != null && match.profit !== "") {
-          pnl = parseFloat(match.profit);
-        } else if (match.sell_price != null && match.buy_price != null) {
-          // sell_price = what we received, buy_price = what we paid
-          pnl = parseFloat(match.sell_price) - parseFloat(match.buy_price);
-        }
+        // Deriv profit_table NEVER sends pnl field — always null
+        // Must calculate from sell_price - buy_price
+        const sellPrice = parseFloat(match.sell_price || "0");
+        const buyPrice  = parseFloat(match.buy_price  || "0");
 
-        // Validate PnL is real — reject if suspiciously large or zero match
-        const stakeVal = parseFloat(trade.stake || "1");
-        if (Math.abs(pnl) > stakeVal * 300) {
-          console.log(`⚠️ Suspicious PnL $${pnl} for stake $${stakeVal} — skipping`);
-          continue; // don't update with wrong data
-        }
-
-        // Double-check: if pnl=0 and contract shows sell_price>0, recalculate
-        if (pnl === 0 && match.sell_price) {
-          pnl = parseFloat(match.sell_price) - parseFloat(match.buy_price || "0");
-        }
-
-        // pnl=0 means bad match — skip this trade, don't corrupt AI Brain
-        if (pnl === 0 || Math.abs(pnl) < 0.01) {
-          console.log(`⚠️ pnl=0 for ${trade.symbol} — bad match, skipping`);
+        if (sellPrice === 0 || buyPrice === 0) {
+          console.log(`⚠️ Missing prices for ${trade.symbol} — skipping`);
           continue;
         }
+
+        pnl = sellPrice - buyPrice;
+
+        // Validate — pnl must be non-zero and within stake range
+        const stakeVal = parseFloat(trade.stake || "1");
+        if (Math.abs(pnl) < 0.01) {
+          console.log(`⚠️ pnl too small for ${trade.symbol} — skipping`);
+          continue;
+        }
+        if (Math.abs(pnl) > stakeVal * 1.5) {
+          console.log(`⚠️ pnl $${pnl} > stake $${stakeVal} — skipping`);
+          continue;
+        }
+
         const result = pnl > 0 ? "win" : "loss";
+        console.log(`📊 ${trade.symbol}: buy=$${buyPrice} sell=$${sellPrice} pnl=$${pnl.toFixed(2)} → ${result}`);
         await supabase.from("trades")
           .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
           .eq("id", trade.id);
