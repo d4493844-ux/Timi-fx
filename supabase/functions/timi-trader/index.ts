@@ -1907,7 +1907,7 @@ function getTradingSession(): { active: boolean; name: string } {
 async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65, dynMultiplier: number = 100, fptTpPct: number = 0, fptSlPct: number = 0) {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 25000);
+    const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 15000);
     let authed = false;
     let contractId: number | null = null;
 
@@ -2453,7 +2453,7 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
     // Connect ONCE to Deriv
     await new Promise<void>((resolve) => {
       const ws  = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const tmo = setTimeout(() => { ws.close(); resolve(); }, 30000);
+      const tmo = setTimeout(() => { ws.close(); resolve(); }, 12000);
       let authed   = false;
       let pending  = 0;
       let done     = false;
@@ -2602,7 +2602,7 @@ Deno.serve(async (req) => {
   try {
     const realBalance = await new Promise<number>((resolve) => {
       const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const t = setTimeout(() => { ws.close(); resolve(balance); }, 8000);
+      const t = setTimeout(() => { ws.close(); resolve(balance); }, 4000);
       ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
       ws.onmessage = (e) => {
         const d = JSON.parse(e.data);
