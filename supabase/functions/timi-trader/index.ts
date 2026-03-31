@@ -3538,6 +3538,71 @@ Deno.serve(async (req) => {
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
   const success = result && !result.error;
+
+  // ── IMMEDIATE RESULT SUBSCRIPTION ──
+  // Subscribe to contract updates RIGHT AFTER placing
+  // This catches the result within seconds of closing
+  // Does NOT wait for next 5-min cycle
+  if (success && result?.contract_id) {
+    const cid = result.contract_id;
+    // Fire and forget — don't await to avoid timeout
+    (async () => {
+      try {
+        await new Promise<void>((resolve) => {
+          const ws  = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+          // Max 55 seconds (just under Supabase 60s limit)
+          const tmo = setTimeout(() => { ws.close(); resolve(); }, 55000);
+          let authed = false;
+
+          ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+          ws.onmessage = async (e: any) => {
+            const d = JSON.parse(e.data);
+            if (d.authorize && !authed) {
+              authed = true;
+              // Subscribe to this specific contract updates
+              ws.send(JSON.stringify({
+                proposal_open_contract: 1,
+                contract_id: cid,
+                subscribe: 1
+              }));
+            }
+            if (d.proposal_open_contract) {
+              const c = d.proposal_open_contract;
+              // Contract closed!
+              if (c.is_sold === 1 || c.status === "sold") {
+                clearTimeout(tmo);
+                ws.close();
+                const buyPrice  = parseFloat(c.buy_price  || "0");
+                const sellPrice = parseFloat(c.sell_price || "0");
+                const pnl       = sellPrice - buyPrice;
+                if (Math.abs(pnl) >= 0.01) {
+                  const res = pnl > 0 ? "win" : "loss";
+                  // Update immediately
+                  await supabase.from("trades")
+                    .update({ result: res, pnl: parseFloat(pnl.toFixed(4)) })
+                    .eq("account_name","edge_function")
+                    .like("patterns", `%cid:${cid}%`);
+                  console.log(`⚡ INSTANT: ${best.symbol} ${res} pnl=$${pnl.toFixed(2)} (contract closed)`);
+                  // RL learns immediately
+                  await rlLearnFromTrade(supabase, {
+                    symbol: best.symbol, action: best.action,
+                    result: res, pnl: parseFloat(pnl.toFixed(4)),
+                    stake, confidence: best.confidence,
+                    regime: best.regime || "Ranging",
+                  });
+                }
+                resolve();
+              }
+            }
+            if (d.error) { clearTimeout(tmo); ws.close(); resolve(); }
+          };
+          ws.onerror = () => { clearTimeout(tmo); resolve(); };
+        });
+      } catch(e) {
+        console.log(`⚠️ Instant updater: ${e}`);
+      }
+    })();
+  }
   
   // If trade errored due to TP/SL rejection — mark as error not loss
   // AI Brain should NOT learn from placement errors
