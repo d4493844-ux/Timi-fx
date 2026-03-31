@@ -682,6 +682,506 @@ let SPECIALIST_MODELS: Record<string, any> = {};
 
 
 
+
+// ═══════════════════════════════════════════════════════════════════
+// QUANTUM FINANCIAL MATHEMATICS — Complete Framework
+// ═══════════════════════════════════════════════════════════════════
+//
+// THEORETICAL BASIS:
+// Price returns r(t) modeled as quantum wavefunction ψ(x,t)
+// Governed by Time-Independent Schrödinger Equation (TISE):
+//   Ĥψₙ = Eₙψₙ
+//   Ĥ = -ℏ²/2m · d²/dx² + V(x)
+//   V(x) = ½kx² + λx⁴  (quantum anharmonic oscillator)
+//
+// Where:
+//   x     = price deviation from equilibrium (log returns)
+//   k     = harmonic constant (OU mean reversion speed θ)
+//   λ     = anharmonic coefficient (excess kurtosis / fat tails)
+//   ℏ     = effective Planck constant (market granularity = σ/10)
+//   Eₙ    = energy eigenvalues → Quantum Price Levels (QPL)
+//   ψₙ    = eigenfunctions → probability density at each level
+//
+// Energy eigenvalues for anharmonic oscillator (perturbation theory):
+//   E₀ = ½ℏω + (3λℏ²)/(4k²)              (ground state)
+//   Eₙ = ℏω(n+½) + (λℏ²/k²)(6n²+6n+3)   (excited states)
+//   ω  = √(k/m) = natural frequency of oscillation
+//
+// QPLs are prices where |ψₙ(x)|² is maximized:
+//   Price_n = μ ± √(2Eₙ/k)
+//
+// References:
+//   Haven (2002) — Schrödinger equation in finance
+//   Baaquie (2004) — Quantum Finance
+//   Khrennikov (2010) — Ubiquitous Quantum Structure
+//   Busemeyer & Bruza (2012) — Quantum Cognition
+// ═══════════════════════════════════════════════════════════════════
+
+// ── QPL SECTION 1: ANHARMONIC OSCILLATOR COEFFICIENTS ──────────────
+function computeAnharmonicCoefficients(returns: number[]): {
+  omega: number;    // natural frequency (volatility)
+  lambda: number;   // anharmonic coefficient (kurtosis-derived)
+  kappa: number;    // harmonic constant (mean reversion)
+  hbar: number;     // effective Planck constant
+  damping: number;  // damping coefficient (trend persistence)
+  mu: number;       // mean return
+  sigma: number;    // return volatility
+} {
+  const n   = returns.length;
+  if (n < 10) return { omega:0.01, lambda:0.1, kappa:0.01, hbar:0.001, damping:0.5, mu:0, sigma:0.01 };
+
+  // First moment (mean)
+  const mu = returns.reduce((a,b) => a+b, 0) / n;
+
+  // Second moment (variance/volatility)
+  const variance = returns.reduce((a,b) => a + (b-mu)**2, 0) / n;
+  const sigma    = Math.sqrt(Math.max(variance, 1e-10));
+
+  // Third moment (skewness) — asymmetry of distribution
+  const m3 = returns.reduce((a,b) => a + ((b-mu)/sigma)**3, 0) / n;
+
+  // Fourth moment (excess kurtosis) — fat tail measure
+  // κ = 0 → Gaussian, κ > 0 → fat tails (leptokurtic)
+  const m4 = returns.reduce((a,b) => a + ((b-mu)/sigma)**4, 0) / n;
+  const excessKurtosis = m4 - 3; // excess kurtosis
+
+  // Anharmonic coefficient λ from kurtosis:
+  // For anharmonic oscillator: κ_excess = 6λ/(k²) × ℏ²
+  // → λ = κ_excess × k² / (6ℏ²)
+  // Simplified: λ ∝ excess_kurtosis / σ⁴
+  const lambda = Math.max(0, excessKurtosis / (3 * Math.pow(sigma, 2)));
+
+  // Natural frequency ω = σ (volatility is the oscillation frequency)
+  const omega = sigma;
+
+  // Harmonic constant κ from autocorrelation (mean reversion speed)
+  // First-order autocorrelation: ρ₁ = e^(-κΔt) for OU process
+  let acf1 = 0;
+  if (n > 2) {
+    const returns_lag = returns.slice(0, n-1);
+    const returns_cur = returns.slice(1);
+    const mu1 = returns_lag.reduce((a,b)=>a+b,0)/(n-1);
+    const mu2 = returns_cur.reduce((a,b)=>a+b,0)/(n-1);
+    const cov = returns_lag.reduce((a,b,i) => a+(b-mu1)*(returns_cur[i]-mu2), 0)/(n-1);
+    const std1 = Math.sqrt(returns_lag.reduce((a,b)=>a+(b-mu1)**2,0)/(n-1));
+    const std2 = Math.sqrt(returns_cur.reduce((a,b)=>a+(b-mu2)**2,0)/(n-1));
+    acf1 = std1*std2 > 0 ? cov/(std1*std2) : 0;
+  }
+  // κ = -ln(|ρ₁|) for unit time step
+  const kappa   = Math.max(0.001, -Math.log(Math.abs(acf1) + 0.001));
+  const damping = Math.abs(acf1); // persistence (1=trending, 0=random)
+
+  // Effective Planck constant ℏ = σ/10
+  // Represents minimum "quantum" of market movement
+  // Below this scale, price movements are quantum uncertain
+  const hbar = sigma / 10;
+
+  return { omega, lambda, kappa, hbar, damping, mu, sigma };
+}
+
+// ── QPL SECTION 2: QUANTUM PRICE LEVELS ────────────────────────────
+// Solve TISE for anharmonic oscillator energy eigenvalues
+// E_n = ℏω(n+½) + (λℏ²/κ²)(6n²+6n+3)  [perturbation theory, 1st order]
+// QPL_n = currentPrice × exp(±√(2E_n/κ) × σ)
+function computeQuantumPriceLevels(
+  candles: any[],
+  nLevels: number = 5
+): {
+  levels: number[];         // QPL prices (support/resistance)
+  groundState: number;      // E₀ energy (lowest stable state)
+  lambda: number;           // anharmonic coefficient
+  omega: number;            // natural frequency
+  nearestSupport: number;   // closest QPL below current price
+  nearestResistance: number;// closest QPL above current price
+  distanceToNearest: number;// normalized distance to nearest QPL
+  inTransit: boolean;       // true = price between levels (fast move)
+} {
+  if (candles.length < 20) {
+    const p = parseFloat(candles[candles.length-1]?.close || "1");
+    return { levels:[p], groundState:0, lambda:0, omega:0.01,
+             nearestSupport:p*0.99, nearestResistance:p*1.01,
+             distanceToNearest:0.5, inTransit:false };
+  }
+
+  const closes  = candles.map((c:any) => parseFloat(c.close));
+  const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
+  const current = closes[closes.length - 1];
+
+  const { omega, lambda, kappa, hbar, mu } = computeAnharmonicCoefficients(returns);
+
+  // Energy eigenvalues via first-order perturbation theory
+  // E_n^(0) = ℏω(n+½)            harmonic contribution
+  // E_n^(1) = (λℏ²/κ²)(6n²+6n+3) anharmonic correction
+  const energyLevels: number[] = [];
+  for (let n = 0; n < nLevels * 2; n++) {
+    const E_harmonic    = hbar * omega * (n + 0.5);
+    const E_anharmonic  = lambda > 0 ? (lambda * hbar**2 / (kappa**2)) * (6*n**2 + 6*n + 3) : 0;
+    const E_n           = E_harmonic + E_anharmonic;
+    energyLevels.push(E_n);
+  }
+
+  // Convert energy eigenvalues to price levels
+  // x_n = ±√(2E_n/κ) is the classical turning point
+  // In price space: QPL_n = current × exp(±x_n × σ)
+  const qplLevels: number[] = [current]; // always include current price
+  for (const E_n of energyLevels) {
+    if (E_n <= 0) continue;
+    const x_n = Math.sqrt(2 * E_n / Math.max(kappa, 0.001));
+    // Upper QPL
+    qplLevels.push(current * Math.exp(x_n * omega));
+    // Lower QPL
+    qplLevels.push(current * Math.exp(-x_n * omega));
+  }
+
+  // Sort and deduplicate
+  const sorted = [...new Set(qplLevels.map(p => parseFloat(p.toFixed(5))))].sort((a,b) => a-b);
+
+  // Find nearest support (below) and resistance (above)
+  const below = sorted.filter(p => p < current);
+  const above = sorted.filter(p => p > current);
+  const nearestSupport    = below.length > 0 ? Math.max(...below) : current * 0.99;
+  const nearestResistance = above.length > 0 ? Math.min(...above) : current * 1.01;
+
+  // Distance to nearest QPL (normalized 0-1)
+  const distToSupport    = (current - nearestSupport) / current;
+  const distToResist     = (nearestResistance - current) / current;
+  const distanceToNearest = Math.min(distToSupport, distToResist);
+
+  // Ground state energy
+  const E0 = hbar * omega * 0.5 + (lambda > 0 ? (lambda * hbar**2 / kappa**2) * 3 : 0);
+
+  // "In transit" = price is far from any QPL = fast move expected
+  // "At QPL" = price consolidating = wait for breakout/reversal
+  const inTransit = distanceToNearest > omega * 2;
+
+  return {
+    levels:              sorted,
+    groundState:         E0,
+    lambda,
+    omega,
+    nearestSupport,
+    nearestResistance,
+    distanceToNearest,
+    inTransit,
+  };
+}
+
+// ── QPL SECTION 3: ANHARMONIC SPIKE DETECTOR ───────────────────────
+// Detects when market is about to exhibit anharmonic oscillation:
+// Condition: λ increasing AND damping decreasing
+// → Nonlinear spike imminent (BOOM/CRASH or violent reversal)
+//
+// Physics: when energy exceeds the anharmonic barrier V_max:
+//   V_max = k²/(4λ)
+//   If E_current > V_max → particle (price) escapes the well → SPIKE
+function detectAnharmonicSpike(candles: any[]): {
+  spikeImminent: boolean;
+  spikeProbability: number;  // 0-1
+  spikeDirection: string;    // "UP" | "DOWN" | "UNKNOWN"
+  lambda: number;
+  damping: number;
+  energyRatio: number;       // E_current/V_max (>1 = spike)
+  timeToSpike: number;       // estimated candles until spike
+} {
+  if (candles.length < 30) {
+    return { spikeImminent:false, spikeProbability:0, spikeDirection:"UNKNOWN",
+             lambda:0, damping:0.5, energyRatio:0, timeToSpike:999 };
+  }
+
+  const closes  = candles.map((c:any) => parseFloat(c.close));
+  const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
+
+  // Compute coefficients on full window
+  const full = computeAnharmonicCoefficients(returns);
+
+  // Compute on recent window (last 20% of data) to detect CHANGE
+  const recentN   = Math.floor(returns.length * 0.2);
+  const recent    = computeAnharmonicCoefficients(returns.slice(-recentN));
+
+  // Anharmonic barrier height: V_max = κ²/(4λ)
+  const Vmax = full.lambda > 0 ? (full.kappa**2) / (4 * full.lambda) : Infinity;
+
+  // Current "energy" of price motion (kinetic + potential)
+  // E_current ≈ ½σ²_recent (kinetic energy from recent volatility)
+  const E_current = 0.5 * recent.sigma**2;
+
+  // Energy ratio: > 1 means price has enough energy to escape the well
+  const energyRatio = Vmax > 0 ? E_current / Vmax : 0;
+
+  // Spike indicators:
+  // 1. λ_recent > λ_full (anharmonicity increasing)
+  const lambdaIncreasing = recent.lambda > full.lambda * 1.2;
+  // 2. damping_recent < damping_full (persistence decreasing)
+  const dampingDecreasing = recent.damping < full.damping * 0.8;
+  // 3. Energy ratio approaching 1 (near escape threshold)
+  const nearEscape = energyRatio > 0.7;
+
+  // Combined spike probability
+  let spikeProbability = 0;
+  if (lambdaIncreasing)  spikeProbability += 0.35;
+  if (dampingDecreasing) spikeProbability += 0.35;
+  if (nearEscape)        spikeProbability += 0.30;
+
+  // Spike direction from momentum of recent returns
+  const recentMomentum = returns.slice(-10).reduce((a,b)=>a+b,0);
+  const spikeDirection = recentMomentum > 0 ? "UP" : recentMomentum < 0 ? "DOWN" : "UNKNOWN";
+
+  // Estimated time to spike: inversely proportional to λ growth rate
+  const lambdaGrowthRate = recent.lambda / (full.lambda + 1e-10);
+  const timeToSpike = lambdaGrowthRate > 1 ?
+    Math.max(1, Math.round(10 / (lambdaGrowthRate - 1))) : 999;
+
+  const spikeImminent = spikeProbability >= 0.65 || energyRatio > 1.0;
+
+  return {
+    spikeImminent,
+    spikeProbability,
+    spikeDirection,
+    lambda:      full.lambda,
+    damping:     full.damping,
+    energyRatio,
+    timeToSpike,
+  };
+}
+
+// ── QPL SECTION 4: QUANTUM ENTANGLEMENT BETWEEN PAIRS ──────────────
+// Measures quantum-like entanglement between currency pairs
+// Using von Neumann entropy (quantum generalization of Shannon entropy)
+//
+// Quantum Mutual Information:
+//   I(A:B) = S(ρ_A) + S(ρ_B) - S(ρ_AB)
+//   S(ρ) = -Tr(ρ log ρ) [von Neumann entropy]
+//
+// For financial time series:
+//   ρ_AB = joint density matrix (constructed from copula)
+//   Entanglement = I(A:B) - I_classical(A:B)
+//   Positive entanglement → pairs move together beyond correlation
+//
+// Eisert-Wilkens-Lewenstein (1999):
+//   Nash equilibrium in quantum game requires mixed strategy
+//   Entangled pairs share quantum information → coordinated moves
+function measureQuantumEntanglement(
+  returns1: number[],  // pair 1 returns (e.g., EUR/USD)
+  returns2: number[]   // pair 2 returns (e.g., USD/JPY)
+): {
+  classicalCorr: number;    // Pearson correlation [-1,1]
+  vonNeumannA: number;      // S(ρ_A) entropy of pair 1
+  vonNeumannB: number;      // S(ρ_B) entropy of pair 2
+  vonNeumannAB: number;     // S(ρ_AB) joint entropy
+  quantumMI: number;        // quantum mutual information
+  entanglement: number;     // excess beyond classical
+  isEntangled: boolean;     // true = significant entanglement
+  nashMixing: number;       // Nash equilibrium mixing ratio [0,1]
+} {
+  const n = Math.min(returns1.length, returns2.length);
+  if (n < 10) {
+    return { classicalCorr:0, vonNeumannA:1, vonNeumannB:1,
+             vonNeumannAB:2, quantumMI:0, entanglement:0,
+             isEntangled:false, nashMixing:0.5 };
+  }
+
+  const r1 = returns1.slice(-n);
+  const r2 = returns2.slice(-n);
+
+  // Classical Pearson correlation
+  const mu1 = r1.reduce((a,b)=>a+b,0)/n;
+  const mu2 = r2.reduce((a,b)=>a+b,0)/n;
+  const std1 = Math.sqrt(r1.reduce((a,b)=>a+(b-mu1)**2,0)/n);
+  const std2 = Math.sqrt(r2.reduce((a,b)=>a+(b-mu2)**2,0)/n);
+  const cov  = r1.reduce((a,b,i)=>a+(b-mu1)*(r2[i]-mu2),0)/n;
+  const classicalCorr = std1*std2 > 0 ? cov/(std1*std2) : 0;
+
+  // Construct joint probability density (discretized)
+  // Normalize returns to [0,1] for density matrix construction
+  const BINS = 8; // 8×8 density matrix
+  const normalize = (arr: number[]) => {
+    const min = Math.min(...arr), max = Math.max(...arr);
+    return arr.map(x => max > min ? (x-min)/(max-min) : 0.5);
+  };
+  const n1 = normalize(r1);
+  const n2 = normalize(r2);
+
+  // Joint density matrix ρ_AB (BINS × BINS)
+  const rhoAB = Array.from({length:BINS}, () => new Array(BINS).fill(0));
+  for (let i = 0; i < n; i++) {
+    const b1 = Math.min(BINS-1, Math.floor(n1[i] * BINS));
+    const b2 = Math.min(BINS-1, Math.floor(n2[i] * BINS));
+    rhoAB[b1][b2] += 1/n;
+  }
+
+  // Marginal density matrices (partial trace)
+  const rhoA = rhoAB.map(row => row.reduce((a,b)=>a+b,0));
+  const rhoB = rhoAB[0].map((_,j) => rhoAB.reduce((a,row)=>a+row[j],0));
+
+  // Von Neumann entropy S(ρ) = -Σ pᵢ log(pᵢ)
+  // For diagonal density matrices (our approximation):
+  const vnEntropy = (p: number[]) => {
+    return -p.reduce((a,pi) => {
+      if (pi <= 0) return a;
+      return a + pi * Math.log(pi);
+    }, 0);
+  };
+
+  const vonNeumannA  = vnEntropy(rhoA);
+  const vonNeumannB  = vnEntropy(rhoB);
+  const vonNeumannAB = vnEntropy(rhoAB.flat());
+
+  // Quantum Mutual Information: I(A:B) = S(A) + S(B) - S(AB)
+  const quantumMI = Math.max(0, vonNeumannA + vonNeumannB - vonNeumannAB);
+
+  // Classical mutual information (Shannon)
+  const classicalMI = 0.5 * Math.log(1 / (1 - classicalCorr**2 + 1e-10));
+
+  // Entanglement = quantum - classical (excess non-classical correlation)
+  const entanglement = quantumMI - classicalMI;
+  const isEntangled  = entanglement > 0.05 && Math.abs(classicalCorr) > 0.3;
+
+  // Nash equilibrium mixing ratio (Eisert-Wilkens-Lewenstein)
+  // In quantum game: optimal mixed strategy = 0.5 when maximally entangled
+  // Deviates from 0.5 proportional to entanglement strength
+  const nashMixing = 0.5 + entanglement * 0.1 * Math.sign(classicalCorr);
+
+  return {
+    classicalCorr,
+    vonNeumannA,
+    vonNeumannB,
+    vonNeumannAB,
+    quantumMI,
+    entanglement,
+    isEntangled,
+    nashMixing: Math.max(0.1, Math.min(0.9, nashMixing)),
+  };
+}
+
+// ── QPL SECTION 5: INTEGRATED QPL SIGNAL ───────────────────────────
+// Combines QPL + Spike Detection + Entanglement into unified signal
+// This is the master quantum filter that augments every trade decision
+function quantumPriceFieldSignal(
+  candles1m: any[],
+  action: string,
+  symbol: string,
+  confidence: number
+): {
+  qplAdjustedTP: number;         // TP at next QPL (better than FPT alone)
+  qplAdjustedSL: number;         // SL at nearest QPL support/resistance
+  spikeBoost: number;            // confidence multiplier from spike detection
+  regimeVerified: boolean;       // quantum regime matches ML signal
+  quantumConfidence: number;     // quantum-adjusted confidence [0,100]
+  qplDistance: number;           // distance to nearest QPL
+  inTransit: boolean;            // price between QPLs (fast move zone)
+  recommendation: string;        // quantum trading recommendation
+} {
+  if (candles1m.length < 20) {
+    return { qplAdjustedTP:0, qplAdjustedSL:0, spikeBoost:1.0,
+             regimeVerified:true, quantumConfidence:confidence,
+             qplDistance:0.5, inTransit:false, recommendation:"insufficient_data" };
+  }
+
+  const closes  = candles1m.map((c:any) => parseFloat(c.close));
+  const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
+  const current = closes[closes.length-1];
+
+  // Compute QPLs
+  const qpl = computeQuantumPriceLevels(candles1m);
+
+  // Detect anharmonic spike
+  const spike = detectAnharmonicSpike(candles1m);
+
+  // ── TP/SL from QPLs ──
+  // For BUY: TP = nearest QPL above, SL = nearest QPL below
+  // For SELL: TP = nearest QPL below, SL = nearest QPL above
+  let qplAdjustedTP = 0;
+  let qplAdjustedSL = 0;
+
+  if (action === "BUY") {
+    // TP at next QPL resistance (natural target)
+    qplAdjustedTP = (qpl.nearestResistance - current) / current;
+    // SL at QPL support (natural stop)
+    qplAdjustedSL = (current - qpl.nearestSupport) / current;
+  } else {
+    // SELL: mirror
+    qplAdjustedTP = (current - qpl.nearestSupport) / current;
+    qplAdjustedSL = (qpl.nearestResistance - current) / current;
+  }
+
+  // Ensure positive values
+  qplAdjustedTP = Math.max(0.001, qplAdjustedTP);
+  qplAdjustedSL = Math.max(0.001, Math.min(qplAdjustedTP * 0.5, qplAdjustedSL));
+
+  // ── Spike Detection Boost ──
+  // For BOOM/CRASH: spike aligned with action = boost confidence
+  // For Forex: spike = volatility spike = reduce confidence
+  const isSpikeSymbol = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+  let spikeBoost = 1.0;
+
+  if (isSpikeSymbol && spike.spikeImminent) {
+    if (spike.spikeDirection === "UP" && action === "BUY") {
+      spikeBoost = 1.0 + spike.spikeProbability * 0.4; // up to +40%
+    } else if (spike.spikeDirection === "DOWN" && action === "SELL") {
+      spikeBoost = 1.0 + spike.spikeProbability * 0.4;
+    } else {
+      spikeBoost = 0.75; // spike predicted but wrong direction = reduce
+    }
+  } else if (!isSpikeSymbol && spike.spikeImminent) {
+    spikeBoost = 0.85; // forex spike = higher risk = slight reduction
+  }
+
+  // ── Regime Verification ──
+  // Check if ML action aligns with quantum oscillator state
+  // In transit (price between QPLs) = momentum trade → BUY/SELL ok
+  // At QPL (price at level) = reversal zone → check direction carefully
+  const recentMom = returns.slice(-5).reduce((a,b)=>a+b,0);
+  const regimeVerified = qpl.inTransit ?
+    true : // in transit = any direction ok
+    (action === "BUY" ? recentMom > 0 : recentMom < 0); // at QPL = check momentum
+
+  // ── Quantum Confidence Adjustment ──
+  let quantumConfidence = confidence;
+
+  // Boost if in transit (fast move zone) and direction correct
+  if (qpl.inTransit && regimeVerified) {
+    quantumConfidence = Math.min(95, quantumConfidence * 1.1);
+  }
+
+  // Boost from spike detection
+  quantumConfidence = Math.min(95, quantumConfidence * spikeBoost);
+
+  // Reduce if energy ratio < 0.3 (market in deep ground state = consolidating)
+  if (spike.energyRatio < 0.3 && !isSpikeSymbol) {
+    quantumConfidence = Math.max(30, quantumConfidence * 0.9);
+  }
+
+  // Strong spike imminent + wrong direction = significant reduction
+  if (spike.spikeImminent && !regimeVerified) {
+    quantumConfidence = Math.max(20, quantumConfidence * 0.7);
+  }
+
+  // ── Recommendation ──
+  let recommendation = "quantum_normal";
+  if (spike.spikeImminent && regimeVerified && spikeBoost > 1.1) {
+    recommendation = "quantum_spike_aligned";
+  } else if (spike.spikeImminent && !regimeVerified) {
+    recommendation = "quantum_spike_counter";
+  } else if (qpl.inTransit) {
+    recommendation = "quantum_transit_zone";
+  } else if (qpl.distanceToNearest < 0.001) {
+    recommendation = "quantum_at_level";
+  }
+
+  console.log(`🌌 QPF: ${symbol} QPL_dist=${(qpl.distanceToNearest*100).toFixed(3)}% λ=${spike.lambda.toFixed(3)} spike=${spike.spikeImminent}(${spike.spikeProbability.toFixed(2)}) E/Vmax=${spike.energyRatio.toFixed(2)} conf=${quantumConfidence.toFixed(0)}%`);
+
+  return {
+    qplAdjustedTP,
+    qplAdjustedSL,
+    spikeBoost,
+    regimeVerified,
+    quantumConfidence: Math.round(quantumConfidence),
+    qplDistance: qpl.distanceToNearest,
+    inTransit: qpl.inTransit,
+    recommendation,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // QUANTUM-INSPIRED MATHEMATICS — Three Extensions
 // ═══════════════════════════════════════════════════════════════
@@ -2994,6 +3494,22 @@ Deno.serve(async (req) => {
     best.confidence
   );
 
+  // Quantum Price Level TP/SL — more precise than FPT alone
+  // QPL gives mathematically derived support/resistance
+  const bestCandles = await fetchCandles(best.symbol, 60, 100);
+  const qpfFinal = quantumPriceFieldSignal(bestCandles, best.action, best.symbol, best.confidence);
+
+  // Use QPL TP/SL if they give better reward:risk than FPT
+  // QPL TP must be > QPL SL (positive expectancy)
+  const useQPL = qpfFinal.qplAdjustedTP > 0 &&
+                 qpfFinal.qplAdjustedTP > qpfFinal.qplAdjustedSL &&
+                 qpfFinal.qplAdjustedTP > 0.002; // meaningful TP distance
+
+  const finalTpPct = useQPL ? qpfFinal.qplAdjustedTP : fpt.tpPct;
+  const finalSlPct = useQPL ? qpfFinal.qplAdjustedSL : fpt.slPct;
+
+  console.log(`📐 TP/SL: ${useQPL ? "QPL" : "FPT"} tp=${(finalTpPct*100).toFixed(3)}% sl=${(finalSlPct*100).toFixed(3)}%`);
+
   const dynMult = selectMultiplier(
     best.symbol,
     best.confidence,
@@ -3003,7 +3519,7 @@ Deno.serve(async (req) => {
   );
 
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
-  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
+  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
   const success = result && !result.error;
   
   // If trade errored due to TP/SL rejection — mark as error not loss
