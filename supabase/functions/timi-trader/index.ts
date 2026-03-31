@@ -3411,6 +3411,23 @@ Deno.serve(async (req) => {
                             : bayesian.winProb >= 0.62 ? 2
                             : 0;
 
+        // ── QUANTUM PRICE FIELD SIGNAL ──
+        // Schrödinger equation QPLs + Anharmonic spike detector
+        const qpf = quantumPriceFieldSignal(c1m, sig.action, symbol, sig.confidence);
+        // Apply quantum confidence adjustment
+        if (qpf.quantumConfidence !== sig.confidence) {
+          sig = { ...sig, confidence: qpf.quantumConfidence };
+        }
+        // Skip if quantum regime unverified and low confidence
+        if (!qpf.regimeVerified && sig.confidence < 75) {
+          scanLog.push(`${symbol}: QPF_unverified (${qpf.recommendation})`);
+          continue;
+        }
+        // Log spike alignment for BOOM/CRASH
+        if (qpf.spikeBoost > 1.1) {
+          scanLog.push(`${symbol}: QPF_spike_boost=${qpf.spikeBoost.toFixed(2)} λ=${qpf.qplDistance.toFixed(4)}`);
+        }
+
         // ── STEP 7: AI Brain — check loss patterns ──
         const fingerprint = buildMarketFingerprint(features, symbol, sig.action, regime.name, session.name);
         const brainCheck  = await checkAIBrainPatterns(supabase, fingerprint, symbol, sig.action);
