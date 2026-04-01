@@ -3384,7 +3384,9 @@ Deno.serve(async (req) => {
         // Exception: weak trends allow both directions if confidence is very high
         if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
            regime.name !== "WeakUptrend" && regime.name !== "WeakDowntrend") {
-          if (sig.action !== regime.allowedAction) {
+          // BOOM/CRASH bypass — direction already corrected above
+          const isSpike = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+          if (!isSpike && sig.action !== regime.allowedAction) {
             scanLog.push(`${symbol}: HMM_direction_blocked — regime says ${regime.allowedAction} but ML says ${sig.action}`);
             continue;
           }
