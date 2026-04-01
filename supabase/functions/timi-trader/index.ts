@@ -3312,6 +3312,19 @@ Deno.serve(async (req) => {
           scanLog.push(`${symbol}: ML→HOLD (${sig.reason})`); continue;
         }
 
+        // ── BOOM/CRASH DIRECTION CORRECTION ──
+        // BOOM synthetics trend UPWARD — only BUY makes sense
+        // CRASH synthetics trend DOWNWARD — only SELL makes sense
+        // ML sometimes predicts wrong direction — force correct
+        if (symbol.startsWith("BOOM") && sig.action === "SELL") {
+          sig = { ...sig, action: "BUY" };
+          scanLog.push(`${symbol}: direction_corrected SELL→BUY (BOOM trends up)`);
+        }
+        if (symbol.startsWith("CRASH") && sig.action === "BUY") {
+          sig = { ...sig, action: "SELL" };
+          scanLog.push(`${symbol}: direction_corrected BUY→SELL (CRASH trends down)`);
+        }
+
         // ── RL AGENT CHECK ──
         // Load recent trades for RL context
         const { data: rlRecentTrades } = await supabase
