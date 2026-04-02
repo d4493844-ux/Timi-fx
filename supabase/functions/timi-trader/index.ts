@@ -2482,8 +2482,8 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         const tp = (ws as any)._tp;
         const sl = (ws as any)._sl;
         const adjStake = (ws as any)._adjStake;
-        if (tp && sl) {
-          ws.send(JSON.stringify({ contract_update: 1, contract_id: contractId, limit_order: { take_profit: tp, stop_loss: sl } }));
+        if (tp && tp > 0) {
+          ws.send(JSON.stringify({ contract_update: 1, contract_id: contractId, limit_order: { take_profit: tp } }));
         } else {
           clearTimeout(timeout); ws.close(); resolve({ ...d.buy, stake_used: adjStake });
         }
