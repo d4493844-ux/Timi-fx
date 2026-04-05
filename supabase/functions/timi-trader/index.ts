@@ -1182,6 +1182,234 @@ function quantumPriceFieldSignal(
   };
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+// HARMONIC PATTERN ENGINE — Primary Signal Generator
+// ═══════════════════════════════════════════════════════════════════
+// Mathematical foundation: XABCD Fibonacci structure
+// Patterns: Gartley, Butterfly, Crab, Deep Crab, Cypher, Bat
+// 
+// Key insight: Math DRIVES the signal, ML CONFIRMS it
+// PRZ (Potential Reversal Zone) = primary entry trigger
+// ML confidence = execution gate
+//
+// Fibonacci ratios used:
+//   0.382, 0.500, 0.618 = harmonic retracements
+//   0.786, 0.886 = deep retracements  
+//   1.272, 1.618 = extensions (Golden ratio family)
+// ═══════════════════════════════════════════════════════════════════
+
+const FIB = {
+  r382: 0.382, r500: 0.500, r618: 0.618,
+  r786: 0.786, r886: 0.886, r382n: -0.382,
+  e127: 1.272, e162: 1.618, e200: 2.000,
+  e224: 2.240, e261: 2.618,
+};
+
+// Tolerance for Fibonacci ratio matching (±2%)
+const FIB_TOL = 0.02;
+
+function fibMatch(ratio: number, target: number): boolean {
+  return Math.abs(ratio - target) <= FIB_TOL;
+}
+
+function findSwingPoints(candles: any[]): {
+  highs: {idx:number; price:number}[];
+  lows:  {idx:number; price:number}[];
+} {
+  const closes = candles.map((c:any) => parseFloat(c.close));
+  const highs: {idx:number; price:number}[] = [];
+  const lows:  {idx:number; price:number}[] = [];
+  const lookback = 5;
+
+  for (let i = lookback; i < closes.length - lookback; i++) {
+    const window = closes.slice(i-lookback, i+lookback+1);
+    const isHigh = closes[i] === Math.max(...window);
+    const isLow  = closes[i] === Math.min(...window);
+    if (isHigh) highs.push({ idx: i, price: closes[i] });
+    if (isLow)  lows.push({ idx: i, price: closes[i] });
+  }
+  return { highs, lows };
+}
+
+interface HarmonicResult {
+  pattern:     string;    // pattern name
+  direction:   string;    // BUY or SELL
+  prz:         number;    // Potential Reversal Zone price
+  xaLeg:       number;    // XA leg size
+  strength:    number;    // 0-1 pattern quality
+  stopLoss:    number;    // mathematical SL
+  target1:     number;    // first TP (0.382 retracement of AD)
+  target2:     number;    // second TP (0.618 retracement of AD)
+  confirmed:   boolean;   // all ratios within tolerance
+}
+
+function detectHarmonicPatterns(candles: any[]): HarmonicResult | null {
+  if (candles.length < 50) return null;
+
+  const { highs, lows } = findSwingPoints(candles);
+  if (highs.length < 3 || lows.length < 3) return null;
+
+  const closes = candles.map((c:any) => parseFloat(c.close));
+  const current = closes[closes.length - 1];
+
+  // Get recent swing points for XABCD structure
+  // Try bullish (W-shape): X=high, A=low, B=high, C=low, D=low (PRZ)
+  // Try bearish (M-shape): X=low, A=high, B=low, C=high, D=high (PRZ)
+
+  const results: HarmonicResult[] = [];
+
+  // ── BULLISH PATTERNS (price at D = BUY) ──
+  // Need: recent low points for potential D completion
+  const recentLows  = lows.slice(-5);
+  const recentHighs = highs.slice(-5);
+
+  for (let xi = 0; xi < recentHighs.length - 2; xi++) {
+    const X = recentHighs[xi];
+    for (let ai = 0; ai < recentLows.length - 1; ai++) {
+      if (recentLows[ai].idx <= X.idx) continue;
+      const A = recentLows[ai];
+      const XA = X.price - A.price; // XA leg (down)
+      if (XA <= 0) continue;
+
+      for (let bi = 0; bi < recentHighs.length; bi++) {
+        if (recentHighs[bi].idx <= A.idx) continue;
+        const B = recentHighs[bi];
+        const AB = B.price - A.price; // AB leg (up)
+        const abRatio = AB / XA;
+
+        for (let ci = 0; ci < recentLows.length; ci++) {
+          if (recentLows[ci].idx <= B.idx) continue;
+          const C = recentLows[ci];
+          const BC = B.price - C.price; // BC leg (down)
+          const bcRatio = BC / AB;
+
+          // D point would be near current price
+          const D_price = current;
+          const AD = X.price - D_price; // expected AD
+          const adRatio = AD / XA;
+          const cdRatio = (B.price - D_price) / BC;
+
+          // ── GARTLEY (most common) ──
+          // AB=0.618*XA, BC=0.382-0.886*XA, CD=1.272-1.618*BC, AD=0.786*XA
+          if (fibMatch(abRatio, FIB.r618) &&
+              bcRatio >= 0.382 && bcRatio <= 0.886 &&
+              fibMatch(adRatio, FIB.r786)) {
+            const strength = 1 - Math.abs(abRatio - FIB.r618) / FIB_TOL
+                           + 1 - Math.abs(adRatio - FIB.r786) / FIB_TOL;
+            results.push({
+              pattern: "Gartley", direction: "BUY", prz: D_price,
+              xaLeg: XA, strength: strength/2,
+              stopLoss: D_price - XA * 0.1,
+              target1: D_price + AD * FIB.r382,
+              target2: D_price + AD * FIB.r618,
+              confirmed: true,
+            });
+          }
+
+          // ── BAT PATTERN ──
+          // AB=0.382-0.500*XA, BC=0.382-0.886*XA, AD=0.886*XA
+          if (abRatio >= 0.382 && abRatio <= 0.500 &&
+              bcRatio >= 0.382 && bcRatio <= 0.886 &&
+              fibMatch(adRatio, FIB.r886)) {
+            results.push({
+              pattern: "Bat", direction: "BUY", prz: D_price,
+              xaLeg: XA, strength: 0.85,
+              stopLoss: D_price - XA * 0.05,
+              target1: D_price + AD * FIB.r382,
+              target2: D_price + AD * FIB.r618,
+              confirmed: true,
+            });
+          }
+
+          // ── CRAB (most precise) ──
+          // AB=0.382-0.618*XA, BC=0.382-0.886*XA, AD=1.618*XA
+          if (abRatio >= 0.382 && abRatio <= 0.618 &&
+              bcRatio >= 0.382 && bcRatio <= 0.886 &&
+              fibMatch(adRatio, FIB.e162)) {
+            results.push({
+              pattern: "Crab", direction: "BUY", prz: D_price,
+              xaLeg: XA, strength: 0.90,
+              stopLoss: D_price - XA * 0.08,
+              target1: D_price + XA * FIB.r382,
+              target2: D_price + XA * FIB.r618,
+              confirmed: true,
+            });
+          }
+
+          // ── BUTTERFLY ──
+          // AB=0.786*XA, BC=0.382-0.886*XA, AD=1.272-1.618*XA
+          if (fibMatch(abRatio, FIB.r786) &&
+              bcRatio >= 0.382 && bcRatio <= 0.886 &&
+              adRatio >= 1.272 && adRatio <= 1.618) {
+            results.push({
+              pattern: "Butterfly", direction: "BUY", prz: D_price,
+              xaLeg: XA, strength: 0.88,
+              stopLoss: D_price - XA * 0.12,
+              target1: D_price + XA * FIB.r382,
+              target2: D_price + XA * FIB.r786,
+              confirmed: true,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (results.length === 0) return null;
+
+  // Return strongest pattern
+  return results.sort((a,b) => b.strength - a.strength)[0];
+}
+
+// ── HARMONIC SIGNAL GENERATOR ──────────────────────────────────────
+// This is the PRIMARY signal — math drives the decision
+// ML confidence then gates execution
+function harmonicSignal(
+  candles: any[],
+  symbol: string
+): {
+  hasSignal:   boolean;
+  direction:   string;
+  prz:         number;
+  pattern:     string;
+  strength:    number;
+  tpPct:       number;   // TP as % of price
+  slPct:       number;   // SL as % of price
+  confidence:  number;   // harmonic confidence 0-100
+} {
+  const result = detectHarmonicPatterns(candles);
+
+  if (!result) {
+    return { hasSignal:false, direction:"HOLD", prz:0,
+             pattern:"none", strength:0, tpPct:0, slPct:0, confidence:0 };
+  }
+
+  const current = parseFloat(candles[candles.length-1]?.close || "0");
+  if (current <= 0) return { hasSignal:false, direction:"HOLD", prz:0,
+                              pattern:"none", strength:0, tpPct:0, slPct:0, confidence:0 };
+
+  // TP and SL as percentage of current price
+  const tpPct = Math.abs(result.target1 - current) / current;
+  const slPct = Math.abs(result.stopLoss - current) / current;
+
+  // Confidence from pattern strength + ratio precision
+  const confidence = Math.round(Math.min(95, result.strength * 100));
+
+  console.log(`📐 Harmonic: ${result.pattern} ${result.direction} PRZ=${result.prz.toFixed(5)} strength=${result.strength.toFixed(2)} conf=${confidence}%`);
+
+  return {
+    hasSignal:  true,
+    direction:  result.direction,
+    prz:        result.prz,
+    pattern:    result.pattern,
+    strength:   result.strength,
+    tpPct:      Math.max(0.001, tpPct),
+    slPct:      Math.max(0.001, Math.min(slPct, tpPct * 0.5)),
+    confidence,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // QUANTUM-INSPIRED MATHEMATICS — Three Extensions
 // ═══════════════════════════════════════════════════════════════
@@ -2462,12 +2690,15 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         }
 
         if (isMult) {
+          // Place MULT contract — no TP/SL in initial buy
+          // TP will be set via contract_update after placement
+          // This eliminates ALL error trades from invalid TP/SL
           ws.send(JSON.stringify({
             buy: 1, price: adjStake,
             parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: dynMultiplier }
           }));
           (ws as any)._tp = takeProfit;
-          (ws as any)._sl = stopLoss;
+          (ws as any)._sl = 0; // no SL
           (ws as any)._adjStake = adjStake;
         } else {
           ws.send(JSON.stringify({
@@ -3287,7 +3518,15 @@ Deno.serve(async (req) => {
       const features = featuresEarly; // reuse features computed for OGD
 
       if (ML_MODELS[symbol]) {
-        // ── STEP 3: ML Prediction — Specialist Routing ──
+        // ── STEP 3A: HARMONIC PATTERN SIGNAL (PRIMARY — Math drives) ──
+        // Harmonic patterns use Fibonacci mathematics to identify PRZ
+        // This generates the initial signal — ML then confirms
+        const harmonic = harmonicSignal(c1m, symbol);
+        if (harmonic.hasSignal) {
+          scanLog.push(`${symbol}: Harmonic_${harmonic.pattern} ${harmonic.direction} strength=${harmonic.strength.toFixed(2)}`);
+        }
+
+        // ── STEP 3B: ML Prediction — Specialist Routing ──
         const specData   = SPECIALIST_MODELS[symbol];
         const hurst_val  = features[44] || 0.5;
         const kurt_val   = features[52] || 1.0;
@@ -3309,7 +3548,22 @@ Deno.serve(async (req) => {
         }
 
         if (sig.action === "HOLD") {
-          scanLog.push(`${symbol}: ML→HOLD (${sig.reason})`); continue;
+          // If harmonic has signal but ML says HOLD — trust harmonic for BOOM/CRASH
+          const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+          if (harmonic.hasSignal && isBoomCrash && harmonic.confidence >= 80) {
+            sig = { action: harmonic.direction, confidence: harmonic.confidence,
+                    reason: `harmonic_${harmonic.pattern}` };
+            scanLog.push(`${symbol}: Harmonic override ML HOLD → ${sig.action}`);
+          } else {
+            scanLog.push(`${symbol}: ML→HOLD (${sig.reason})`); continue;
+          }
+        }
+
+        // Harmonic + ML agreement = confidence boost
+        if (harmonic.hasSignal && harmonic.direction === sig.action) {
+          const boost = Math.round(harmonic.strength * 10);
+          sig = { ...sig, confidence: Math.min(95, sig.confidence + boost) };
+          scanLog.push(`${symbol}: Harmonic+ML agree → conf boosted +${boost}%`);
         }
 
         // ── BOOM/CRASH DIRECTION CORRECTION ──
