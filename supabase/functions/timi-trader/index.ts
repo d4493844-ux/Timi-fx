@@ -3181,134 +3181,78 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
 
     if (!openTrades || openTrades.length === 0) return;
 
-    // Connect ONCE to Deriv
-    await new Promise<void>((resolve) => {
+    // Get profit table from Deriv — guaranteed closed contracts only
+    const closed: any[] = await new Promise((resolve) => {
       const ws  = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const tmo = setTimeout(() => { ws.close(); resolve(); }, 12000);
-      let authed   = false;
-      let pending  = 0;
-      let done     = false;
-
-      const finish = () => {
-        if (!done) { done = true; clearTimeout(tmo); ws.close(); resolve(); }
-      };
+      const tmo = setTimeout(() => { ws.close(); resolve([]); }, 12000);
+      let authed = false;
 
       ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-
-      ws.onmessage = async (e: any) => {
+      ws.onmessage = (e: any) => {
         const d = JSON.parse(e.data);
-
         if (d.authorize && !authed) {
           authed = true;
-          // Request each contract by ID directly
-          for (const trade of openTrades) {
-            const cid = (trade.patterns||"").match(/cid:(\d+)/)?.[1]
-                     || "";
-            if (cid && cid !== "") {
-              pending++;
-              ws.send(JSON.stringify({
-                proposal_open_contract: 1,
-                contract_id: parseInt(cid)
-              }));
-            }
-          }
-          // If no contract IDs found, fall back to profit_table
-          if (pending === 0) {
-            ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
-          }
+          ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
         }
-
-        // Direct contract response
-        if (d.proposal_open_contract) {
-          const c = d.proposal_open_contract;
-          pending = Math.max(0, pending - 1);
-
-          // Only process if contract is SOLD (closed)
-          if (c.is_sold === 1) {
-            const buyPrice  = parseFloat(c.buy_price  || "0");
-            const sellPrice = parseFloat(c.sell_price || "0");
-            const pnl       = sellPrice - buyPrice;
-            const cid       = String(c.contract_id);
-
-            if (Math.abs(pnl) >= 0.01) {
-              // Find matching trade by contract_id
-              const trade = openTrades.find((t: any) =>
-                (t.patterns||"").includes(`cid:${cid}`) ||
-                t.contract_ref === cid
-              );
-              if (trade) {
-                const result = pnl > 0 ? "win" : "loss";
-                await supabase.from("trades")
-                  .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
-                  .eq("id", trade.id);
-                console.log(`✅ [direct] ${trade.symbol}: ${result} pnl=$${pnl.toFixed(2)}`);
-
-                await rlLearnFromTrade(supabase, {
-                  symbol: trade.symbol, action: trade.type||"BUY",
-                  result, pnl: parseFloat(pnl.toFixed(4)),
-                  stake: parseFloat(trade.stake||"1"),
-                  confidence: parseFloat(trade.confidence||"65"),
-                  regime: (trade.patterns||"").includes("Uptrend") ? "Uptrend" :
-                          (trade.patterns||"").includes("Downtrend") ? "Downtrend" :
-                          (trade.patterns||"").includes("HighVol") ? "HighVolatility" : "Ranging",
-                });
-              }
-            }
-          }
-          if (pending === 0) finish();
-        }
-
-        // Profit table fallback (for trades without contract_id)
         if (d.profit_table) {
-          const settled = (d.profit_table.transactions||[]).filter((t: any) => {
+          clearTimeout(tmo); ws.close();
+          // Only settled contracts: sell_price exists and differs from buy_price
+          resolve((d.profit_table.transactions || []).filter((t: any) => {
             const buy  = parseFloat(t.buy_price  || "0");
             const sell = parseFloat(t.sell_price || "0");
-            // ONLY settled = sell price DIFFERENT from buy price
             return buy > 0 && sell > 0 && Math.abs(sell - buy) > 0.01 && t.sell_time;
-          });
-          console.log(`📊 Profit table settled: ${settled.length}`);
-
-          for (const trade of openTrades) {
-            const cid = (trade.patterns||"").match(/cid:(\d+)/)?.[1] || "";
-            if (cid) continue; // already handled by direct check
-
-            // Match ONLY by contract_id in profit_table — no timestamp
-            const match = settled.find((t: any) => String(t.contract_id) === cid);
-            if (!match) continue;
-
-            const buyPrice  = parseFloat(match.buy_price  || "0");
-            const sellPrice = parseFloat(match.sell_price || "0");
-            const pnl       = sellPrice - buyPrice;
-            if (Math.abs(pnl) < 0.01) continue;
-
-            const result = pnl > 0 ? "win" : "loss";
-            await supabase.from("trades")
-              .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
-              .eq("id", trade.id);
-            console.log(`✅ [table] ${trade.symbol}: ${result} pnl=$${pnl.toFixed(2)}`);
-          }
-          finish();
+          }));
         }
-
-        // Mark old unmatched trades as expired
-        if (d.proposal_open_contract && pending === 0) {
-          const twoHrsAgo = new Date(Date.now() - 2*60*60*1000).toISOString();
-          for (const trade of openTrades) {
-            if (trade.created_at < twoHrsAgo) {
-              await supabase.from("trades")
-                .update({result:"expired"}).eq("id",trade.id);
-            }
-          }
-          finish();
-        }
-
-        if (d.error) {
-          pending = Math.max(0, pending - 1);
-          if (pending === 0) finish();
-        }
+        if (d.error) { clearTimeout(tmo); ws.close(); resolve([]); }
       };
-      ws.onerror = () => finish();
+      ws.onerror = () => { clearTimeout(tmo); resolve([]); };
     });
+
+    if (closed.length === 0) return;
+
+    // Build lookup by contract_id for O(1) matching
+    const closedMap: Record<string, any> = {};
+    for (const t of closed) {
+      closedMap[String(t.contract_id)] = t;
+    }
+
+    const twoHrsAgo = new Date(Date.now() - 2*60*60*1000).toISOString();
+    let updated = 0;
+
+    for (const trade of openTrades) {
+      // Extract cid from patterns field
+      const cidMatch = (trade.patterns || "").match(/cid:(\d+)/);
+      const cid = cidMatch ? cidMatch[1] : "";
+
+      // Match by contract_id (exact) — most reliable
+      const match = cid ? closedMap[cid] : null;
+
+      if (match) {
+        const buy  = parseFloat(match.buy_price  || "0");
+        const sell = parseFloat(match.sell_price || "0");
+        const pnl  = sell - buy;
+        if (Math.abs(pnl) < 0.01) continue;
+        const result = pnl > 0 ? "win" : "loss";
+        await supabase.from("trades")
+          .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
+          .eq("id", trade.id);
+        console.log(`✅ ${trade.symbol}: ${result} $${pnl.toFixed(2)}`);
+        updated++;
+        // RL learns immediately
+        await rlLearnFromTrade(supabase, {
+          symbol: trade.symbol, action: trade.type || "BUY",
+          result, pnl: parseFloat(pnl.toFixed(4)),
+          stake: parseFloat(trade.stake || "1"),
+          confidence: 75,
+          regime: (trade.patterns||"").includes("Uptrend") ? "Uptrend" :
+                  (trade.patterns||"").includes("Down") ? "Downtrend" : "Ranging",
+        });
+      } else if (trade.created_at < twoHrsAgo) {
+        // Old unmatched trade — expire it
+        await supabase.from("trades").update({result:"expired"}).eq("id",trade.id);
+      }
+    }
+    console.log(`🔄 Updated ${updated}/${openTrades.length} trades`);
   } catch(e) {
     console.log(`⚠️ Trade updater: ${e}`);
   }
