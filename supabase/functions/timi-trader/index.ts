@@ -3514,188 +3514,151 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      const features = featuresEarly;
       let sig: any;
-      const features = featuresEarly; // reuse features computed for OGD
+      const rlStakeMult = 1.0;
 
       if (ML_MODELS[symbol]) {
-        // ── STEP 3A: HARMONIC PATTERN SIGNAL (PRIMARY — Math drives) ──
-        // Harmonic patterns use Fibonacci mathematics to identify PRZ
-        // This generates the initial signal — ML then confirms
-        const harmonic = harmonicSignal(c1m, symbol);
-        if (harmonic.hasSignal) {
-          scanLog.push(`${symbol}: Harmonic_${harmonic.pattern} ${harmonic.direction} strength=${harmonic.strength.toFixed(2)}`);
-        }
+        // ══════════════════════════════════════════════════════════════
+        // TIMI UNIFIED INTELLIGENCE ENGINE
+        // Every mathematical component contributes a SCORE
+        // All scores combine into one final decision
+        // No single component blocks — all collaborate
+        // ══════════════════════════════════════════════════════════════
 
-        // ── STEP 3B: ML Prediction — Specialist Routing ──
-        const specData   = SPECIALIST_MODELS[symbol];
+        const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+
+        // ── SIGNAL SCORES: each returns +1 (BUY), -1 (SELL), 0 (neutral) ──
+        // Scale: strong signal = near ±1, weak = near 0
+
+        // 1. ML SPECIALIST — trained pattern recognition
         const hurst_val  = features[44] || 0.5;
         const kurt_val   = features[52] || 1.0;
         const specRegime = hurst_val > 0.58 ? "trending" : (hurst_val < 0.42 || kurt_val > 3.0) ? "volatile" : "ranging";
-
+        const specData   = SPECIALIST_MODELS[symbol];
+        let mlRaw: any;
         if (specData) {
           const specResult = mlPredictSpecialist(specData, specRegime, features);
-          if (specResult && specResult.action !== "HOLD") {
-            sig = specResult;
-            scanLog.push(`${symbol}: specialist_${specRegime}→${sig.action} ${sig.confidence}%`);
-          } else {
-            sig = mlPredict(ML_MODELS[symbol], features);
-            if (specResult?.action === "HOLD") {
-              scanLog.push(`${symbol}: spec_blocked, general→${sig.action}`);
-            }
-          }
+          mlRaw = (specResult && specResult.action !== "HOLD") ? specResult : mlPredict(ML_MODELS[symbol], features);
         } else {
-          sig = mlPredict(ML_MODELS[symbol], features);
+          mlRaw = mlPredict(ML_MODELS[symbol], features);
         }
+        const mlScore = mlRaw.action === "BUY" ? mlRaw.confidence/100 :
+                        mlRaw.action === "SELL" ? -mlRaw.confidence/100 : 0;
+        const mlWeight = 0.25; // ML has proven accuracy
 
-        if (sig.action === "HOLD") {
-          // If harmonic has signal but ML says HOLD — trust harmonic for BOOM/CRASH
-          const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-          if (harmonic.hasSignal && isBoomCrash && harmonic.confidence >= 80) {
-            sig = { action: harmonic.direction, confidence: harmonic.confidence,
-                    reason: `harmonic_${harmonic.pattern}` };
-            scanLog.push(`${symbol}: Harmonic override ML HOLD → ${sig.action}`);
-          } else {
-            scanLog.push(`${symbol}: ML→HOLD (${sig.reason})`); continue;
-          }
-        }
+        // 2. HARMONIC PATTERNS — Fibonacci geometry PRZ
+        const harmonic = harmonicSignal(c1m, symbol);
+        const harmonicScore = harmonic.hasSignal ?
+          (harmonic.direction === "BUY" ? harmonic.strength : -harmonic.strength) : 0;
+        const harmonicWeight = 0.20; // Fibonacci is mathematically precise
 
-        // Harmonic + ML agreement = confidence boost
-        if (harmonic.hasSignal && harmonic.direction === sig.action) {
-          const boost = Math.round(harmonic.strength * 10);
-          sig = { ...sig, confidence: Math.min(95, sig.confidence + boost) };
-          scanLog.push(`${symbol}: Harmonic+ML agree → conf boosted +${boost}%`);
-        }
+        // 3. OGD REGIME — HMM + Rules + Momentum ensemble
+        const regimeScore = regime.name === "Uptrend" ? 0.8 :
+                           regime.name === "Downtrend" ? -0.8 :
+                           regime.allowedAction === "BUY" ? 0.5 :
+                           regime.allowedAction === "SELL" ? -0.5 : 0;
+        const regimeWeight = 0.15;
 
-        // ── BOOM/CRASH DIRECTION CORRECTION ──
-        // BOOM synthetics trend UPWARD — only BUY makes sense
-        // CRASH synthetics trend DOWNWARD — only SELL makes sense
-        // ML sometimes predicts wrong direction — force correct
-        if (symbol.startsWith("BOOM") && sig.action === "SELL") {
-          sig = { ...sig, action: "BUY" };
-          scanLog.push(`${symbol}: direction_corrected SELL→BUY (BOOM trends up)`);
-        }
-        if (symbol.startsWith("CRASH") && sig.action === "BUY") {
-          sig = { ...sig, action: "SELL" };
-          scanLog.push(`${symbol}: direction_corrected BUY→SELL (CRASH trends down)`);
-        }
+        // 4. QUANTUM PRICE FIELD — Schrödinger QPLs + spike detection
+        const qpf = quantumPriceFieldSignal(c1m, "BUY", symbol, 70);
+        const spikeDir = qpf.inTransit ? 1 : 0; // in transit = momentum
+        const qpfScore = qpf.spikeBoost > 1.1 ?
+          (isBoomCrash ? spikeDir * qpf.spikeBoost * 0.8 : 0.3) :
+          qpf.inTransit ? 0.3 : 0;
+        const qpfWeight = 0.15;
 
-        // ── RL AGENT CHECK ──
-        // Load recent trades for RL context
-        const { data: rlRecentTrades } = await supabase
-          .from("trades")
-          .select("symbol,result,pnl,stake,confidence,patterns,created_at")
+        // 5. ANHARMONIC SPIKE DETECTOR — λ coefficient timing
+        const spike = detectAnharmonicSpike(c1m);
+        const spikeScore = spike.spikeImminent ?
+          (spike.spikeDirection === "UP" ? spike.spikeProbability :
+           spike.spikeDirection === "DOWN" ? -spike.spikeProbability : 0) : 0;
+        const spikeWeight = 0.10;
+
+        // 6. RL POLICY — learned from real trade outcomes
+        const { data: rlTrades } = await supabase.from("trades")
+          .select("symbol,result,pnl,confidence,patterns,created_at")
           .eq("account_name","edge_function")
-          .order("created_at",{ascending:false})
-          .limit(50);
+          .order("created_at",{ascending:false}).limit(30);
+        const rlState = buildRLState(symbol, 70, regime.name, 10, (rlTrades||[]).reverse());
+        const rlFwd   = rlForward(rlState);
+        const rlBuy   = (rlFwd.probs[1]||0) + (rlFwd.probs[3]||0);
+        const rlSell  = (rlFwd.probs[2]||0) + (rlFwd.probs[4]||0);
+        const rlScore = rlBuy - rlSell; // -1 to +1
+        const rlWeight = 0.10;
 
-        const rlDecision = rlSelectAction(
-          symbol, sig.action, sig.confidence,
-          regime.name, 1.0, (rlRecentTrades || []).reverse()
-        );
+        // 7. KALMAN + OU — momentum and mean reversion mathematics
+        const kalmanVelocity = features[22] || 0;
+        const ouZscore       = features[28] || 0;
+        const kalmanScore = Math.tanh(kalmanVelocity * 500);
+        const ouScore     = -Math.tanh(ouZscore * 0.5); // mean reversion
+        const mathWeight  = 0.05; // each of kalman + ou
 
-        // QIRL enhancement: Grover amplification on RL action probs
-        if (RL_POLICY && rlDecision.rlConf > 0) {
-          const currentProbs = rlForward(
-            buildRLState(symbol, sig.confidence, regime.name, 9, (rlRecentTrades||[]).reverse())
-          ).probs;
+        // ── WEIGHTED ENSEMBLE — all systems vote together ──
+        const ensembleScore =
+          mlWeight       * mlScore       +
+          harmonicWeight * harmonicScore +
+          regimeWeight   * regimeScore   +
+          qpfWeight      * qpfScore      +
+          spikeWeight    * spikeScore    +
+          rlWeight       * rlScore       +
+          mathWeight     * kalmanScore   +
+          mathWeight     * ouScore;
 
-          // QIRL action selection with quantum uncertainty
-          const qirlDecision = qirlSelectAction(
-            currentProbs,
-            RL_EPSILON,
-            sig.confidence,
-            regime.name
-          );
-
-          const QIRL_ACTIONS = ["SKIP","BUY","SELL","BUY_LARGE","SELL_LARGE"];
-          const qirlAction = QIRL_ACTIONS[qirlDecision.action];
-          console.log(`🌌 QIRL: ${symbol} action=${qirlAction}`);
-
-          // QIRL strong skip overrides RL if uncertainty is low
-          if (qirlDecision.action === 0 && qirlDecision.uncertainty < 0.05 && sig.confidence < 85) {
-            scanLog.push(`${symbol}: QIRL_skip`);
-            continue;
-          }
+        // ── BOOM/CRASH: force direction (they only go one way) ──
+        let finalScore = ensembleScore;
+        if (isBoomCrash) {
+          if (symbol.startsWith("BOOM"))  finalScore = Math.abs(ensembleScore);  // always positive = BUY
+          if (symbol.startsWith("CRASH")) finalScore = -Math.abs(ensembleScore); // always negative = SELL
         }
 
-        // RL says SKIP → trust it (but only if confidence < 80%)
-        if (rlDecision.rlSkip && sig.confidence < 80) {
-          scanLog.push(`${symbol}: RL_skip (ML:${sig.action} conf:${sig.confidence}%)`);
+        // ── CONVERT SCORE TO ACTION ──
+        // Threshold: need clear signal (>0.15) not noise
+        if (Math.abs(finalScore) < 0.15) {
+          scanLog.push(`${symbol}: ensemble_weak score=${finalScore.toFixed(3)} (ML:${mlScore.toFixed(2)} H:${harmonicScore.toFixed(2)} R:${regimeScore.toFixed(2)} RL:${rlScore.toFixed(2)})`);
           continue;
         }
 
-        // RL disagrees with ML direction → reduce confidence
-        if (rlDecision.action !== sig.action && sig.confidence < 85) {
-          sig.confidence = Math.round(sig.confidence * 0.85);
-          scanLog.push(`${symbol}: RL_disagrees → conf reduced to ${sig.confidence}%`);
-        }
+        const action     = finalScore > 0 ? "BUY" : "SELL";
+        // Confidence = how strong the ensemble agreement is (50-95%)
+        const confidence = Math.round(Math.min(95, 50 + Math.abs(finalScore) * 45));
 
-        // RL agrees AND high confidence → boost stake
-        const rlStakeMult = rlDecision.stakeMult;
-
-        // ── STEP 4: HMM direction alignment ──
-        // Only allow signal if it matches HMM regime direction
-        // Exception: weak trends allow both directions if confidence is very high
-        if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
-           regime.name !== "WeakUptrend" && regime.name !== "WeakDowntrend") {
-          // BOOM/CRASH bypass — direction already corrected above
-          const isSpike = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-          if (!isSpike && sig.action !== regime.allowedAction) {
-            scanLog.push(`${symbol}: HMM_direction_blocked — regime says ${regime.allowedAction} but ML says ${sig.action}`);
-            continue;
+        sig = {
+          action,
+          confidence,
+          reason: `ensemble:${finalScore.toFixed(3)}`,
+          ensembleComponents: {
+            ml: mlScore, harmonic: harmonicScore, regime: regimeScore,
+            qpf: qpfScore, spike: spikeScore, rl: rlScore,
+            kalman: kalmanScore, ou: ouScore
           }
-        }
+        };
 
-        // ── STEP 5: Indicator confirmation ──
-        const { confirmed, reason } = confirmWithIndicators(features, sig.action, sig.confidence, symbol);
-        if (!confirmed) {
-          scanLog.push(`${symbol}: indicator_rejected:${reason}`); continue;
-        }
+        scanLog.push(`${symbol}: ML→${action} conf:${confidence}% (ensemble=${finalScore.toFixed(3)} ML:${mlScore.toFixed(2)} H:${harmonicScore.toFixed(2)} RL:${rlScore.toFixed(2)})`);
 
-        // ── Pre-calculate FPT for Bayesian (inline, no extra fetch) ──
-        const fpt_inline = firstPassageTime(
-          [], sig.action, symbol,
-          features[27] || 0.003,  // garch_vol
-          features[29] || 0,      // ou_zscore
-          sig.confidence
-        );
-
-        // ── STEP 6: TRUE Bayesian Win Probability ──
-        // P(win|conditions) = P(conditions|win) × P(win) / P(conditions)
-        // Uses trained win rate as prior, updates with 7 likelihood factors
-        // Runs in microseconds — pure math, no simulation
-        // Use actual trained win rate as Bayesian prior
+        // ── BAYESIAN FINAL GATE — P(win) must be > 0.52 ──
+        // Only hard block if BOTH bayesian AND ensemble are negative
         const mlWinRate = mlRows?.find((r: any) => r.symbol === symbol)?.win_rate || 0.65;
         const bayesian = trueBayesianWinProb(
-          c1m, sig.action, symbol, features,
-          mlWinRate, regime.name,
-          features[40] || 0.5  // session_strength (last feature)
+          c1m, action, symbol, features, mlWinRate, regime.name, features[40] || 0.5
         );
-        if (bayesian.winProb < 0.55) {
-          scanLog.push(`${symbol}: bayes_skip P(win)=${(bayesian.winProb*100).toFixed(1)}% prior→posterior (${bayesian.recommendation})`);
+        if (bayesian.winProb < 0.52 && Math.abs(finalScore) < 0.25) {
+          scanLog.push(`${symbol}: bayes_skip P(win)=${(bayesian.winProb*100).toFixed(1)}% + weak ensemble`);
           continue;
         }
-        // Boost confidence for strong Bayesian signal
-        const bayesianBoost = bayesian.winProb >= 0.72 ? 4
-                            : bayesian.winProb >= 0.62 ? 2
-                            : 0;
 
-        // ── QUANTUM PRICE FIELD SIGNAL ──
-        // Schrödinger equation QPLs + Anharmonic spike detector
-        const qpf = quantumPriceFieldSignal(c1m, sig.action, symbol, sig.confidence);
-        // Apply quantum confidence adjustment
-        if (qpf.quantumConfidence !== sig.confidence) {
-          sig = { ...sig, confidence: qpf.quantumConfidence };
+        // Bayesian boosts confidence further
+        if (bayesian.winProb > 0.65) {
+          sig.confidence = Math.min(95, sig.confidence + 5);
         }
-        // Skip if quantum regime unverified and low confidence
-        if (!qpf.regimeVerified && sig.confidence < 75) {
-          scanLog.push(`${symbol}: QPF_unverified (${qpf.recommendation})`);
-          continue;
+
+        // QPF spike boost
+        if (qpf.spikeBoost > 1.1 && isBoomCrash) {
+          sig.confidence = Math.min(95, sig.confidence + Math.round((qpf.spikeBoost-1)*20));
+          scanLog.push(`${symbol}: QPF_spike_boost → conf=${sig.confidence}%`);
         }
-        // Log spike alignment for BOOM/CRASH
-        if (qpf.spikeBoost > 1.1) {
-          scanLog.push(`${symbol}: QPF_spike_boost=${qpf.spikeBoost.toFixed(2)} λ=${qpf.qplDistance.toFixed(4)}`);
-        }
+
+        const bayesianBoost = 0; // already incorporated above
 
         // ── STEP 7: AI Brain — check loss patterns ──
         const fingerprint = buildMarketFingerprint(features, symbol, sig.action, regime.name, session.name);
