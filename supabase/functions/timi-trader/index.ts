@@ -3259,6 +3259,272 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
 }
 
 
+// ═══════════════════════════════════════════════════════════════════
+// QUANTUM FIELD THEORY ENGINE + DAILY PAIR RECOMMENDER
+// ═══════════════════════════════════════════════════════════════════
+//
+// 1. PATH INTEGRAL — Feynman's sum over all price paths
+//    Identifies "low action" paths = most probable price trajectory
+//    L = ½mẋ² - V(x)  (Lagrangian = kinetic - potential)
+//    S = ∫L dt         (Action = total path energy)
+//    Low S path = market's preferred trajectory
+//
+// 2. TEMPORAL TURBULENCE — non-linear market time
+//    High volume = "heavy" time = trend persistence
+//    Low volume  = "light" time = fast mean reversion
+//    Price jumps between QPLs like electron energy transitions
+//
+// 3. PAIR RECOMMENDER — daily best symbols analysis
+//    Scores each symbol on: trend clarity, volatility regime,
+//    harmonic setup, quantum spike probability, recent ML WR
+//    Returns ranked list of best symbols to trade today
+// ═══════════════════════════════════════════════════════════════════
+
+// ── PATH INTEGRAL: Feynman price path analysis ──────────────────────
+function computePathIntegral(candles: any[]): {
+  lowActionPath:    number;   // most probable next price
+  actionScore:      number;   // path action S (lower = more probable)
+  kineticEnergy:    number;   // price momentum energy
+  potentialEnergy:  number;   // mean reversion pull
+  lagrangian:       number;   // L = KE - PE (instantaneous)
+  mostProbableDir:  string;   // "UP" | "DOWN" | "NEUTRAL"
+  pathConfidence:   number;   // 0-1 confidence in direction
+} {
+  if (candles.length < 30) {
+    return { lowActionPath:0, actionScore:999, kineticEnergy:0,
+             potentialEnergy:0, lagrangian:0, mostProbableDir:"NEUTRAL", pathConfidence:0 };
+  }
+
+  const closes  = candles.map((c:any) => parseFloat(c.close));
+  const volumes = candles.map((c:any) => parseFloat(c.tick_count || c.volume || "1"));
+  const n       = closes.length;
+  const current = closes[n-1];
+
+  // Price "velocity" ẋ = price change per unit time
+  const velocities = closes.slice(1).map((c,i) => c - closes[i]);
+
+  // Price "mass" m = volume-weighted inertia
+  // High volume = heavy = hard to change direction
+  const avgVol  = volumes.reduce((a,b)=>a+b,0) / n;
+  const mass    = volumes[n-1] / (avgVol + 1e-10); // normalized mass
+
+  // Kinetic Energy: KE = ½mẋ²
+  const lastVelocity = velocities[velocities.length-1];
+  const kineticEnergy = 0.5 * mass * lastVelocity * lastVelocity;
+
+  // Potential Energy: V(x) = pull toward equilibrium (mean)
+  // V(x) = ½k(x - μ)² where k = mean reversion strength
+  const mean  = closes.reduce((a,b)=>a+b,0) / n;
+  const ouTheta = 0.1; // mean reversion speed (κ)
+  const potentialEnergy = 0.5 * ouTheta * Math.pow(current - mean, 2);
+
+  // Lagrangian: L = KE - PE
+  const lagrangian = kineticEnergy - potentialEnergy;
+
+  // Action S = Σ L × Δt for recent window
+  // Lower action = more "natural" path = more probable
+  const windowSize = Math.min(20, velocities.length);
+  let actionScore = 0;
+  for (let i = velocities.length - windowSize; i < velocities.length; i++) {
+    const v   = velocities[i];
+    const ke  = 0.5 * mass * v * v;
+    const pe  = 0.5 * ouTheta * Math.pow(closes[i] - mean, 2);
+    actionScore += Math.abs(ke - pe); // sum of |L| over path
+  }
+  actionScore /= windowSize; // normalize
+
+  // Most probable next price: Euler-Lagrange equation solution
+  // d/dt(∂L/∂ẋ) = ∂L/∂x
+  // mẍ = -∂V/∂x = -k(x - μ)
+  // Solution: x(t+1) = x + ẋ·Δt - (k/m)(x-μ)·Δt²
+  const dt = 1; // one period ahead
+  const acceleration = -(ouTheta / mass) * (current - mean);
+  const lowActionPath = current + lastVelocity * dt + 0.5 * acceleration * dt * dt;
+
+  // Direction and confidence
+  const expectedMove  = lowActionPath - current;
+  const mostProbableDir = expectedMove > 0.0001 ? "UP" :
+                          expectedMove < -0.0001 ? "DOWN" : "NEUTRAL";
+  // Confidence = how strong the path signal is
+  // High KE + aligned PE = high confidence
+  const pathConfidence = Math.min(1, Math.abs(expectedMove) / (Math.abs(current) * 0.001 + 1e-10));
+
+  return {
+    lowActionPath,
+    actionScore,
+    kineticEnergy,
+    potentialEnergy,
+    lagrangian,
+    mostProbableDir,
+    pathConfidence: Math.min(1, pathConfidence),
+  };
+}
+
+// ── TEMPORAL TURBULENCE: non-linear market time ──────────────────────
+function computeTemporalTurbulence(candles: any[]): {
+  marketMass:       number;   // volume-weighted inertia
+  timeDialation:    number;   // >1=slow time(trend), <1=fast time(reversal)
+  trendInertia:     number;   // resistance to direction change
+  nextLevelDist:    number;   // distance to next QPL (energy level)
+  jumpProbability:  number;   // probability of level transition (spike)
+} {
+  if (candles.length < 20) {
+    return { marketMass:1, timeDialation:1, trendInertia:0.5,
+             nextLevelDist:0, jumpProbability:0.1 };
+  }
+
+  const closes  = candles.map((c:any) => parseFloat(c.close));
+  const volumes = candles.map((c:any) => parseFloat(c.tick_count || "1"));
+  const n = closes.length;
+
+  // Market "mass" = volume momentum
+  const avgVol     = volumes.reduce((a,b)=>a+b,0) / n;
+  const recentVol  = volumes.slice(-5).reduce((a,b)=>a+b,0) / 5;
+  const marketMass = recentVol / (avgVol + 1e-10);
+
+  // Time dilation: Einstein's insight applied to markets
+  // Heavy markets (high volume) = time slows = trends persist longer
+  // Light markets (low volume) = time speeds = reversals happen faster
+  const timeDialation = Math.sqrt(marketMass); // √m scaling
+
+  // Trend inertia: how hard is it to reverse?
+  // High mass + strong trend = high inertia
+  const returns    = closes.slice(1).map((c,i) => c - closes[i]);
+  const trendStr   = Math.abs(returns.slice(-10).reduce((a,b)=>a+b,0)) /
+                     (returns.slice(-10).reduce((a,b)=>a+Math.abs(b),0) + 1e-10);
+  const trendInertia = marketMass * trendStr;
+
+  // Distance to next energy level (QPL)
+  // Based on average price "quantum" = σ/√n (minimum price grain)
+  const sigma = Math.sqrt(returns.reduce((a,b)=>a+b*b,0)/returns.length);
+  const hbar  = sigma / 10; // effective Planck constant
+  const omega = sigma;      // natural frequency
+  const E1    = hbar * omega * 1.5; // first excited state
+  const nextLevelDist = E1 * Math.sqrt(2 / 0.1); // classical turning point
+
+  // Jump probability: probability of transitioning to next energy level
+  // Boltzmann-like: P(jump) = exp(-ΔE/kT) where T = volatility "temperature"
+  const temperature    = sigma * 10; // market "temperature"
+  const jumpProbability = Math.exp(-nextLevelDist / (temperature + 1e-10));
+
+  return {
+    marketMass,
+    timeDialation,
+    trendInertia,
+    nextLevelDist,
+    jumpProbability: Math.min(0.95, jumpProbability),
+  };
+}
+
+// ── DAILY PAIR RECOMMENDER ───────────────────────────────────────────
+// Scores every available symbol and returns ranked recommendations
+// Uses ALL mathematical components collaboratively
+async function getDailyPairRecommendations(
+  supabase: any,
+  token: string,
+  availableSymbols: string[]
+): Promise<{
+  symbol:       string;
+  score:        number;
+  grade:        string;   // A+ A B C
+  reason:       string;
+  direction:    string;   // BUY or SELL
+  confidence:   number;
+  components:   Record<string, number>;
+}[]> {
+  const recommendations = [];
+
+  for (const symbol of availableSymbols) {
+    try {
+      const candles = await fetchCandles(symbol, 60, 200);
+      if (candles.length < 60) continue;
+
+      const closes  = candles.map((c:any) => parseFloat(c.close));
+      const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
+
+      // 1. Path Integral score
+      const path = computePathIntegral(candles);
+      const pathScore = path.pathConfidence * (path.mostProbableDir === "UP" ? 1 : -1);
+
+      // 2. Temporal turbulence
+      const temporal = computeTemporalTurbulence(candles);
+      const temporalScore = temporal.jumpProbability; // spike opportunity
+
+      // 3. Anharmonic spike probability
+      const spike = detectAnharmonicSpike(candles);
+      const spikeScore = spike.spikeProbability;
+
+      // 4. QPL positioning
+      const qpl = computeQuantumPriceLevels(candles);
+      const qplScore = qpl.inTransit ? 0.8 : // in transit = momentum play
+                       qpl.distanceToNearest < 0.001 ? 0.6 : 0.3;
+
+      // 5. Trend clarity (Hurst)
+      const hurst = qpl.omega > 0 ? Math.min(1, qpl.omega * 10) : 0.5;
+      const trendScore = hurst > 0.6 ? 1.0 : hurst < 0.4 ? 0.5 : 0.7;
+
+      // 6. Volatility regime (is it tradeable?)
+      const sigma = Math.sqrt(returns.reduce((a,b)=>a+b*b,0)/returns.length);
+      const volScore = sigma > 0.0001 && sigma < 0.01 ? 1.0 : // ideal volatility
+                       sigma < 0.0001 ? 0.2 : 0.5; // too quiet or too wild
+
+      // 7. Harmonic pattern present?
+      const harmonic = harmonicSignal(candles, symbol);
+      const harmonicScore = harmonic.hasSignal ? harmonic.strength : 0.3;
+
+      // COMPOSITE SCORE (weighted)
+      const score =
+        0.20 * pathScore +
+        0.15 * temporalScore +
+        0.15 * spikeScore +
+        0.15 * qplScore +
+        0.15 * trendScore +
+        0.10 * volScore +
+        0.10 * harmonicScore;
+
+      // Direction from path integral (most mathematically grounded)
+      let direction = path.mostProbableDir === "UP" ? "BUY" : "SELL";
+      // Override for BOOM/CRASH
+      if (symbol.startsWith("BOOM"))  direction = "BUY";
+      if (symbol.startsWith("CRASH")) direction = "SELL";
+
+      const absScore = Math.abs(score);
+      const grade = absScore > 0.7 ? "A+" :
+                    absScore > 0.5 ? "A"  :
+                    absScore > 0.3 ? "B"  : "C";
+
+      const reasons = [];
+      if (harmonic.hasSignal) reasons.push(`${harmonic.pattern} pattern`);
+      if (spike.spikeImminent) reasons.push(`spike imminent λ=${spike.lambda.toFixed(2)}`);
+      if (qpl.inTransit) reasons.push("in transit zone");
+      if (temporal.jumpProbability > 0.5) reasons.push("level transition likely");
+
+      recommendations.push({
+        symbol,
+        score: absScore,
+        grade,
+        reason: reasons.join(" + ") || "ensemble signal",
+        direction,
+        confidence: Math.round(Math.min(95, absScore * 100)),
+        components: {
+          path:     parseFloat(pathScore.toFixed(3)),
+          temporal: parseFloat(temporalScore.toFixed(3)),
+          spike:    parseFloat(spikeScore.toFixed(3)),
+          qpl:      parseFloat(qplScore.toFixed(3)),
+          trend:    parseFloat(trendScore.toFixed(3)),
+          harmonic: parseFloat(harmonicScore.toFixed(3)),
+        }
+      });
+    } catch(e) {
+      console.log(`⚠️ Recommender skip ${symbol}: ${e}`);
+    }
+  }
+
+  // Sort by score descending
+  return recommendations.sort((a,b) => b.score - a.score);
+}
+
+
 // ─────────────────────────────────────────────
 // MAIN HANDLER
 // ─────────────────────────────────────────────
@@ -3519,6 +3785,15 @@ Deno.serve(async (req) => {
            spike.spikeDirection === "DOWN" ? -spike.spikeProbability : 0) : 0;
         const spikeWeight = 0.10;
 
+        // 5b. PATH INTEGRAL — Feynman most probable path
+        const pathIntegral = computePathIntegral(c1m);
+        const pathScore = pathIntegral.mostProbableDir === "UP" ? pathIntegral.pathConfidence :
+                          pathIntegral.mostProbableDir === "DOWN" ? -pathIntegral.pathConfidence : 0;
+
+        // 5c. TEMPORAL TURBULENCE — non-linear market time
+        const temporal = computeTemporalTurbulence(c1m);
+        const temporalScore = temporal.jumpProbability > 0.5 ? 0.4 : 0.1;
+
         // 6. RL POLICY — learned from real trade outcomes
         const { data: rlTrades } = await supabase.from("trades")
           .select("symbol,result,pnl,confidence,patterns,created_at")
@@ -3540,14 +3815,16 @@ Deno.serve(async (req) => {
 
         // ── WEIGHTED ENSEMBLE — all systems vote together ──
         const ensembleScore =
-          mlWeight       * mlScore       +
-          harmonicWeight * harmonicScore +
-          regimeWeight   * regimeScore   +
-          qpfWeight      * qpfScore      +
-          spikeWeight    * spikeScore    +
-          rlWeight       * rlScore       +
-          mathWeight     * kalmanScore   +
-          mathWeight     * ouScore;
+          0.22 * mlScore       +
+          0.18 * harmonicScore +
+          0.12 * regimeScore   +
+          0.12 * qpfScore      +
+          0.08 * spikeScore    +
+          0.10 * rlScore       +
+          0.08 * pathScore     +  // Feynman path integral
+          0.05 * temporalScore +  // temporal turbulence
+          0.03 * kalmanScore   +
+          0.02 * ouScore;
 
         // ── BOOM/CRASH: force direction (they only go one way) ──
         let finalScore = ensembleScore;
@@ -3868,6 +4145,21 @@ Deno.serve(async (req) => {
         console.log(`⚠️ Binance routing error: ${binErr}`);
       }
     }
+  }
+
+  // Daily pair recommendations (called when no body or ?recommend)
+  const body3 = await req.clone().json().catch(() => ({}));
+  if (body3?.recommend === true) {
+    const allSym = ["BOOM500","BOOM1000","CRASH500","CRASH1000",
+                    "R_25","R_50","R_75","R_100",
+                    "frxUSDJPY","frxEURUSD","frxGBPUSD","frxXAUUSD"];
+    const recs = await getDailyPairRecommendations(supabase, token, allSym);
+    return new Response(JSON.stringify({
+      status: "recommendations",
+      date:   new Date().toISOString().split("T")[0],
+      top_pairs: recs.slice(0,5),
+      all_pairs: recs,
+    }), { headers: CORS });
   }
 
   return new Response(JSON.stringify({
