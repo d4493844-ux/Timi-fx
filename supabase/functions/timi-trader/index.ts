@@ -4081,7 +4081,7 @@ Deno.serve(async (req) => {
     macd_hist:    Array.isArray(features) ? features[1] : null,
     bb_position:  Array.isArray(features) ? features[2] : null,
     ema_stack:    Array.isArray(features) ? (features[4] ? 1 : features[5] ? -1 : 0) : null,
-    patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}|cid:${(result as any)?.contract_id || (result as any)?.buy?.contract_id || ""}`,
+        patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}|cid:${result?.contract_id || result?.buy?.contract_id || ""}`,  
   });
 
   if (success) {
