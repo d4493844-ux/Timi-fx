@@ -1,224 +1,254 @@
-import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import { LineChart, Line, ResponsiveContainer, Tooltip } from "recharts";
-import { supabase } from "../lib/supabase";
+import { useState, useEffect, useCallback } from "react";
 
-const SYMBOL_NAMES = { BOOM1000:"BOOM 1000",CRASH1000:"CRASH 1000",frxUSDJPY:"USD/JPY",R_75:"VIX 75",R_25:"VIX 25",R_50:"VIX 50",R_100:"VIX 100",frxEURUSD:"EUR/USD",frxGBPUSD:"GBP/USD",frxGBPJPY:"GBP/JPY",cryBTCUSD:"BTC/USD",cryETHUSD:"ETH/USD",frxXAUUSD:"Gold/USD" };
-const ICONS = { BOOM1000:"💥",CRASH1000:"📉",frxUSDJPY:"💴",R_75:"⚡",R_25:"⚡",R_50:"⚡",R_100:"⚡",frxEURUSD:"💶",frxGBPUSD:"💷",cryBTCUSD:"₿",cryETHUSD:"Ξ",frxXAUUSD:"🥇" };
-const TICKER = [
-  {tag:"ML",text:"Meta-labeling blocks low-confidence trades automatically",s:"pos",l:"cutting losses"},
-  {tag:"ML",text:"BOOM1000 backtest 80.5% · CRASH1000 82.7%",s:"pos",l:"LightGBM deployed"},
-  {tag:"BOT",text:"Auto-discovers new profitable pairs from ml_models table",s:"pos",l:"no manual config needed"},
-  {tag:"BOT",text:"BOOM=MULTUP · CRASH=MULTDOWN · Forex=CALL/PUT",s:"pos",l:"correct contracts"},
-  {tag:"DEMO",text:"Running on demo — switch token in Remote Control to go live",s:"pos",l:"real account ready"},
-];
-const s = {
-  page:{paddingBottom:90,minHeight:"100vh"},header:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 20px 0"},
-  logoText:{fontFamily:"'Orbitron',monospace",fontWeight:900,fontSize:26,background:"linear-gradient(135deg,#00d4ff,#00ff9d)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",letterSpacing:4},
-  logoSub:{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",letterSpacing:3},
-  pill:{display:"flex",alignItems:"center",gap:6,background:"rgba(0,255,157,0.08)",border:"1px solid rgba(0,255,157,0.2)",borderRadius:20,padding:"6px 12px",fontFamily:"'Share Tech Mono',monospace",fontSize:10,color:"#00ff9d",letterSpacing:1},
-  timiBox:{margin:"16px 20px",background:"#071525",border:"1px solid #0a2540",borderRadius:16,padding:"16px 16px 12px",position:"relative",overflow:"hidden"},
-  timiRow:{display:"flex",gap:14,alignItems:"center",marginBottom:12},
-  avatar:{width:48,height:48,borderRadius:"50%",border:"2px solid #00d4ff",boxShadow:"0 0 16px rgba(0,212,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,background:"#020810"},
-  timiName:{fontFamily:"'Orbitron',monospace",fontSize:10,color:"#00d4ff",letterSpacing:3,marginBottom:4},
-  timiMsg:{fontSize:13,color:"#c8e8ff",lineHeight:1.5,fontWeight:300},
-  waveWrap:{display:"flex",alignItems:"center",justifyContent:"center",gap:3,height:28},
-  balCard:{margin:"0 20px 14px",background:"linear-gradient(135deg,#071525,#030c18)",border:"1px solid #0a2540",borderRadius:16,padding:20},
-  balLabel:{fontFamily:"'Share Tech Mono',monospace",fontSize:10,color:"#3a6080",letterSpacing:3,marginBottom:8},
-  balAmt:{fontFamily:"'Orbitron',monospace",fontSize:34,fontWeight:700,color:"#fff"},
-  statRow:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:1,background:"#0a2540",marginTop:14,borderRadius:10,overflow:"hidden"},
-  statCell:{background:"rgba(7,21,37,0.95)",padding:"10px 6px",textAlign:"center"},
-  mlCard:{margin:"0 20px 14px",background:"#071525",border:"1px solid rgba(0,255,157,0.15)",borderRadius:16,padding:16},
-  chartCard:{margin:"0 20px 14px",background:"#071525",border:"1px solid #0a2540",borderRadius:16,padding:16},
-  stratGrid:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:"0 20px",marginBottom:14},
-  stratCard:{background:"#071525",border:"1px solid #0a2540",borderRadius:12,padding:14,position:"relative",overflow:"hidden"},
-  scoreBar:{marginTop:8,height:3,background:"#0a2540",borderRadius:2,overflow:"hidden"},
-  tickerWrap:{margin:"0 20px 14px",background:"#071525",border:"1px solid #0a2540",borderRadius:12,overflow:"hidden"},
-};
-function WaveBar({delay,h}){return <motion.div style={{width:3,background:"linear-gradient(to top,#00d4ff,#00ff9d)",borderRadius:2,opacity:0.7}} animate={{height:[4,h,4]}} transition={{duration:0.8+Math.random()*0.6,repeat:Infinity,delay,ease:"easeInOut"}}/>;}
+const SUPABASE_URL = "https://pedbupgjxlcumidwoktc.supabase.co";
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMjc0NTIsImV4cCI6MjA4NzkwMzQ1Mn0.lscyzf9JN82ZihHLD0VC4broyMMfm7WL9MIvXRmwZG8";
+const BOT_URL = "https://pedbupgjxlcumidwoktc.supabase.co/functions/v1/timi-trader";
 
-export default function Dashboard({balance,ticks={},timiStatus,signals={},openTrades=[],activeSymbols=[]}) {
-  const firstSym = activeSymbols[0] || "BOOM1000";
-  const [chartData,setChartData] = useState(()=>{let v=2847;return Array.from({length:60},()=>{v+=(Math.random()-0.48)*2;return{v:+v.toFixed(2)};});});
-  const [mlModels,setMlModels]   = useState([]);
-  const [liveWR,setLiveWR]       = useState(null);
-  const [liveTotal,setLiveTotal] = useState(0);
+const api = (path, params="") =>
+  fetch(`${SUPABASE_URL}/rest/v1/${path}${params}`, {
+    headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` }
+  }).then(r => r.json());
 
-  useEffect(()=>{const p=ticks[firstSym];if(!p)return;setChartData(prev=>[...prev.slice(1),{v:p}]);},[ticks,firstSym]);
-  useEffect(()=>{
-    supabase.from("ml_models").select("symbol,win_rate,trained_at")
-      .then(({data, error}) => {
-        if (error) console.error("❌ ml_models fetch error:", error.message);
-        else if (data && data.length > 0) setMlModels(data);
-        else {
-          // Retry once after 3s in case of cold start
-          setTimeout(() => {
-            supabase.from("ml_models").select("symbol,win_rate,trained_at")
-              .then(({data: d2}) => { if (d2?.length > 0) setMlModels(d2); });
-          }, 3000);
-        }
-      });
-    supabase.from("trades").select("result").eq("account_name","edge_function").order("created_at",{ascending:false}).limit(100)
-      .then(({data})=>{
-        if(!data?.length)return;
-        const decided=data.filter(t=>t.result==="win"||t.result==="loss");
-        const wins=decided.filter(t=>t.result==="win").length;
-        if(decided.length>0){setLiveWR(Math.round(wins/decided.length*100));setLiveTotal(decided.length);}
-      });
-  },[]);
+export default function Dashboard() {
+  const [trades, setTrades]     = useState([]);
+  const [config, setConfig]     = useState({});
+  const [signals, setSignals]   = useState([]);
+  const [recs, setRecs]         = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [tab, setTab]           = useState("overview");
+  const [scanLog, setScanLog]   = useState([]);
 
-  const livePrice=ticks[firstSym]||chartData[chartData.length-1]?.v;
-  const wins=openTrades.filter(t=>t.pnl>0).length;
-  const losses=openTrades.filter(t=>t.pnl<0).length;
-  const isDemoMode=!balance?.is_real;
-  const cv={hidden:{},visible:{transition:{staggerChildren:0.08}}};
-  const iv={hidden:{opacity:0,y:20},visible:{opacity:1,y:0,transition:{duration:0.4}}};
+  const load = useCallback(async () => {
+    const [t, c] = await Promise.all([
+      api("trades", "?account_name=eq.edge_function&order=created_at.desc&limit=100&select=symbol,result,pnl,stake,confidence,created_at,patterns"),
+      api("bot_config", "?active=eq.true&select=balance_cache,symbols,min_confidence,risk_pct,auto_trade")
+    ]);
+    setTrades(t || []);
+    setConfig((c||[])[0] || {});
+  }, []);
+
+  const runScan = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(BOT_URL, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", Authorization:`Bearer ${ANON_KEY}` },
+        body: JSON.stringify({})
+      }).then(r => r.json());
+      setScanLog(r.scan_log || []);
+      if (r.signal) setSignals(prev => [r.signal, ...prev].slice(0,20));
+      await load();
+    } finally { setLoading(false); }
+  };
+
+  const getRecommendations = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(BOT_URL, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", Authorization:`Bearer ${ANON_KEY}` },
+        body: JSON.stringify({ recommend: true })
+      }).then(r => r.json());
+      setRecs(r.top_pairs || []);
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+
+  const decided = trades.filter(t => ["win","loss"].includes(t.result));
+  const wins    = decided.filter(t => t.result === "win");
+  const losses  = decided.filter(t => t.result === "loss");
+  const wr      = decided.length ? (wins.length/decided.length*100).toFixed(1) : 0;
+  const netPnl  = decided.reduce((a,t) => a + parseFloat(t.pnl||0), 0);
+  const avgWin  = wins.length ? (wins.reduce((a,t)=>a+parseFloat(t.pnl||0),0)/wins.length).toFixed(2) : 0;
+  const avgLoss = losses.length ? (losses.reduce((a,t)=>a+parseFloat(t.pnl||0),0)/losses.length).toFixed(2) : 0;
+
+  const gradeColor = g => g==="A+"?"#00ff88":g==="A"?"#88ff00":g==="B"?"#ffaa00":"#ff4444";
 
   return (
-    <motion.div style={s.page} variants={cv} initial="hidden" animate="visible">
-      <motion.div style={s.header} variants={iv}>
-        <div><div style={s.logoText}>TIMI</div><div style={s.logoSub}>ML TRADING SYSTEM</div></div>
-        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}}>
-          <div style={s.pill}>
-            <motion.div style={{width:6,height:6,borderRadius:"50%",background:"#00ff9d",boxShadow:"0 0 8px #00ff9d"}} animate={{opacity:[1,0.2,1]}} transition={{duration:1.5,repeat:Infinity}}/>
-            ML ACTIVE
+    <div style={{background:"#0a0a0f",color:"#e0e0ff",minHeight:"100vh",fontFamily:"monospace",padding:"20px"}}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"20px"}}>
+        <div>
+          <h1 style={{margin:0,fontSize:"24px",color:"#7c3aed"}}>⚡ TIMI Intelligence</h1>
+          <p style={{margin:0,color:"#888",fontSize:"12px"}}>Unified Mathematical Trading Engine</p>
+        </div>
+        <div style={{display:"flex",gap:"10px"}}>
+          <button onClick={runScan} disabled={loading}
+            style={{background:"#7c3aed",border:"none",color:"white",padding:"8px 16px",borderRadius:"6px",cursor:"pointer"}}>
+            {loading ? "Scanning..." : "🔍 Run Scan"}
+          </button>
+          <button onClick={getRecommendations} disabled={loading}
+            style={{background:"#0d9488",border:"none",color:"white",padding:"8px 16px",borderRadius:"6px",cursor:"pointer"}}>
+            📊 Get Recommendations
+          </button>
+        </div>
+      </div>
+
+      {/* Stats Bar */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:"12px",marginBottom:"20px"}}>
+        {[
+          {label:"Balance", value:`$${parseFloat(config.balance_cache||0).toFixed(2)}`, color:"#7c3aed"},
+          {label:"Win Rate", value:`${wr}%`, color: wr>60?"#00ff88":wr>50?"#ffaa00":"#ff4444"},
+          {label:"Net PnL", value:`$${netPnl.toFixed(2)}`, color:netPnl>0?"#00ff88":"#ff4444"},
+          {label:"Avg Win", value:`$${avgWin}`, color:"#00ff88"},
+          {label:"Avg Loss", value:`$${avgLoss}`, color:"#ff4444"},
+        ].map(s => (
+          <div key={s.label} style={{background:"#13131f",borderRadius:"8px",padding:"12px",border:"1px solid #2a2a3e"}}>
+            <p style={{margin:0,color:"#888",fontSize:"11px"}}>{s.label}</p>
+            <p style={{margin:0,fontSize:"20px",fontWeight:"bold",color:s.color}}>{s.value}</p>
           </div>
-          {isDemoMode&&<div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#ffcc00",background:"rgba(255,204,0,0.08)",border:"1px solid rgba(255,204,0,0.2)",borderRadius:10,padding:"3px 8px"}}>🧪 DEMO</div>}
-        </div>
-      </motion.div>
+        ))}
+      </div>
 
-      <motion.div style={s.timiBox} variants={iv}>
-        <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,#00d4ff,transparent)"}}/>
-        <div style={s.timiRow}>
-          <motion.div style={s.avatar} animate={{boxShadow:["0 0 10px rgba(0,212,255,0.2)","0 0 25px rgba(0,212,255,0.5)","0 0 10px rgba(0,212,255,0.2)"]}} transition={{duration:2,repeat:Infinity}}>
-            <span style={{fontSize:22}}>🧠</span>
-          </motion.div>
-          <div style={{flex:1}}>
-            <div style={s.timiName}>// TIMI ML ENGINE ONLINE</div>
-            <div style={s.timiMsg}>
-              {timiStatus||`LightGBM + meta-labeling active · ${mlModels.length} models auto-scanning markets`}
-              <motion.span style={{display:"inline-block",width:2,height:13,background:"#00d4ff",marginLeft:2,verticalAlign:"middle"}} animate={{opacity:[1,0,1]}} transition={{duration:0.7,repeat:Infinity}}/>
-            </div>
+      {/* Tabs */}
+      <div style={{display:"flex",gap:"8px",marginBottom:"16px"}}>
+        {["overview","signals","recommendations","trades"].map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{background:tab===t?"#7c3aed":"#1a1a2e",border:"1px solid #2a2a3e",
+                    color:"white",padding:"6px 14px",borderRadius:"6px",cursor:"pointer",
+                    textTransform:"capitalize"}}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      {tab === "overview" && (
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px"}}>
+          {/* Scan Log */}
+          <div style={{background:"#13131f",borderRadius:"8px",padding:"16px",border:"1px solid #2a2a3e"}}>
+            <h3 style={{margin:"0 0 12px",color:"#7c3aed"}}>Last Scan Log</h3>
+            {scanLog.length === 0
+              ? <p style={{color:"#888",fontSize:"12px"}}>Run a scan to see results</p>
+              : scanLog.map((l,i) => (
+                <p key={i} style={{margin:"4px 0",fontSize:"12px",color:
+                  l.includes("trade_placed")?"#00ff88":
+                  l.includes("skip")||l.includes("block")||l.includes("HOLD")?"#ff6666":"#aaa"}}>
+                  {l}
+                </p>
+              ))
+            }
           </div>
-        </div>
-        <div style={s.waveWrap}>{Array.from({length:28},(_,i)=><WaveBar key={i} delay={i*0.05} h={6+Math.random()*22}/>)}</div>
-      </motion.div>
-
-      <motion.div style={s.balCard} variants={iv}>
-        <div style={s.balLabel}>// PORTFOLIO VALUE</div>
-        <div style={s.balAmt}><span style={{fontSize:18,color:"#00d4ff",marginRight:4}}>{balance?.currency||"USD"}</span>{balance?.balance??"---"}</div>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,flexWrap:"wrap"}}>
-          <span style={{background:"rgba(0,255,157,0.1)",border:"1px solid rgba(0,255,157,0.25)",color:"#00ff9d",fontFamily:"'Share Tech Mono',monospace",fontSize:11,padding:"3px 8px",borderRadius:6}}>
-            {openTrades.length} open trade{openTrades.length!==1?"s":""}
-          </span>
-          <span style={{color:"#3a6080",fontSize:12}}>auto-scanning {mlModels.length||3} ML pairs</span>
-        </div>
-        <div style={s.statRow}>
-          {[
-            {v:wins,c:"#00ff9d",l:"PROFIT"},
-            {v:losses,c:"#ff3366",l:"LOSS"},
-            {v:openTrades.length,c:"#00d4ff",l:"OPEN"},
-            {v:liveWR!==null?liveWR+"%":"—",c:liveWR>=60?"#00ff9d":liveWR>=50?"#ffcc00":"#3a6080",l:`WR(${liveTotal})`},
-          ].map(({v,c,l})=>(
-            <div key={l} style={s.statCell}>
-              <div style={{fontFamily:"'Orbitron',monospace",fontSize:14,fontWeight:700,color:c}}>{v}</div>
-              <div style={{fontSize:9,color:"#3a6080",marginTop:2,letterSpacing:1}}>{l}</div>
-            </div>
-          ))}
-        </div>
-      </motion.div>
-
-      {/* ML Models panel */}
-      <motion.div style={s.mlCard} variants={iv}>
-        <div style={{fontFamily:"'Orbitron',monospace",fontSize:9,color:"#3a6080",letterSpacing:4,marginBottom:12}}>🧠 AUTO-DISCOVERED ML MODELS</div>
-        {mlModels.length===0
-          ? <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#3a6080",textAlign:"center",padding:"12px 0"}}>
-              <div style={{marginBottom:6}}>⏳ Loading ML models...</div>
-              <div style={{fontSize:9,color:"#1a3550"}}>Fetching from Supabase ml_models table</div>
-            </div>
-          : mlModels.map(m=>{
-              const wr=Math.round(m.win_rate*100);
-              const color=wr>=70?"#00ff9d":wr>=55?"#00d4ff":"#ffcc00";
-              return (
-                <div key={m.symbol} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10,paddingBottom:10,borderBottom:"1px solid #0a2540"}}>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                      <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#c8e8ff"}}>{SYMBOL_NAMES[m.symbol]||m.symbol}</div>
-                      <div style={{fontFamily:"'Orbitron',monospace",fontSize:13,fontWeight:700,color}}>{wr}%</div>
-                    </div>
-                    <div style={{height:4,background:"#0a2540",borderRadius:2,overflow:"hidden"}}>
-                      <motion.div style={{height:"100%",borderRadius:2,background:`linear-gradient(90deg,${color}55,${color})`}} initial={{width:0}} animate={{width:wr+"%"}} transition={{duration:1}}/>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
-                      <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#3a6080"}}>trained: {m.trained_at?.slice(0,10)}</div>
-                      <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#00ff9d"}}>✅ AUTO-ACTIVE</div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-        }
-        <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#3a6080",marginTop:4,lineHeight:1.7}}>
-          💡 Add a new symbol to ml_models table → bot trades it automatically next cycle. No config needed.
-        </div>
-      </motion.div>
-
-      <motion.div style={s.chartCard} variants={iv}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-          <div>
-            <div style={{fontFamily:"'Orbitron',monospace",fontSize:14,fontWeight:700,color:"#fff"}}>{SYMBOL_NAMES[firstSym]||firstSym}</div>
-            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:10,color:"#3a6080",marginTop:2}}>LIVE · ML MONITORING</div>
-          </div>
-          <motion.div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:20,color:"#00d4ff"}} animate={{opacity:[1,0.7,1]}} transition={{duration:1.2,repeat:Infinity}}>{livePrice}</motion.div>
-        </div>
-        <ResponsiveContainer width="100%" height={90}>
-          <LineChart data={chartData}>
-            <Line type="monotone" dataKey="v" stroke="#00d4ff" strokeWidth={1.5} dot={false} isAnimationActive={false}/>
-            <Tooltip contentStyle={{background:"#071525",border:"1px solid #0a2540",borderRadius:8,fontFamily:"'Share Tech Mono',monospace",fontSize:10,color:"#00d4ff"}} formatter={v=>[v,"Price"]} labelFormatter={()=>""}/>
-          </LineChart>
-        </ResponsiveContainer>
-      </motion.div>
-
-      <motion.div style={{fontFamily:"'Orbitron',monospace",fontSize:10,color:"#3a6080",letterSpacing:4,padding:"0 20px",marginBottom:10}} variants={iv}>MARKET SIGNALS</motion.div>
-      <motion.div style={s.stratGrid} variants={iv}>
-        {activeSymbols.length===0
-          ? <div style={{gridColumn:"1/-1",textAlign:"center",color:"#3a6080",fontFamily:"'Share Tech Mono',monospace",fontSize:12,padding:20}}>Enable markets in Settings</div>
-          : activeSymbols.map(sym=>{
-              const sig=signals[sym];
-              const color=sig?.action==="BUY"?"#00ff9d":sig?.action==="SELL"?"#ff3366":"#ffcc00";
-              const active=sig&&sig.action!=="HOLD";
-              const isML=mlModels.some(m=>m.symbol===sym);
-              return (
-                <div key={sym} style={active?{...s.stratCard,borderColor:"rgba(0,212,255,0.3)"}:s.stratCard}>
-                  {active&&<div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"linear-gradient(90deg,#00d4ff,#00ff9d)"}}/>}
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                    <div style={{fontSize:16}}>{ICONS[sym]||"📊"}</div>
-                    {isML&&<div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:7,color:"#00ff9d",background:"rgba(0,255,157,0.1)",border:"1px solid rgba(0,255,157,0.3)",padding:"1px 5px",borderRadius:3}}>🧠 ML</div>}
-                  </div>
-                  <div style={{fontFamily:"'Orbitron',monospace",fontSize:9,color:"#c8e8ff",letterSpacing:2,marginBottom:4}}>{SYMBOL_NAMES[sym]||sym}</div>
-                  <div style={{fontSize:11,fontWeight:600,letterSpacing:1,color:sig?color:"#3a6080"}}>{sig?`${sig.action} ${sig.confidence}%`:"SCANNING..."}</div>
-                  <div style={s.scoreBar}><motion.div style={{height:"100%",borderRadius:2,background:`linear-gradient(90deg,${color}88,${color})`}} initial={{width:0}} animate={{width:`${sig?.confidence||0}%`}} transition={{duration:1}}/></div>
-                </div>
-              );
-            })
-        }
-      </motion.div>
-
-      <motion.div style={s.tickerWrap} variants={iv}>
-        <div style={{background:"rgba(0,212,255,0.06)",padding:"7px 14px",display:"flex",alignItems:"center",gap:8,borderBottom:"1px solid #0a2540"}}>
-          <motion.div style={{width:6,height:6,borderRadius:"50%",background:"#00ff9d"}} animate={{opacity:[1,0.2,1]}} transition={{duration:1.5,repeat:Infinity}}/>
-          <span style={{fontFamily:"'Orbitron',monospace",fontSize:9,letterSpacing:3,color:"#00d4ff"}}> // ML INTELLIGENCE FEED</span>
-        </div>
-        <div style={{overflow:"hidden",padding:"8px 0"}}>
-          <motion.div style={{display:"flex",gap:40,whiteSpace:"nowrap",width:"max-content"}} animate={{x:["0%","-50%"]}} transition={{duration:28,repeat:Infinity,ease:"linear"}}>
-            {[...TICKER,...TICKER].map((t,i)=>(
-              <span key={i} style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#c8e8ff",padding:"0 14px"}}>
-                <span style={{color:"#00ff9d",marginRight:6}}>[{t.tag}]</span>{t.text} — <span style={{color:t.s==="pos"?"#00ff9d":"#ff3366"}}>{t.l}</span>
-              </span>
+          {/* Config */}
+          <div style={{background:"#13131f",borderRadius:"8px",padding:"16px",border:"1px solid #2a2a3e"}}>
+            <h3 style={{margin:"0 0 12px",color:"#7c3aed"}}>Bot Config</h3>
+            {[
+              ["Status", config.auto_trade ? "🟢 ACTIVE" : "🔴 PAUSED"],
+              ["Symbols", (config.symbols||[]).join(", ")],
+              ["Min Confidence", `${config.min_confidence}%`],
+              ["Risk Per Trade", `${config.risk_pct}%`],
+              ["Total Trades", decided.length],
+              ["Errors", trades.filter(t=>t.result==="error").length],
+            ].map(([k,v]) => (
+              <div key={k} style={{display:"flex",justifyContent:"space-between",
+                padding:"6px 0",borderBottom:"1px solid #1a1a2e"}}>
+                <span style={{color:"#888",fontSize:"12px"}}>{k}</span>
+                <span style={{color:"#e0e0ff",fontSize:"12px"}}>{v}</span>
+              </div>
             ))}
-          </motion.div>
+          </div>
         </div>
-      </motion.div>
-    </motion.div>
+      )}
+
+      {tab === "recommendations" && (
+        <div style={{background:"#13131f",borderRadius:"8px",padding:"16px",border:"1px solid #2a2a3e"}}>
+          <h3 style={{margin:"0 0 16px",color:"#7c3aed"}}>📊 Daily Pair Analysis</h3>
+          {recs.length === 0
+            ? <div style={{textAlign:"center",padding:"40px"}}>
+                <p style={{color:"#888"}}>Click "Get Recommendations" to analyze all pairs</p>
+                <button onClick={getRecommendations}
+                  style={{background:"#0d9488",border:"none",color:"white",
+                          padding:"10px 20px",borderRadius:"6px",cursor:"pointer",marginTop:"10px"}}>
+                  Analyze Markets Now
+                </button>
+              </div>
+            : recs.map(r => (
+                <div key={r.symbol} style={{display:"flex",alignItems:"center",gap:"12px",
+                  padding:"12px",marginBottom:"8px",background:"#0d0d1a",
+                  borderRadius:"6px",border:"1px solid #2a2a3e"}}>
+                  <span style={{background:gradeColor(r.grade),color:"#000",fontWeight:"bold",
+                    padding:"4px 8px",borderRadius:"4px",minWidth:"30px",textAlign:"center"}}>
+                    {r.grade}
+                  </span>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+                      <span style={{fontWeight:"bold",color:"#e0e0ff"}}>{r.symbol}</span>
+                      <span style={{background:r.direction==="BUY"?"#00ff8833":"#ff444433",
+                        color:r.direction==="BUY"?"#00ff88":"#ff4444",
+                        padding:"2px 8px",borderRadius:"4px",fontSize:"11px"}}>
+                        {r.direction}
+                      </span>
+                      <span style={{color:"#888",fontSize:"11px"}}>conf:{r.confidence}%</span>
+                    </div>
+                    <p style={{margin:"2px 0 0",color:"#888",fontSize:"11px"}}>{r.reason}</p>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <p style={{margin:0,fontSize:"18px",fontWeight:"bold",
+                      color:r.score>0.5?"#00ff88":"#ffaa00"}}>{(r.score*100).toFixed(0)}</p>
+                    <p style={{margin:0,color:"#888",fontSize:"10px"}}>score</p>
+                  </div>
+                </div>
+              ))
+          }
+        </div>
+      )}
+
+      {tab === "signals" && (
+        <div style={{background:"#13131f",borderRadius:"8px",padding:"16px",border:"1px solid #2a2a3e"}}>
+          <h3 style={{margin:"0 0 12px",color:"#7c3aed"}}>Live Signals</h3>
+          {signals.length === 0
+            ? <p style={{color:"#888"}}>Run a scan to generate signals</p>
+            : signals.map((s,i) => (
+              <div key={i} style={{padding:"10px",marginBottom:"8px",background:"#0d0d1a",
+                borderRadius:"6px",border:"1px solid #2a2a3e"}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{fontWeight:"bold"}}>{s.symbol}</span>
+                  <span style={{color:s.action==="BUY"?"#00ff88":"#ff4444",fontWeight:"bold"}}>
+                    {s.action} {s.confidence}%
+                  </span>
+                </div>
+                <p style={{margin:"4px 0 0",color:"#888",fontSize:"11px"}}>
+                  Bayesian P(win): {(s.bayesian_win_prob*100||0).toFixed(1)}% | {s.reason}
+                </p>
+              </div>
+            ))
+          }
+        </div>
+      )}
+
+      {tab === "trades" && (
+        <div style={{background:"#13131f",borderRadius:"8px",padding:"16px",border:"1px solid #2a2a3e"}}>
+          <h3 style={{margin:"0 0 12px",color:"#7c3aed"}}>Recent Trades</h3>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+            <thead>
+              <tr style={{borderBottom:"1px solid #2a2a3e"}}>
+                {["Time","Symbol","Direction","Result","PnL","Conf"].map(h => (
+                  <th key={h} style={{padding:"8px",textAlign:"left",color:"#888"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {trades.slice(0,50).map((t,i) => (
+                <tr key={i} style={{borderBottom:"1px solid #13131f"}}>
+                  <td style={{padding:"6px 8px",color:"#888"}}>{t.created_at?.slice(11,16)}</td>
+                  <td style={{padding:"6px 8px"}}>{t.symbol}</td>
+                  <td style={{padding:"6px 8px",color:"#888"}}>{t.type||"?"}</td>
+                  <td style={{padding:"6px 8px",color:
+                    t.result==="win"?"#00ff88":t.result==="loss"?"#ff4444":
+                    t.result==="error"?"#ff8800":"#888"}}>
+                    {t.result}
+                  </td>
+                  <td style={{padding:"6px 8px",color:parseFloat(t.pnl||0)>0?"#00ff88":"#ff4444"}}>
+                    {t.pnl ? `$${parseFloat(t.pnl).toFixed(2)}` : "-"}
+                  </td>
+                  <td style={{padding:"6px 8px",color:"#888"}}>{t.confidence}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
