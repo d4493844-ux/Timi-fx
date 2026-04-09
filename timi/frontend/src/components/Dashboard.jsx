@@ -257,6 +257,12 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
                   <span style={{fontSize:10,color:"#3a6080",fontFamily:"'Share Tech Mono',monospace"}}>conf:{r.confidence}%</span>
                 </div>
                 <p style={{margin:"2px 0 0",color:"#3a6080",fontSize:10,fontFamily:"'Share Tech Mono',monospace"}}>{r.reason}</p>
+                {r.entry && <div style={{display:"flex",gap:8,marginTop:4}}>
+                  <span style={{fontSize:9,color:"#3a6080",fontFamily:"'Share Tech Mono',monospace"}}>ENTRY: <span style={{color:"#c8e8ff"}}>{r.entry}</span></span>
+                  <span style={{fontSize:9,color:"#00ff9d",fontFamily:"'Share Tech Mono',monospace"}}>TP: {r.takeProfit}</span>
+                  <span style={{fontSize:9,color:"#ff4444",fontFamily:"'Share Tech Mono',monospace"}}>SL: {r.stopLoss}</span>
+                  <span style={{fontSize:9,color:"#ffaa00",fontFamily:"'Share Tech Mono',monospace"}}>RR: {r.rrRatio}x</span>
+                </div>}
               </div>
               <div style={{fontFamily:"'Orbitron',monospace",fontSize:16,fontWeight:700,
                 color:r.score>0.6?"#00ff9d":r.score>0.4?"#00d4ff":"#ffaa00"}}>{Math.round(r.score*100)}</div>
