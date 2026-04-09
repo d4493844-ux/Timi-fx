@@ -2648,7 +2648,8 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         let contractType: string;
         if (symbol.startsWith("BOOM"))       contractType = "MULTUP";
         else if (symbol.startsWith("CRASH")) contractType = "MULTDOWN";
-        else if (symbol.startsWith("R_"))    contractType = action === "BUY" ? "CALL" : "PUT";
+        else if (symbol.startsWith("R_") || symbol.startsWith("1HZ")) contractType = action === "BUY" ? "CALL" : "PUT";
+        else if (symbol.startsWith("frx") || symbol.startsWith("cry")) contractType = action === "BUY" ? "CALL" : "PUT";
         else                                  contractType = action === "BUY" ? "MULTUP" : "MULTDOWN";
 
         const isMult   = contractType.startsWith("MULT");
