@@ -74,22 +74,17 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
   const cv={hidden:{},visible:{transition:{staggerChildren:0.08}}};
   const iv={hidden:{opacity:0,y:20},visible:{opacity:1,y:0,transition:{duration:0.4}}};
 
-
   const [recs, setRecs] = useState([]);
   const [recLoading, setRecLoading] = useState(false);
-
   const getRecommendations = async () => {
     setRecLoading(true);
     try {
       const r = await fetch("https://pedbupgjxlcumidwoktc.supabase.co/functions/v1/timi-trader", {
-        method: "POST",
-        headers: { "Content-Type": "application/json",
-          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMjc0NTIsImV4cCI6MjA4NzkwMzQ1Mn0.lscyzf9JN82ZihHLD0VC4broyMMfm7WL9MIvXRmwZG8" },
-        body: JSON.stringify({ recommend: true })
-      }).then(r => r.json());
-      setRecs(r.top_pairs || []);
-    } catch(e) { console.error(e); }
-    setRecLoading(false);
+        method:"POST", headers:{"Content-Type":"application/json",
+        "Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMjc0NTIsImV4cCI6MjA4NzkwMzQ1Mn0.lscyzf9JN82ZihHLD0VC4broyMMfm7WL9MIvXRmwZG8"},
+        body:JSON.stringify({recommend:true})}).then(r=>r.json());
+      setRecs(r.top_pairs||[]);
+    } catch(e){} setRecLoading(false);
   };
   return (
     <motion.div style={s.page} variants={cv} initial="hidden" animate="visible">
@@ -236,45 +231,39 @@ export default function Dashboard({balance,ticks={},timiStatus,signals={},openTr
           </motion.div>
         </div>
       </motion.div>
-    </motion.div>
-        {/* ── DAILY RECOMMENDATIONS ── */}
-        <div style={{margin:"0 20px 14px",background:"#071525",border:"1px solid rgba(0,212,255,0.15)",borderRadius:16,padding:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#00d4ff",letterSpacing:2}}>📊 PAIR RECOMMENDATIONS</span>
-            <motion.button whileTap={{scale:0.95}}
-              onClick={getRecommendations}
-              style={{background:"linear-gradient(135deg,#00d4ff22,#00ff9d22)",border:"1px solid #00d4ff44",borderRadius:8,padding:"6px 12px",color:"#00d4ff",fontFamily:"'Share Tech Mono',monospace",fontSize:10,cursor:"pointer",letterSpacing:1}}>
-              {recLoading ? "SCANNING..." : "ANALYZE NOW"}
-            </motion.button>
-          </div>
-          {recs.length === 0
-            ? <p style={{color:"#3a6080",fontSize:11,fontFamily:"'Share Tech Mono',monospace",textAlign:"center",padding:"16px 0"}}>TAP ANALYZE NOW TO SCAN ALL PAIRS</p>
-            : recs.map((r,i) => (
-              <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #0a2540"}}>
-                <div style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:13,
-                  background:r.grade==="A+"?"rgba(0,255,157,0.15)":r.grade==="A"?"rgba(0,212,255,0.15)":r.grade==="B"?"rgba(255,170,0,0.15)":"rgba(255,68,68,0.15)",
-                  color:r.grade==="A+"?"#00ff9d":r.grade==="A"?"#00d4ff":r.grade==="B"?"#ffaa00":"#ff4444",
-                  border:`1px solid ${r.grade==="A+"?"#00ff9d44":r.grade==="A"?"#00d4ff44":r.grade==="B"?"#ffaa0044":"#ff444444"}`}}>
-                  {r.grade}
-                </div>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:12,color:"#c8e8ff"}}>{r.symbol}</span>
-                    <span style={{fontSize:10,padding:"2px 6px",borderRadius:4,fontFamily:"'Share Tech Mono',monospace",
-                      background:r.direction==="BUY"?"rgba(0,255,157,0.15)":"rgba(255,68,68,0.15)",
-                      color:r.direction==="BUY"?"#00ff9d":"#ff4444"}}>{r.direction}</span>
-                    <span style={{fontSize:10,color:"#3a6080",fontFamily:"'Share Tech Mono',monospace"}}>conf:{r.confidence}%</span>
-                  </div>
-                  <p style={{margin:"2px 0 0",color:"#3a6080",fontSize:10,fontFamily:"'Share Tech Mono',monospace"}}>{r.reason}</p>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontFamily:"'Orbitron',monospace",fontSize:16,fontWeight:700,
-                    color:r.score>0.6?"#00ff9d":r.score>0.4?"#00d4ff":"#ffaa00"}}>{Math.round(r.score*100)}</div>
-                  <div style={{fontSize:9,color:"#3a6080",fontFamily:"'Share Tech Mono',monospace"}}>SCORE</div>
-                </div>
-              </div>
-            ))
-          }
+
+      {/* ── PAIR RECOMMENDATIONS ── */}
+      <div style={{margin:"0 20px 14px",background:"#071525",border:"1px solid rgba(0,212,255,0.15)",borderRadius:16,padding:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:11,color:"#00d4ff",letterSpacing:2}}>📊 PAIR RECOMMENDATIONS</span>
+          <motion.button whileTap={{scale:0.95}} onClick={getRecommendations}
+            style={{background:"rgba(0,212,255,0.1)",border:"1px solid #00d4ff44",borderRadius:8,padding:"6px 12px",color:"#00d4ff",fontFamily:"'Share Tech Mono',monospace",fontSize:10,cursor:"pointer"}}>
+            {recLoading?"SCANNING...":"ANALYZE NOW"}
+          </motion.button>
         </div>
+        {recs.length===0
+          ? <p style={{color:"#3a6080",fontSize:11,fontFamily:"'Share Tech Mono',monospace",textAlign:"center",padding:"16px 0"}}>TAP ANALYZE NOW TO SCAN ALL PAIRS</p>
+          : recs.map((r,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #0a2540"}}>
+              <div style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:13,
+                background:r.grade==="A+"?"rgba(0,255,157,0.15)":"rgba(0,212,255,0.15)",
+                color:r.grade==="A+"?"#00ff9d":"#00d4ff",border:"1px solid #00d4ff44"}}>{r.grade}</div>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:12,color:"#c8e8ff"}}>{r.symbol}</span>
+                  <span style={{fontSize:10,padding:"2px 6px",borderRadius:4,
+                    background:r.direction==="BUY"?"rgba(0,255,157,0.15)":"rgba(255,68,68,0.15)",
+                    color:r.direction==="BUY"?"#00ff9d":"#ff4444",fontFamily:"'Share Tech Mono',monospace"}}>{r.direction}</span>
+                  <span style={{fontSize:10,color:"#3a6080",fontFamily:"'Share Tech Mono',monospace"}}>conf:{r.confidence}%</span>
+                </div>
+                <p style={{margin:"2px 0 0",color:"#3a6080",fontSize:10,fontFamily:"'Share Tech Mono',monospace"}}>{r.reason}</p>
+              </div>
+              <div style={{fontFamily:"'Orbitron',monospace",fontSize:16,fontWeight:700,
+                color:r.score>0.6?"#00ff9d":r.score>0.4?"#00d4ff":"#ffaa00"}}>{Math.round(r.score*100)}</div>
+            </div>
+          ))
+        }
+      </div>
+    </motion.div>
   );
 }
