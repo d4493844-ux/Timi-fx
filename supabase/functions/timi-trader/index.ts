@@ -3500,6 +3500,18 @@ async function getDailyPairRecommendations(
       if (qpl.inTransit) reasons.push("in transit zone");
       if (temporal.jumpProbability > 0.5) reasons.push("level transition likely");
 
+      const currentPrice = closes[closes.length-1];
+      const qplData = computeQuantumPriceLevels(candles);
+      let tpPrice = direction==="BUY" ? qplData.nearestResistance : qplData.nearestSupport;
+      let slPrice = direction==="BUY" ? qplData.nearestSupport   : qplData.nearestResistance;
+      if (harmonic.hasSignal) {
+        tpPrice = direction==="BUY" ? currentPrice*(1+harmonic.tpPct) : currentPrice*(1-harmonic.tpPct);
+        slPrice = direction==="BUY" ? currentPrice*(1-harmonic.slPct) : currentPrice*(1+harmonic.slPct);
+      }
+      const tpDist = Math.abs(tpPrice-currentPrice);
+      const slDist = Math.abs(slPrice-currentPrice);
+      const rrRatio = slDist>0 ? parseFloat((tpDist/slDist).toFixed(2)) : 0;
+
       recommendations.push({
         symbol,
         score: absScore,
@@ -3507,6 +3519,13 @@ async function getDailyPairRecommendations(
         reason: reasons.join(" + ") || "ensemble signal",
         direction,
         confidence: Math.round(Math.min(95, absScore * 100)),
+        entry:      parseFloat(currentPrice.toFixed(5)),
+        takeProfit: parseFloat(tpPrice.toFixed(5)),
+        stopLoss:   parseFloat(slPrice.toFixed(5)),
+        rrRatio,
+        tpPct:      parseFloat((tpDist/currentPrice*100).toFixed(3)),
+        slPct:      parseFloat((slDist/currentPrice*100).toFixed(3)),
+        pattern:    harmonic.hasSignal ? harmonic.pattern : "QPL",
         components: {
           path:     parseFloat(pathScore.toFixed(3)),
           temporal: parseFloat(temporalScore.toFixed(3)),
