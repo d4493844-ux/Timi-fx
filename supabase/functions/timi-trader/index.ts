@@ -4009,8 +4009,100 @@ Deno.serve(async (req) => {
   );
 
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
+  // ── CONTRACT LIMIT CHECK — max 90 open contracts ──
+  const openContractCount: number = await new Promise((resolve) => {
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const t  = setTimeout(() => { ws.close(); resolve(0); }, 5000);
+    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+    ws.onmessage = (e: any) => {
+      const d = JSON.parse(e.data);
+      if (d.authorize) {
+        ws.send(JSON.stringify({ portfolio: 1 }));
+      }
+      if (d.portfolio) {
+        clearTimeout(t); ws.close();
+        resolve((d.portfolio.contracts || []).length);
+      }
+      if (d.error) { clearTimeout(t); ws.close(); resolve(0); }
+    };
+    ws.onerror = () => { clearTimeout(t); resolve(0); };
+  });
+
+  if (openContractCount >= 90) {
+    console.log(`⚠️ Contract limit: ${openContractCount}/100 open — skipping new trade`);
+    return new Response(JSON.stringify({
+      status: "contract_limit",
+      open_contracts: openContractCount,
+      message: "Too many open contracts — waiting for some to close"
+    }), { headers: CORS });
+  }
+  console.log(`📊 Open contracts: ${openContractCount}/100`);
+
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
   const success = result && !result.error;
+
+  // ── MID-TRADE MONITORING — close if trend reverses ──
+  // Monitors the trade every 30s, closes if ensemble flips direction
+  if (success && result?.contract_id) {
+    const monitorCid = result.contract_id;
+    const monitorSym = best.symbol;
+    const monitorDir = best.action;
+
+    (async () => {
+      try {
+        // Wait 60s before first check (give trade time to develop)
+        await new Promise(r => setTimeout(r, 60000));
+
+        for (let check = 0; check < 10; check++) {
+          // Re-analyze symbol
+          const freshCandles = await fetchCandles(monitorSym, 60, 100);
+          if (freshCandles.length < 30) break;
+
+          const freshFeatures = buildFeatures(freshCandles, []);
+          const freshML       = ML_MODELS[monitorSym]
+            ? mlPredict(ML_MODELS[monitorSym], freshFeatures) : { action:"HOLD", confidence:50 };
+          const freshSpike    = detectAnharmonicSpike(freshCandles);
+          const freshPath     = computePathIntegral(freshCandles);
+
+          // Trend reversal signal
+          const reversalSignal =
+            (monitorDir === "BUY" && freshML.action === "SELL" && freshML.confidence > 70) ||
+            (monitorDir === "SELL" && freshML.action === "BUY" && freshML.confidence > 70) ||
+            (freshSpike.spikeImminent && freshSpike.spikeDirection !== (monitorDir==="BUY"?"UP":"DOWN")) ||
+            (freshPath.mostProbableDir === (monitorDir==="BUY"?"DOWN":"UP") && freshPath.pathConfidence > 0.7);
+
+          if (reversalSignal) {
+            console.log(`🔄 REVERSAL detected on ${monitorSym} — closing contract ${monitorCid}`);
+            // Close the contract
+            await new Promise<void>((resolve) => {
+              const ws2 = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+              const t2  = setTimeout(() => { ws2.close(); resolve(); }, 8000);
+              ws2.onopen = () => ws2.send(JSON.stringify({ authorize: token }));
+              ws2.onmessage = async (e: any) => {
+                const d2 = JSON.parse(e.data);
+                if (d2.authorize) {
+                  ws2.send(JSON.stringify({ sell: monitorCid, price: 0 }));
+                }
+                if (d2.sell || d2.error) {
+                  clearTimeout(t2); ws2.close();
+                  const sellPrice = parseFloat(d2.sell?.sold_for || "0");
+                  console.log(`✅ Contract ${monitorCid} closed at $${sellPrice} (reversal protection)`);
+                  resolve();
+                }
+              };
+              ws2.onerror = () => { clearTimeout(t2); resolve(); };
+            });
+            break; // Stop monitoring after close
+          }
+
+          // Wait 30s before next check
+          await new Promise(r => setTimeout(r, 30000));
+        }
+      } catch(e) {
+        console.log(`⚠️ Monitor error: ${e}`);
+      }
+    })();
+  }
 
   // ── IMMEDIATE RESULT SUBSCRIPTION ──
   // Subscribe to contract updates RIGHT AFTER placing
