@@ -4028,15 +4028,17 @@ Deno.serve(async (req) => {
     ws.onerror = () => { clearTimeout(t); resolve(0); };
   });
 
-  if (openContractCount >= 90) {
-    console.log(`⚠️ Contract limit: ${openContractCount}/100 open — skipping new trade`);
+  if (openContractCount >= 5) {
+    console.log(`⚠️ Contract limit: ${openContractCount} open — waiting for closes`);
+    // Still run update to record closed trades
+    await updateOpenTradeResults(supabase, token);
     return new Response(JSON.stringify({
       status: "contract_limit",
       open_contracts: openContractCount,
-      message: "Too many open contracts — waiting for some to close"
+      message: `${openContractCount} contracts open — waiting for TP hits`
     }), { headers: CORS });
   }
-  console.log(`📊 Open contracts: ${openContractCount}/100`);
+  console.log(`📊 Open contracts: ${openContractCount}`);
 
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
   const success = result && !result.error;
