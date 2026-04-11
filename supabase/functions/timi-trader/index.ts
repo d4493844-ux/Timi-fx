@@ -4041,69 +4041,6 @@ Deno.serve(async (req) => {
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
   const success = result && !result.error;
 
-  // ── MID-TRADE MONITORING — close if trend reverses ──
-  // Monitors the trade every 30s, closes if ensemble flips direction
-  if (success && result?.contract_id) {
-    const monitorCid = result.contract_id;
-    const monitorSym = best.symbol;
-    const monitorDir = best.action;
-
-    (async () => {
-      try {
-        // Wait 60s before first check (give trade time to develop)
-        await new Promise(r => setTimeout(r, 60000));
-
-        for (let check = 0; check < 10; check++) {
-          // Re-analyze symbol
-          const freshCandles = await fetchCandles(monitorSym, 60, 100);
-          if (freshCandles.length < 30) break;
-
-          const freshFeatures = buildFeatures(freshCandles, []);
-          const freshML       = ML_MODELS[monitorSym]
-            ? mlPredict(ML_MODELS[monitorSym], freshFeatures) : { action:"HOLD", confidence:50 };
-          const freshSpike    = detectAnharmonicSpike(freshCandles);
-          const freshPath     = computePathIntegral(freshCandles);
-
-          // Trend reversal signal
-          const reversalSignal =
-            (monitorDir === "BUY" && freshML.action === "SELL" && freshML.confidence > 70) ||
-            (monitorDir === "SELL" && freshML.action === "BUY" && freshML.confidence > 70) ||
-            (freshSpike.spikeImminent && freshSpike.spikeDirection !== (monitorDir==="BUY"?"UP":"DOWN")) ||
-            (freshPath.mostProbableDir === (monitorDir==="BUY"?"DOWN":"UP") && freshPath.pathConfidence > 0.7);
-
-          if (reversalSignal) {
-            console.log(`🔄 REVERSAL detected on ${monitorSym} — closing contract ${monitorCid}`);
-            // Close the contract
-            await new Promise<void>((resolve) => {
-              const ws2 = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-              const t2  = setTimeout(() => { ws2.close(); resolve(); }, 8000);
-              ws2.onopen = () => ws2.send(JSON.stringify({ authorize: token }));
-              ws2.onmessage = async (e: any) => {
-                const d2 = JSON.parse(e.data);
-                if (d2.authorize) {
-                  ws2.send(JSON.stringify({ sell: monitorCid, price: 0 }));
-                }
-                if (d2.sell || d2.error) {
-                  clearTimeout(t2); ws2.close();
-                  const sellPrice = parseFloat(d2.sell?.sold_for || "0");
-                  console.log(`✅ Contract ${monitorCid} closed at $${sellPrice} (reversal protection)`);
-                  resolve();
-                }
-              };
-              ws2.onerror = () => { clearTimeout(t2); resolve(); };
-            });
-            break; // Stop monitoring after close
-          }
-
-          // Wait 30s before next check
-          await new Promise(r => setTimeout(r, 30000));
-        }
-      } catch(e) {
-        console.log(`⚠️ Monitor error: ${e}`);
-      }
-    })();
-  }
-
   // ── IMMEDIATE RESULT SUBSCRIPTION ──
   // Subscribe to contract updates RIGHT AFTER placing
   // This catches the result within seconds of closing
