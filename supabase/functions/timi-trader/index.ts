@@ -3835,16 +3835,16 @@ Deno.serve(async (req) => {
 
         // ── WEIGHTED ENSEMBLE — all systems vote together ──
         const ensembleScore =
-          0.22 * mlScore       +
-          0.18 * harmonicScore +
-          0.12 * regimeScore   +
-          0.12 * qpfScore      +
+          0.35 * mlScore       +  // ML is most reliable — highest weight
+          0.20 * harmonicScore +  // Fibonacci geometry
+          0.10 * regimeScore   +  // regime reduced — was dominating wrongly
+          0.10 * qpfScore      +
           0.08 * spikeScore    +
-          0.10 * rlScore       +
-          0.08 * pathScore     +  // Feynman path integral
-          0.05 * temporalScore +  // temporal turbulence
-          0.03 * kalmanScore   +
-          0.02 * ouScore;
+          0.08 * rlScore       +
+          0.05 * pathScore     +
+          0.02 * temporalScore +
+          0.01 * kalmanScore   +
+          0.01 * ouScore;
 
         // ── BOOM/CRASH: force direction (they only go one way) ──
         let finalScore = ensembleScore;
