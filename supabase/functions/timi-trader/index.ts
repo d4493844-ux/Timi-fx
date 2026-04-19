@@ -4040,6 +4040,14 @@ Deno.serve(async (req) => {
   }
   console.log(`📊 Open contracts: ${openContractCount}`);
 
+  try {
+    await supabase.from("mt5_signals").insert({
+      symbol: best.symbol, action: best.action,
+      confidence: best.confidence, status: "pending"
+    });
+    console.log(`📡 MT5 signal: ${best.symbol} ${best.action}`);
+  } catch(e) {}
+
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
   const success = result && !result.error;
 
