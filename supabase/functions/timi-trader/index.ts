@@ -4045,8 +4045,15 @@ Deno.serve(async (req) => {
       symbol: best.symbol, action: best.action,
       confidence: best.confidence, status: "pending"
     });
-    console.log(`📡 MT5 signal: ${best.symbol} ${best.action}`);
-  } catch(e) {}
+    // Send to Telegram for MT5 to pick up
+    const telegramMsg = `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`;
+    await fetch(
+      `https://api.telegram.org/bot8617289462:AAEhpKyWCcFPVEULoaWfOfj7moUJ7MPS_nA/sendMessage`,
+      { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({chat_id:"6367921503", text: telegramMsg}) }
+    );
+    console.log(`📡 Signal sent to Telegram: ${telegramMsg}`);
+  } catch(e) { console.log("Signal error:", e); }
 
   const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
   const success = result && !result.error;
