@@ -680,1490 +680,6 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
 let HMM_MODEL: any = null;
 let SPECIALIST_MODELS: Record<string, any> = {};
 
-
-
-
-// ═══════════════════════════════════════════════════════════════════
-// QUANTUM FINANCIAL MATHEMATICS — Complete Framework
-// ═══════════════════════════════════════════════════════════════════
-//
-// THEORETICAL BASIS:
-// Price returns r(t) modeled as quantum wavefunction ψ(x,t)
-// Governed by Time-Independent Schrödinger Equation (TISE):
-//   Ĥψₙ = Eₙψₙ
-//   Ĥ = -ℏ²/2m · d²/dx² + V(x)
-//   V(x) = ½kx² + λx⁴  (quantum anharmonic oscillator)
-//
-// Where:
-//   x     = price deviation from equilibrium (log returns)
-//   k     = harmonic constant (OU mean reversion speed θ)
-//   λ     = anharmonic coefficient (excess kurtosis / fat tails)
-//   ℏ     = effective Planck constant (market granularity = σ/10)
-//   Eₙ    = energy eigenvalues → Quantum Price Levels (QPL)
-//   ψₙ    = eigenfunctions → probability density at each level
-//
-// Energy eigenvalues for anharmonic oscillator (perturbation theory):
-//   E₀ = ½ℏω + (3λℏ²)/(4k²)              (ground state)
-//   Eₙ = ℏω(n+½) + (λℏ²/k²)(6n²+6n+3)   (excited states)
-//   ω  = √(k/m) = natural frequency of oscillation
-//
-// QPLs are prices where |ψₙ(x)|² is maximized:
-//   Price_n = μ ± √(2Eₙ/k)
-//
-// References:
-//   Haven (2002) — Schrödinger equation in finance
-//   Baaquie (2004) — Quantum Finance
-//   Khrennikov (2010) — Ubiquitous Quantum Structure
-//   Busemeyer & Bruza (2012) — Quantum Cognition
-// ═══════════════════════════════════════════════════════════════════
-
-// ── QPL SECTION 1: ANHARMONIC OSCILLATOR COEFFICIENTS ──────────────
-function computeAnharmonicCoefficients(returns: number[]): {
-  omega: number;    // natural frequency (volatility)
-  lambda: number;   // anharmonic coefficient (kurtosis-derived)
-  kappa: number;    // harmonic constant (mean reversion)
-  hbar: number;     // effective Planck constant
-  damping: number;  // damping coefficient (trend persistence)
-  mu: number;       // mean return
-  sigma: number;    // return volatility
-} {
-  const n   = returns.length;
-  if (n < 10) return { omega:0.01, lambda:0.1, kappa:0.01, hbar:0.001, damping:0.5, mu:0, sigma:0.01 };
-
-  // First moment (mean)
-  const mu = returns.reduce((a,b) => a+b, 0) / n;
-
-  // Second moment (variance/volatility)
-  const variance = returns.reduce((a,b) => a + (b-mu)**2, 0) / n;
-  const sigma    = Math.sqrt(Math.max(variance, 1e-10));
-
-  // Third moment (skewness) — asymmetry of distribution
-  const m3 = returns.reduce((a,b) => a + ((b-mu)/sigma)**3, 0) / n;
-
-  // Fourth moment (excess kurtosis) — fat tail measure
-  // κ = 0 → Gaussian, κ > 0 → fat tails (leptokurtic)
-  const m4 = returns.reduce((a,b) => a + ((b-mu)/sigma)**4, 0) / n;
-  const excessKurtosis = m4 - 3; // excess kurtosis
-
-  // Anharmonic coefficient λ from kurtosis:
-  // For anharmonic oscillator: κ_excess = 6λ/(k²) × ℏ²
-  // → λ = κ_excess × k² / (6ℏ²)
-  // Simplified: λ ∝ excess_kurtosis / σ⁴
-  const lambda = Math.max(0, excessKurtosis / (3 * Math.pow(sigma, 2)));
-
-  // Natural frequency ω = σ (volatility is the oscillation frequency)
-  const omega = sigma;
-
-  // Harmonic constant κ from autocorrelation (mean reversion speed)
-  // First-order autocorrelation: ρ₁ = e^(-κΔt) for OU process
-  let acf1 = 0;
-  if (n > 2) {
-    const returns_lag = returns.slice(0, n-1);
-    const returns_cur = returns.slice(1);
-    const mu1 = returns_lag.reduce((a,b)=>a+b,0)/(n-1);
-    const mu2 = returns_cur.reduce((a,b)=>a+b,0)/(n-1);
-    const cov = returns_lag.reduce((a,b,i) => a+(b-mu1)*(returns_cur[i]-mu2), 0)/(n-1);
-    const std1 = Math.sqrt(returns_lag.reduce((a,b)=>a+(b-mu1)**2,0)/(n-1));
-    const std2 = Math.sqrt(returns_cur.reduce((a,b)=>a+(b-mu2)**2,0)/(n-1));
-    acf1 = std1*std2 > 0 ? cov/(std1*std2) : 0;
-  }
-  // κ = -ln(|ρ₁|) for unit time step
-  const kappa   = Math.max(0.001, -Math.log(Math.abs(acf1) + 0.001));
-  const damping = Math.abs(acf1); // persistence (1=trending, 0=random)
-
-  // Effective Planck constant ℏ = σ/10
-  // Represents minimum "quantum" of market movement
-  // Below this scale, price movements are quantum uncertain
-  const hbar = sigma / 10;
-
-  return { omega, lambda, kappa, hbar, damping, mu, sigma };
-}
-
-// ── QPL SECTION 2: QUANTUM PRICE LEVELS ────────────────────────────
-// Solve TISE for anharmonic oscillator energy eigenvalues
-// E_n = ℏω(n+½) + (λℏ²/κ²)(6n²+6n+3)  [perturbation theory, 1st order]
-// QPL_n = currentPrice × exp(±√(2E_n/κ) × σ)
-function computeQuantumPriceLevels(
-  candles: any[],
-  nLevels: number = 5
-): {
-  levels: number[];         // QPL prices (support/resistance)
-  groundState: number;      // E₀ energy (lowest stable state)
-  lambda: number;           // anharmonic coefficient
-  omega: number;            // natural frequency
-  nearestSupport: number;   // closest QPL below current price
-  nearestResistance: number;// closest QPL above current price
-  distanceToNearest: number;// normalized distance to nearest QPL
-  inTransit: boolean;       // true = price between levels (fast move)
-} {
-  if (candles.length < 20) {
-    const p = parseFloat(candles[candles.length-1]?.close || "1");
-    return { levels:[p], groundState:0, lambda:0, omega:0.01,
-             nearestSupport:p*0.99, nearestResistance:p*1.01,
-             distanceToNearest:0.5, inTransit:false };
-  }
-
-  const closes  = candles.map((c:any) => parseFloat(c.close));
-  const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
-  const current = closes[closes.length - 1];
-
-  const { omega, lambda, kappa, hbar, mu } = computeAnharmonicCoefficients(returns);
-
-  // Energy eigenvalues via first-order perturbation theory
-  // E_n^(0) = ℏω(n+½)            harmonic contribution
-  // E_n^(1) = (λℏ²/κ²)(6n²+6n+3) anharmonic correction
-  const energyLevels: number[] = [];
-  for (let n = 0; n < nLevels * 2; n++) {
-    const E_harmonic    = hbar * omega * (n + 0.5);
-    const E_anharmonic  = lambda > 0 ? (lambda * hbar**2 / (kappa**2)) * (6*n**2 + 6*n + 3) : 0;
-    const E_n           = E_harmonic + E_anharmonic;
-    energyLevels.push(E_n);
-  }
-
-  // Convert energy eigenvalues to price levels
-  // x_n = ±√(2E_n/κ) is the classical turning point
-  // In price space: QPL_n = current × exp(±x_n × σ)
-  const qplLevels: number[] = [current]; // always include current price
-  for (const E_n of energyLevels) {
-    if (E_n <= 0) continue;
-    const x_n = Math.sqrt(2 * E_n / Math.max(kappa, 0.001));
-    // Upper QPL
-    qplLevels.push(current * Math.exp(x_n * omega));
-    // Lower QPL
-    qplLevels.push(current * Math.exp(-x_n * omega));
-  }
-
-  // Sort and deduplicate
-  const sorted = [...new Set(qplLevels.map(p => parseFloat(p.toFixed(5))))].sort((a,b) => a-b);
-
-  // Find nearest support (below) and resistance (above)
-  const below = sorted.filter(p => p < current);
-  const above = sorted.filter(p => p > current);
-  const nearestSupport    = below.length > 0 ? Math.max(...below) : current * 0.99;
-  const nearestResistance = above.length > 0 ? Math.min(...above) : current * 1.01;
-
-  // Distance to nearest QPL (normalized 0-1)
-  const distToSupport    = (current - nearestSupport) / current;
-  const distToResist     = (nearestResistance - current) / current;
-  const distanceToNearest = Math.min(distToSupport, distToResist);
-
-  // Ground state energy
-  const E0 = hbar * omega * 0.5 + (lambda > 0 ? (lambda * hbar**2 / kappa**2) * 3 : 0);
-
-  // "In transit" = price is far from any QPL = fast move expected
-  // "At QPL" = price consolidating = wait for breakout/reversal
-  const inTransit = distanceToNearest > omega * 2;
-
-  return {
-    levels:              sorted,
-    groundState:         E0,
-    lambda,
-    omega,
-    nearestSupport,
-    nearestResistance,
-    distanceToNearest,
-    inTransit,
-  };
-}
-
-// ── QPL SECTION 3: ANHARMONIC SPIKE DETECTOR ───────────────────────
-// Detects when market is about to exhibit anharmonic oscillation:
-// Condition: λ increasing AND damping decreasing
-// → Nonlinear spike imminent (BOOM/CRASH or violent reversal)
-//
-// Physics: when energy exceeds the anharmonic barrier V_max:
-//   V_max = k²/(4λ)
-//   If E_current > V_max → particle (price) escapes the well → SPIKE
-function detectAnharmonicSpike(candles: any[]): {
-  spikeImminent: boolean;
-  spikeProbability: number;  // 0-1
-  spikeDirection: string;    // "UP" | "DOWN" | "UNKNOWN"
-  lambda: number;
-  damping: number;
-  energyRatio: number;       // E_current/V_max (>1 = spike)
-  timeToSpike: number;       // estimated candles until spike
-} {
-  if (candles.length < 30) {
-    return { spikeImminent:false, spikeProbability:0, spikeDirection:"UNKNOWN",
-             lambda:0, damping:0.5, energyRatio:0, timeToSpike:999 };
-  }
-
-  const closes  = candles.map((c:any) => parseFloat(c.close));
-  const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
-
-  // Compute coefficients on full window
-  const full = computeAnharmonicCoefficients(returns);
-
-  // Compute on recent window (last 20% of data) to detect CHANGE
-  const recentN   = Math.floor(returns.length * 0.2);
-  const recent    = computeAnharmonicCoefficients(returns.slice(-recentN));
-
-  // Anharmonic barrier height: V_max = κ²/(4λ)
-  const Vmax = full.lambda > 0 ? (full.kappa**2) / (4 * full.lambda) : Infinity;
-
-  // Current "energy" of price motion (kinetic + potential)
-  // E_current ≈ ½σ²_recent (kinetic energy from recent volatility)
-  const E_current = 0.5 * recent.sigma**2;
-
-  // Energy ratio: > 1 means price has enough energy to escape the well
-  const energyRatio = Vmax > 0 ? E_current / Vmax : 0;
-
-  // Spike indicators:
-  // 1. λ_recent > λ_full (anharmonicity increasing)
-  const lambdaIncreasing = recent.lambda > full.lambda * 1.2;
-  // 2. damping_recent < damping_full (persistence decreasing)
-  const dampingDecreasing = recent.damping < full.damping * 0.8;
-  // 3. Energy ratio approaching 1 (near escape threshold)
-  const nearEscape = energyRatio > 0.7;
-
-  // Combined spike probability
-  let spikeProbability = 0;
-  if (lambdaIncreasing)  spikeProbability += 0.35;
-  if (dampingDecreasing) spikeProbability += 0.35;
-  if (nearEscape)        spikeProbability += 0.30;
-
-  // Spike direction from momentum of recent returns
-  const recentMomentum = returns.slice(-10).reduce((a,b)=>a+b,0);
-  const spikeDirection = recentMomentum > 0 ? "UP" : recentMomentum < 0 ? "DOWN" : "UNKNOWN";
-
-  // Estimated time to spike: inversely proportional to λ growth rate
-  const lambdaGrowthRate = recent.lambda / (full.lambda + 1e-10);
-  const timeToSpike = lambdaGrowthRate > 1 ?
-    Math.max(1, Math.round(10 / (lambdaGrowthRate - 1))) : 999;
-
-  const spikeImminent = spikeProbability >= 0.65 || energyRatio > 1.0;
-
-  return {
-    spikeImminent,
-    spikeProbability,
-    spikeDirection,
-    lambda:      full.lambda,
-    damping:     full.damping,
-    energyRatio,
-    timeToSpike,
-  };
-}
-
-// ── QPL SECTION 4: QUANTUM ENTANGLEMENT BETWEEN PAIRS ──────────────
-// Measures quantum-like entanglement between currency pairs
-// Using von Neumann entropy (quantum generalization of Shannon entropy)
-//
-// Quantum Mutual Information:
-//   I(A:B) = S(ρ_A) + S(ρ_B) - S(ρ_AB)
-//   S(ρ) = -Tr(ρ log ρ) [von Neumann entropy]
-//
-// For financial time series:
-//   ρ_AB = joint density matrix (constructed from copula)
-//   Entanglement = I(A:B) - I_classical(A:B)
-//   Positive entanglement → pairs move together beyond correlation
-//
-// Eisert-Wilkens-Lewenstein (1999):
-//   Nash equilibrium in quantum game requires mixed strategy
-//   Entangled pairs share quantum information → coordinated moves
-function measureQuantumEntanglement(
-  returns1: number[],  // pair 1 returns (e.g., EUR/USD)
-  returns2: number[]   // pair 2 returns (e.g., USD/JPY)
-): {
-  classicalCorr: number;    // Pearson correlation [-1,1]
-  vonNeumannA: number;      // S(ρ_A) entropy of pair 1
-  vonNeumannB: number;      // S(ρ_B) entropy of pair 2
-  vonNeumannAB: number;     // S(ρ_AB) joint entropy
-  quantumMI: number;        // quantum mutual information
-  entanglement: number;     // excess beyond classical
-  isEntangled: boolean;     // true = significant entanglement
-  nashMixing: number;       // Nash equilibrium mixing ratio [0,1]
-} {
-  const n = Math.min(returns1.length, returns2.length);
-  if (n < 10) {
-    return { classicalCorr:0, vonNeumannA:1, vonNeumannB:1,
-             vonNeumannAB:2, quantumMI:0, entanglement:0,
-             isEntangled:false, nashMixing:0.5 };
-  }
-
-  const r1 = returns1.slice(-n);
-  const r2 = returns2.slice(-n);
-
-  // Classical Pearson correlation
-  const mu1 = r1.reduce((a,b)=>a+b,0)/n;
-  const mu2 = r2.reduce((a,b)=>a+b,0)/n;
-  const std1 = Math.sqrt(r1.reduce((a,b)=>a+(b-mu1)**2,0)/n);
-  const std2 = Math.sqrt(r2.reduce((a,b)=>a+(b-mu2)**2,0)/n);
-  const cov  = r1.reduce((a,b,i)=>a+(b-mu1)*(r2[i]-mu2),0)/n;
-  const classicalCorr = std1*std2 > 0 ? cov/(std1*std2) : 0;
-
-  // Construct joint probability density (discretized)
-  // Normalize returns to [0,1] for density matrix construction
-  const BINS = 8; // 8×8 density matrix
-  const normalize = (arr: number[]) => {
-    const min = Math.min(...arr), max = Math.max(...arr);
-    return arr.map(x => max > min ? (x-min)/(max-min) : 0.5);
-  };
-  const n1 = normalize(r1);
-  const n2 = normalize(r2);
-
-  // Joint density matrix ρ_AB (BINS × BINS)
-  const rhoAB = Array.from({length:BINS}, () => new Array(BINS).fill(0));
-  for (let i = 0; i < n; i++) {
-    const b1 = Math.min(BINS-1, Math.floor(n1[i] * BINS));
-    const b2 = Math.min(BINS-1, Math.floor(n2[i] * BINS));
-    rhoAB[b1][b2] += 1/n;
-  }
-
-  // Marginal density matrices (partial trace)
-  const rhoA = rhoAB.map(row => row.reduce((a,b)=>a+b,0));
-  const rhoB = rhoAB[0].map((_,j) => rhoAB.reduce((a,row)=>a+row[j],0));
-
-  // Von Neumann entropy S(ρ) = -Σ pᵢ log(pᵢ)
-  // For diagonal density matrices (our approximation):
-  const vnEntropy = (p: number[]) => {
-    return -p.reduce((a,pi) => {
-      if (pi <= 0) return a;
-      return a + pi * Math.log(pi);
-    }, 0);
-  };
-
-  const vonNeumannA  = vnEntropy(rhoA);
-  const vonNeumannB  = vnEntropy(rhoB);
-  const vonNeumannAB = vnEntropy(rhoAB.flat());
-
-  // Quantum Mutual Information: I(A:B) = S(A) + S(B) - S(AB)
-  const quantumMI = Math.max(0, vonNeumannA + vonNeumannB - vonNeumannAB);
-
-  // Classical mutual information (Shannon)
-  const classicalMI = 0.5 * Math.log(1 / (1 - classicalCorr**2 + 1e-10));
-
-  // Entanglement = quantum - classical (excess non-classical correlation)
-  const entanglement = quantumMI - classicalMI;
-  const isEntangled  = entanglement > 0.05 && Math.abs(classicalCorr) > 0.3;
-
-  // Nash equilibrium mixing ratio (Eisert-Wilkens-Lewenstein)
-  // In quantum game: optimal mixed strategy = 0.5 when maximally entangled
-  // Deviates from 0.5 proportional to entanglement strength
-  const nashMixing = 0.5 + entanglement * 0.1 * Math.sign(classicalCorr);
-
-  return {
-    classicalCorr,
-    vonNeumannA,
-    vonNeumannB,
-    vonNeumannAB,
-    quantumMI,
-    entanglement,
-    isEntangled,
-    nashMixing: Math.max(0.1, Math.min(0.9, nashMixing)),
-  };
-}
-
-// ── QPL SECTION 5: INTEGRATED QPL SIGNAL ───────────────────────────
-// Combines QPL + Spike Detection + Entanglement into unified signal
-// This is the master quantum filter that augments every trade decision
-function quantumPriceFieldSignal(
-  candles1m: any[],
-  action: string,
-  symbol: string,
-  confidence: number
-): {
-  qplAdjustedTP: number;         // TP at next QPL (better than FPT alone)
-  qplAdjustedSL: number;         // SL at nearest QPL support/resistance
-  spikeBoost: number;            // confidence multiplier from spike detection
-  regimeVerified: boolean;       // quantum regime matches ML signal
-  quantumConfidence: number;     // quantum-adjusted confidence [0,100]
-  qplDistance: number;           // distance to nearest QPL
-  inTransit: boolean;            // price between QPLs (fast move zone)
-  recommendation: string;        // quantum trading recommendation
-} {
-  if (candles1m.length < 20) {
-    return { qplAdjustedTP:0, qplAdjustedSL:0, spikeBoost:1.0,
-             regimeVerified:true, quantumConfidence:confidence,
-             qplDistance:0.5, inTransit:false, recommendation:"insufficient_data" };
-  }
-
-  const closes  = candles1m.map((c:any) => parseFloat(c.close));
-  const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
-  const current = closes[closes.length-1];
-
-  // Compute QPLs
-  const qpl = computeQuantumPriceLevels(candles1m);
-
-  // Detect anharmonic spike
-  const spike = detectAnharmonicSpike(candles1m);
-
-  // ── TP/SL from QPLs ──
-  // For BUY: TP = nearest QPL above, SL = nearest QPL below
-  // For SELL: TP = nearest QPL below, SL = nearest QPL above
-  let qplAdjustedTP = 0;
-  let qplAdjustedSL = 0;
-
-  if (action === "BUY") {
-    // TP at next QPL resistance (natural target)
-    qplAdjustedTP = (qpl.nearestResistance - current) / current;
-    // SL at QPL support (natural stop)
-    qplAdjustedSL = (current - qpl.nearestSupport) / current;
-  } else {
-    // SELL: mirror
-    qplAdjustedTP = (current - qpl.nearestSupport) / current;
-    qplAdjustedSL = (qpl.nearestResistance - current) / current;
-  }
-
-  // Ensure positive values
-  qplAdjustedTP = Math.max(0.001, qplAdjustedTP);
-  qplAdjustedSL = Math.max(0.001, Math.min(qplAdjustedTP * 0.5, qplAdjustedSL));
-
-  // ── Spike Detection Boost ──
-  // For BOOM/CRASH: spike aligned with action = boost confidence
-  // For Forex: spike = volatility spike = reduce confidence
-  const isSpikeSymbol = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-  let spikeBoost = 1.0;
-
-  if (isSpikeSymbol && spike.spikeImminent) {
-    if (spike.spikeDirection === "UP" && action === "BUY") {
-      spikeBoost = 1.0 + spike.spikeProbability * 0.4; // up to +40%
-    } else if (spike.spikeDirection === "DOWN" && action === "SELL") {
-      spikeBoost = 1.0 + spike.spikeProbability * 0.4;
-    } else {
-      spikeBoost = 0.75; // spike predicted but wrong direction = reduce
-    }
-  } else if (!isSpikeSymbol && spike.spikeImminent) {
-    spikeBoost = 0.85; // forex spike = higher risk = slight reduction
-  }
-
-  // ── Regime Verification ──
-  // Check if ML action aligns with quantum oscillator state
-  // In transit (price between QPLs) = momentum trade → BUY/SELL ok
-  // At QPL (price at level) = reversal zone → check direction carefully
-  const recentMom = returns.slice(-5).reduce((a,b)=>a+b,0);
-  const regimeVerified = qpl.inTransit ?
-    true : // in transit = any direction ok
-    (action === "BUY" ? recentMom > 0 : recentMom < 0); // at QPL = check momentum
-
-  // ── Quantum Confidence Adjustment ──
-  let quantumConfidence = confidence;
-
-  // Boost if in transit (fast move zone) and direction correct
-  if (qpl.inTransit && regimeVerified) {
-    quantumConfidence = Math.min(95, quantumConfidence * 1.1);
-  }
-
-  // Boost from spike detection
-  quantumConfidence = Math.min(95, quantumConfidence * spikeBoost);
-
-  // Reduce if energy ratio < 0.3 (market in deep ground state = consolidating)
-  if (spike.energyRatio < 0.3 && !isSpikeSymbol) {
-    quantumConfidence = Math.max(30, quantumConfidence * 0.9);
-  }
-
-  // Strong spike imminent + wrong direction = significant reduction
-  if (spike.spikeImminent && !regimeVerified) {
-    quantumConfidence = Math.max(20, quantumConfidence * 0.7);
-  }
-
-  // ── Recommendation ──
-  let recommendation = "quantum_normal";
-  if (spike.spikeImminent && regimeVerified && spikeBoost > 1.1) {
-    recommendation = "quantum_spike_aligned";
-  } else if (spike.spikeImminent && !regimeVerified) {
-    recommendation = "quantum_spike_counter";
-  } else if (qpl.inTransit) {
-    recommendation = "quantum_transit_zone";
-  } else if (qpl.distanceToNearest < 0.001) {
-    recommendation = "quantum_at_level";
-  }
-
-  console.log(`🌌 QPF: ${symbol} QPL_dist=${(qpl.distanceToNearest*100).toFixed(3)}% λ=${spike.lambda.toFixed(3)} spike=${spike.spikeImminent}(${spike.spikeProbability.toFixed(2)}) E/Vmax=${spike.energyRatio.toFixed(2)} conf=${quantumConfidence.toFixed(0)}%`);
-
-  return {
-    qplAdjustedTP,
-    qplAdjustedSL,
-    spikeBoost,
-    regimeVerified,
-    quantumConfidence: Math.round(quantumConfidence),
-    qplDistance: qpl.distanceToNearest,
-    inTransit: qpl.inTransit,
-    recommendation,
-  };
-}
-
-
-// ═══════════════════════════════════════════════════════════════════
-// HARMONIC PATTERN ENGINE — Primary Signal Generator
-// ═══════════════════════════════════════════════════════════════════
-// Mathematical foundation: XABCD Fibonacci structure
-// Patterns: Gartley, Butterfly, Crab, Deep Crab, Cypher, Bat
-// 
-// Key insight: Math DRIVES the signal, ML CONFIRMS it
-// PRZ (Potential Reversal Zone) = primary entry trigger
-// ML confidence = execution gate
-//
-// Fibonacci ratios used:
-//   0.382, 0.500, 0.618 = harmonic retracements
-//   0.786, 0.886 = deep retracements  
-//   1.272, 1.618 = extensions (Golden ratio family)
-// ═══════════════════════════════════════════════════════════════════
-
-const FIB = {
-  r382: 0.382, r500: 0.500, r618: 0.618,
-  r786: 0.786, r886: 0.886, r382n: -0.382,
-  e127: 1.272, e162: 1.618, e200: 2.000,
-  e224: 2.240, e261: 2.618,
-};
-
-// Tolerance for Fibonacci ratio matching (±2%)
-const FIB_TOL = 0.02;
-
-function fibMatch(ratio: number, target: number): boolean {
-  return Math.abs(ratio - target) <= FIB_TOL;
-}
-
-function findSwingPoints(candles: any[]): {
-  highs: {idx:number; price:number}[];
-  lows:  {idx:number; price:number}[];
-} {
-  const closes = candles.map((c:any) => parseFloat(c.close));
-  const highs: {idx:number; price:number}[] = [];
-  const lows:  {idx:number; price:number}[] = [];
-  const lookback = 5;
-
-  for (let i = lookback; i < closes.length - lookback; i++) {
-    const window = closes.slice(i-lookback, i+lookback+1);
-    const isHigh = closes[i] === Math.max(...window);
-    const isLow  = closes[i] === Math.min(...window);
-    if (isHigh) highs.push({ idx: i, price: closes[i] });
-    if (isLow)  lows.push({ idx: i, price: closes[i] });
-  }
-  return { highs, lows };
-}
-
-interface HarmonicResult {
-  pattern:     string;    // pattern name
-  direction:   string;    // BUY or SELL
-  prz:         number;    // Potential Reversal Zone price
-  xaLeg:       number;    // XA leg size
-  strength:    number;    // 0-1 pattern quality
-  stopLoss:    number;    // mathematical SL
-  target1:     number;    // first TP (0.382 retracement of AD)
-  target2:     number;    // second TP (0.618 retracement of AD)
-  confirmed:   boolean;   // all ratios within tolerance
-}
-
-function detectHarmonicPatterns(candles: any[]): HarmonicResult | null {
-  if (candles.length < 50) return null;
-
-  const { highs, lows } = findSwingPoints(candles);
-  if (highs.length < 3 || lows.length < 3) return null;
-
-  const closes = candles.map((c:any) => parseFloat(c.close));
-  const current = closes[closes.length - 1];
-
-  // Get recent swing points for XABCD structure
-  // Try bullish (W-shape): X=high, A=low, B=high, C=low, D=low (PRZ)
-  // Try bearish (M-shape): X=low, A=high, B=low, C=high, D=high (PRZ)
-
-  const results: HarmonicResult[] = [];
-
-  // ── BULLISH PATTERNS (price at D = BUY) ──
-  // Need: recent low points for potential D completion
-  const recentLows  = lows.slice(-5);
-  const recentHighs = highs.slice(-5);
-
-  for (let xi = 0; xi < recentHighs.length - 2; xi++) {
-    const X = recentHighs[xi];
-    for (let ai = 0; ai < recentLows.length - 1; ai++) {
-      if (recentLows[ai].idx <= X.idx) continue;
-      const A = recentLows[ai];
-      const XA = X.price - A.price; // XA leg (down)
-      if (XA <= 0) continue;
-
-      for (let bi = 0; bi < recentHighs.length; bi++) {
-        if (recentHighs[bi].idx <= A.idx) continue;
-        const B = recentHighs[bi];
-        const AB = B.price - A.price; // AB leg (up)
-        const abRatio = AB / XA;
-
-        for (let ci = 0; ci < recentLows.length; ci++) {
-          if (recentLows[ci].idx <= B.idx) continue;
-          const C = recentLows[ci];
-          const BC = B.price - C.price; // BC leg (down)
-          const bcRatio = BC / AB;
-
-          // D point would be near current price
-          const D_price = current;
-          const AD = X.price - D_price; // expected AD
-          const adRatio = AD / XA;
-          const cdRatio = (B.price - D_price) / BC;
-
-          // ── GARTLEY (most common) ──
-          // AB=0.618*XA, BC=0.382-0.886*XA, CD=1.272-1.618*BC, AD=0.786*XA
-          if (fibMatch(abRatio, FIB.r618) &&
-              bcRatio >= 0.382 && bcRatio <= 0.886 &&
-              fibMatch(adRatio, FIB.r786)) {
-            const strength = 1 - Math.abs(abRatio - FIB.r618) / FIB_TOL
-                           + 1 - Math.abs(adRatio - FIB.r786) / FIB_TOL;
-            results.push({
-              pattern: "Gartley", direction: "BUY", prz: D_price,
-              xaLeg: XA, strength: strength/2,
-              stopLoss: D_price - XA * 0.1,
-              target1: D_price + AD * FIB.r382,
-              target2: D_price + AD * FIB.r618,
-              confirmed: true,
-            });
-          }
-
-          // ── BAT PATTERN ──
-          // AB=0.382-0.500*XA, BC=0.382-0.886*XA, AD=0.886*XA
-          if (abRatio >= 0.382 && abRatio <= 0.500 &&
-              bcRatio >= 0.382 && bcRatio <= 0.886 &&
-              fibMatch(adRatio, FIB.r886)) {
-            results.push({
-              pattern: "Bat", direction: "BUY", prz: D_price,
-              xaLeg: XA, strength: 0.85,
-              stopLoss: D_price - XA * 0.05,
-              target1: D_price + AD * FIB.r382,
-              target2: D_price + AD * FIB.r618,
-              confirmed: true,
-            });
-          }
-
-          // ── CRAB (most precise) ──
-          // AB=0.382-0.618*XA, BC=0.382-0.886*XA, AD=1.618*XA
-          if (abRatio >= 0.382 && abRatio <= 0.618 &&
-              bcRatio >= 0.382 && bcRatio <= 0.886 &&
-              fibMatch(adRatio, FIB.e162)) {
-            results.push({
-              pattern: "Crab", direction: "BUY", prz: D_price,
-              xaLeg: XA, strength: 0.90,
-              stopLoss: D_price - XA * 0.08,
-              target1: D_price + XA * FIB.r382,
-              target2: D_price + XA * FIB.r618,
-              confirmed: true,
-            });
-          }
-
-          // ── BUTTERFLY ──
-          // AB=0.786*XA, BC=0.382-0.886*XA, AD=1.272-1.618*XA
-          if (fibMatch(abRatio, FIB.r786) &&
-              bcRatio >= 0.382 && bcRatio <= 0.886 &&
-              adRatio >= 1.272 && adRatio <= 1.618) {
-            results.push({
-              pattern: "Butterfly", direction: "BUY", prz: D_price,
-              xaLeg: XA, strength: 0.88,
-              stopLoss: D_price - XA * 0.12,
-              target1: D_price + XA * FIB.r382,
-              target2: D_price + XA * FIB.r786,
-              confirmed: true,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  if (results.length === 0) return null;
-
-  // Return strongest pattern
-  return results.sort((a,b) => b.strength - a.strength)[0];
-}
-
-// ── HARMONIC SIGNAL GENERATOR ──────────────────────────────────────
-// This is the PRIMARY signal — math drives the decision
-// ML confidence then gates execution
-function harmonicSignal(
-  candles: any[],
-  symbol: string
-): {
-  hasSignal:   boolean;
-  direction:   string;
-  prz:         number;
-  pattern:     string;
-  strength:    number;
-  tpPct:       number;   // TP as % of price
-  slPct:       number;   // SL as % of price
-  confidence:  number;   // harmonic confidence 0-100
-} {
-  const result = detectHarmonicPatterns(candles);
-
-  if (!result) {
-    return { hasSignal:false, direction:"HOLD", prz:0,
-             pattern:"none", strength:0, tpPct:0, slPct:0, confidence:0 };
-  }
-
-  const current = parseFloat(candles[candles.length-1]?.close || "0");
-  if (current <= 0) return { hasSignal:false, direction:"HOLD", prz:0,
-                              pattern:"none", strength:0, tpPct:0, slPct:0, confidence:0 };
-
-  // TP and SL as percentage of current price
-  const tpPct = Math.abs(result.target1 - current) / current;
-  const slPct = Math.abs(result.stopLoss - current) / current;
-
-  // Confidence from pattern strength + ratio precision
-  const confidence = Math.round(Math.min(95, result.strength * 100));
-
-  console.log(`📐 Harmonic: ${result.pattern} ${result.direction} PRZ=${result.prz.toFixed(5)} strength=${result.strength.toFixed(2)} conf=${confidence}%`);
-
-  return {
-    hasSignal:  true,
-    direction:  result.direction,
-    prz:        result.prz,
-    pattern:    result.pattern,
-    strength:   result.strength,
-    tpPct:      Math.max(0.001, tpPct),
-    slPct:      Math.max(0.001, Math.min(slPct, tpPct * 0.5)),
-    confidence,
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════
-// QUANTUM-INSPIRED MATHEMATICS — Three Extensions
-// ═══════════════════════════════════════════════════════════════
-//
-// Extension 1: QUANTUM WALK MONTE CARLO
-// ───────────────────────────────────────
-// Classical random walk: position moves ±1 with prob p
-// Quantum walk: particle exists in superposition of positions
-// Uses Hadamard coin operator H = (1/√2)[[1,1],[1,-1]]
-// Creates interference patterns → fatter tails than Gaussian
-// Directional persistence emerges naturally from interference
-// Math: |ψ(t)⟩ = U^t|ψ(0)⟩ where U = S(I⊗H)
-// S = shift operator, H = Hadamard, ψ = amplitude vector
-// P(position x) = |⟨x|ψ(t)⟩|²
-//
-// Extension 2: QUANTUM AMPLITUDE BAYESIAN
-// ─────────────────────────────────────────
-// Classical Bayes: P(win) = ∏ likelihood_i × prior (all positive)
-// Quantum Bayes:   amplitude ψ(win) = ∑ α_i (can be negative)
-//                  P(win) = |ψ(win)|²
-// Destructive interference: two bullish signals CANCEL in wrong regime
-// Constructive interference: aligned signals AMPLIFY each other
-// This captures why RSI overbought + OU bullish FAILS in ranging market
-// Classical Bayes would multiply both as positive → overconfident
-// Quantum correctly computes their interference → realistic P(win)
-//
-// Extension 3: QUANTUM-INSPIRED RL (QIRL)
-// ─────────────────────────────────────────
-// Grover amplitude amplification applied to policy gradient
-// Classical PG: θ = θ + α∇J (linear convergence O(n))
-// QIRL:         amplify good actions via interference O(√n)
-// Hadamard superposition over action space
-// Oracle marks good actions (positive advantage)
-// Grover diffusion amplifies marked actions
-// Converges quadratically faster → need ~10x fewer trades
-// ═══════════════════════════════════════════════════════════════
-
-// ── EXTENSION 1: QUANTUM WALK ──────────────────────────────────
-// Hadamard coin matrix (2x2 unitary)
-// H = (1/√2) [[1, 1], [1, -1]]
-// Models quantum superposition of up/down price moves
-function quantumWalkStep(
-  psiUp: number,   // amplitude for upward component
-  psiDown: number, // amplitude for downward component
-  hurstBias: number // H>0.5 = trending bias, H<0.5 = reverting
-): { psiUp: number; psiDown: number } {
-  // Biased Hadamard coin — encodes market regime
-  // When H=0.5 (random): θ=π/4 → standard Hadamard
-  // When H>0.5 (trending): θ<π/4 → biased toward continuation
-  // When H<0.5 (reverting): θ>π/4 → biased toward reversal
-  const theta  = Math.PI / 4 * (1 + (0.5 - hurstBias) * 0.8);
-  const cosT   = Math.cos(theta);
-  const sinT   = Math.sin(theta);
-
-  // Coin operator: C = [[cosθ, sinθ], [sinθ, -cosθ]]
-  const newUp   = cosT * psiUp  + sinT * psiDown;
-  const newDown = sinT * psiUp  - cosT * psiDown;
-  return { psiUp: newUp, psiDown: newDown };
-}
-
-function quantumWalkSimulate(
-  steps: number,
-  hurstExponent: number,
-  gcSkewness: number,    // Gram-Charlier skewness (from features)
-  gcKurtosis: number,    // Gram-Charlier kurtosis (from features)
-  initialBias: number    // +1=bullish start, -1=bearish start
-): number[] {
-  // Initialize quantum state at origin
-  // |ψ(0)⟩ = cos(φ)|↑⟩ + sin(φ)|↓⟩
-  // φ encodes initial market bias from ML signal
-  const phi    = initialBias > 0
-    ? Math.PI / 4 - 0.2  // bullish: more amplitude in up component
-    : Math.PI / 4 + 0.2; // bearish: more amplitude in down component
-
-  let psiUp   = Math.cos(phi);
-  let psiDown = Math.sin(phi);
-
-  // Position amplitudes: ψ[position+steps] = amplitude at that position
-  // Positions range from -steps to +steps
-  const size = 2 * steps + 1;
-  let amplitudes = new Array(size).fill(0);
-  amplitudes[steps] = 1.0; // start at position 0
-
-  // Up and down walkers
-  let upAmps   = new Array(size).fill(0);
-  let downAmps = new Array(size).fill(0);
-  upAmps[steps]   = psiUp;
-  downAmps[steps] = psiDown;
-
-  for (let t = 0; t < steps; t++) {
-    const newUp   = new Array(size).fill(0);
-    const newDown = new Array(size).fill(0);
-
-    for (let pos = 0; pos < size; pos++) {
-      if (upAmps[pos] !== 0 || downAmps[pos] !== 0) {
-        // Apply biased Hadamard coin
-        const coined = quantumWalkStep(upAmps[pos], downAmps[pos], hurstExponent);
-        // Shift: up component moves right, down component moves left
-        if (pos + 1 < size) newUp[pos + 1]   += coined.psiUp;
-        if (pos - 1 >= 0)  newDown[pos - 1]  += coined.psiDown;
-      }
-    }
-    upAmps   = newUp;
-    downAmps = newDown;
-  }
-
-  // Compute probability distribution: P(x) = |ψ_up(x)|² + |ψ_down(x)|²
-  // Apply Gram-Charlier correction for skewness and kurtosis
-  const probs = amplitudes.map((_, i) => {
-    const rawProb = upAmps[i]**2 + downAmps[i]**2;
-    // GC correction: captures fat tails and asymmetry beyond quantum walk
-    const x = (i - steps) / Math.sqrt(steps);
-    const gcCorrection = 1
-      + gcSkewness * (x**3 - 3*x) / 6          // skewness correction
-      + (gcKurtosis - 3) * (x**4 - 6*x**2 + 3) / 24; // excess kurtosis
-    return rawProb * Math.max(0.001, gcCorrection);
-  });
-
-  // Normalize
-  const total = probs.reduce((a,b)=>a+b,0) + 1e-10;
-  return probs.map(p => p/total);
-}
-
-function quantumMonteCarloStake(
-  balance: number,
-  baseStakePct: number,
-  winRate: number,
-  avgWinPct: number,
-  avgLossPct: number,
-  minStake: number,
-  maxStake: number,
-  gcSkewness: number,
-  gcKurtosis: number,
-  hurstExponent: number,
-  mlAction: string
-): { stake: number; riskOfRuin: number; expectedGrowth: number;
-     recommendation: string; quantumVar: number } {
-
-  const SIMULATIONS = 3000;
-  const HORIZON     = 20;
-  const RUIN_THRESH = 0.20;
-  const testPct     = baseStakePct / 100;
-
-  // Generate quantum walk probability distribution
-  // This replaces simple Student's t sampling
-  // The walk length matches our horizon
-  const qwSteps = 15; // enough steps for meaningful distribution
-  const initialBias = mlAction === "BUY" ? 1 : -1;
-  const qwProbs = quantumWalkSimulate(
-    qwSteps, hurstExponent, gcSkewness, gcKurtosis, initialBias
-  );
-
-  // Build cumulative distribution for sampling
-  const qwCDF: number[] = [];
-  let cumSum = 0;
-  for (const p of qwProbs) {
-    cumSum += p;
-    qwCDF.push(cumSum);
-  }
-
-  // Sample from quantum walk distribution
-  const sampleQW = (): number => {
-    const u = Math.random();
-    const idx = qwCDF.findIndex(c => c >= u);
-    // Convert position index to return multiplier
-    // Center = 0 return, extremes = large returns
-    return (idx - qwSteps) / qwSteps; // normalized [-1, +1]
-  };
-
-  // Quantum variance — broader than classical
-  // Quantum walk has σ ∝ t (vs σ ∝ √t for classical)
-  // This means quantum tails are genuinely fatter
-  const quantumVar = hurstExponent > 0.5
-    ? hurstExponent * 1.5   // trending → extra variance
-    : (1 - hurstExponent);  // reverting → less variance
-
-  let ruinCount   = 0;
-  let totalGrowth = 0;
-  const tailRisk  = Math.max(1, 1 + (gcKurtosis - 1) * 0.1);
-
-  for (let sim = 0; sim < SIMULATIONS; sim++) {
-    let bal = balance;
-    const ruinLevel = balance * (1 - RUIN_THRESH);
-    let ruined = false;
-
-    for (let t = 0; t < HORIZON; t++) {
-      const stake = Math.max(minStake, Math.min(maxStake, bal * testPct));
-
-      // Quantum walk outcome — captures interference patterns
-      const qwSample = sampleQW();
-
-      // Win probability from quantum distribution
-      // Positive qwSample = price moved favorably
-      const qwWinProb = winRate + qwSample * 0.3 * quantumVar;
-      const win = Math.random() < Math.max(0.1, Math.min(0.95, qwWinProb));
-
-      if (win) {
-        // Quantum wins can be amplified by constructive interference
-        const winAmp = 1 + Math.max(0, qwSample) * quantumVar * 0.5;
-        bal += stake * avgWinPct * Math.min(3, winAmp);
-      } else {
-        // Quantum losses include tail risk from interference
-        const lossAmp = tailRisk * (1 + Math.max(0, -qwSample) * 0.3);
-        bal -= stake * avgLossPct * Math.min(4, lossAmp);
-      }
-
-      if (bal <= ruinLevel) { ruined = true; break; }
-    }
-
-    if (ruined) ruinCount++;
-    totalGrowth += (bal - balance) / balance;
-  }
-
-  const riskOfRuin    = ruinCount / SIMULATIONS;
-  const expectedGrowth = totalGrowth / SIMULATIONS;
-
-  // Quantum-adjusted stake sizing
-  // Account for quantum variance in addition to classical risk
-  let finalPct      = testPct;
-  let recommendation = "quantum_normal";
-
-  if (riskOfRuin > 0.10 || quantumVar > 1.2) {
-    finalPct = testPct * 0.40;
-    recommendation = "quantum_high_var_reduced";
-  } else if (riskOfRuin > 0.05) {
-    finalPct = testPct * 0.70;
-    recommendation = "quantum_reduced";
-  } else if (riskOfRuin > 0.02) {
-    finalPct = testPct * 0.85;
-    recommendation = "quantum_slightly_reduced";
-  } else if (riskOfRuin < 0.01 && winRate > 0.65 && gcKurtosis < 2 && quantumVar < 0.8) {
-    // Low quantum variance + low ruin risk → safe to boost
-    finalPct = Math.min(testPct * 1.25, 0.04);
-    recommendation = "quantum_boosted";
-  }
-
-  const finalStake = Math.max(
-    minStake,
-    Math.min(maxStake, parseFloat((balance * finalPct).toFixed(2)))
-  );
-
-  return { stake: finalStake, riskOfRuin, expectedGrowth, recommendation, quantumVar };
-}
-
-// ── EXTENSION 2: QUANTUM AMPLITUDE BAYESIAN ────────────────────
-// Classical Bayes multiplies positive likelihoods
-// Quantum Bayes: amplitudes can interfere destructively
-// P(win) = |ψ_win|² where ψ_win = ∑ α_i (amplitudes, can be negative)
-//
-// Key insight: In ranging market, bullish RSI + bullish OU
-// DESTRUCTIVELY INTERFERE because ranging = mean reversion dominant
-// Both signals pulling same way = overcrowded → price snaps back
-// Classical Bayes: 0.6 × 0.7 = 0.42 (positive contribution)
-// Quantum Bayes:   amplitude interference → might be 0.15 (correct!)
-function quantumAmplitudeBayesian(
-  priorWinRate: number,
-  classicalFactors: Record<string, number>,
-  regime: string,
-  action: string,
-  hurstExponent: number,
-  gcSkewness: number,
-  gcKurtosis: number
-): { winProb: number; amplitude: number; interference: string;
-     quantumFactors: Record<string, number> } {
-
-  // Convert classical likelihood ratios to quantum amplitudes
-  // Amplitude = √(likelihood) with sign encoding alignment
-  // Positive amplitude = factor supports action
-  // Negative amplitude = factor opposes action (creates interference)
-
-  const amplitudes: Record<string, number> = {};
-
-  // Each factor gets an amplitude (signed square root of likelihood)
-  for (const [key, likelihood] of Object.entries(classicalFactors)) {
-    // Sign: does this factor align with regime + action?
-    let sign = 1;
-
-    // Destructive interference conditions:
-    // Trending indicators in ranging regime → destructive
-    if (regime === "Ranging" && (key === "emaStack" || key === "kalman")) {
-      sign = likelihood > 1 ? -0.5 : 1; // trending signals OPPOSE in ranging
-    }
-    // Mean reversion in trending regime → destructive
-    if ((regime === "Uptrend" || regime === "Downtrend") && key === "ouReversion") {
-      sign = likelihood > 1 ? -0.3 : 1; // OU reversion OPPOSES in trends
-    }
-    // High volatility + small stake → destructive
-    if (regime === "HighVolatility" && key === "volatility") {
-      sign = likelihood < 1 ? -0.4 : 1;
-    }
-
-    // Amplitude: signed square root (quantum probability amplitude)
-    amplitudes[key] = sign * Math.sqrt(Math.abs(likelihood - 1) + 1) * Math.sign(likelihood - 1 + 1e-10);
-  }
-
-  // Hurst-based interference modifier
-  // H > 0.5: trending → trend amplitudes constructive, reversal destructive
-  // H < 0.5: reverting → reversal constructive, trend destructive
-  const hurstAmplitude = (hurstExponent - 0.5) * 2; // [-1, +1]
-  const isBuyAction    = action === "BUY";
-
-  // Constructive: Hurst matches action direction
-  const hurstAlignment = isBuyAction ? hurstAmplitude : -hurstAmplitude;
-  amplitudes['hurst'] = hurstAlignment * 0.5;
-
-  // Gram-Charlier amplitude — kurtosis creates uncertainty
-  // High kurtosis = fat tails = amplitudes uncertain = decoherence
-  const kurtosisDecoherence = 1 / (1 + Math.abs(gcKurtosis - 3) * 0.1);
-  // Skewness: positive skew → constructive for BUY, destructive for SELL
-  const skewnessAmplitude = gcSkewness * (isBuyAction ? 0.15 : -0.15);
-  amplitudes['gramCharlier'] = skewnessAmplitude * kurtosisDecoherence;
-
-  // Total quantum amplitude = sum of all amplitudes (can cancel!)
-  const totalAmplitude = Object.values(amplitudes).reduce((a,b)=>a+b,0);
-
-  // Quantum probability = |amplitude|² mapped to [0,1]
-  // But we need to combine with prior properly
-  // Quantum Bayes: P(win) = prior × |1 + interference|²
-  const interferenceStrength = totalAmplitude;
-  const quantumLikelihood    = Math.max(0.1, (1 + interferenceStrength * 0.4) ** 2);
-
-  // Update prior with quantum likelihood
-  // Still preserves Bayes theorem structure
-  const posteriorUnnorm = priorWinRate * quantumLikelihood;
-  const posteriorLoss   = (1 - priorWinRate) * (1 / Math.max(0.1, quantumLikelihood));
-  const winProb = Math.max(0.20, Math.min(0.92,
-    posteriorUnnorm / (posteriorUnnorm + posteriorLoss)
-  ));
-
-  // Classify interference type
-  const interference =
-    interferenceStrength > 0.3  ? "constructive_strong" :
-    interferenceStrength > 0.1  ? "constructive_mild" :
-    interferenceStrength > -0.1 ? "neutral" :
-    interferenceStrength > -0.3 ? "destructive_mild" :
-                                   "destructive_strong";
-
-  return {
-    winProb,
-    amplitude: totalAmplitude,
-    interference,
-    quantumFactors: amplitudes
-  };
-}
-
-// ── EXTENSION 3: QUANTUM-INSPIRED RL (QIRL) ────────────────────
-// Grover amplitude amplification for policy gradient
-// Classical PG: updates one action at a time O(n)
-// QIRL: amplifies ALL good actions simultaneously O(√n)
-//
-// Algorithm:
-// 1. Compute advantages for all actions via Hadamard superposition
-// 2. Apply oracle: mark actions with positive advantage
-// 3. Apply Grover diffusion: amplify marked actions
-// 4. Update policy proportional to amplified probabilities
-//
-// This gives quadratic speedup in policy convergence
-// Empirically: needs ~10x fewer trades to converge
-function qirlHadamardTransform(values: number[]): number[] {
-  // Walsh-Hadamard transform (quantum Fourier analog for discrete spaces)
-  // Puts policy in superposition over all actions simultaneously
-  const n = values.length;
-  const result = [...values];
-
-  // Fast Walsh-Hadamard transform
-  let step = 1;
-  while (step < n) {
-    for (let i = 0; i < n; i += step * 2) {
-      for (let j = i; j < i + step; j++) {
-        const u = result[j];
-        const v = result[j + step];
-        result[j]        = (u + v) / Math.SQRT2;
-        result[j + step] = (u - v) / Math.SQRT2;
-      }
-    }
-    step *= 2;
-  }
-  return result;
-}
-
-function qirlGroverDiffusion(amplitudes: number[]): number[] {
-  // Grover diffusion operator: D = 2|s⟩⟨s| - I
-  // |s⟩ = uniform superposition = (1/√n) * [1,1,...,1]
-  // This amplifies marked states and suppresses unmarked ones
-  const n    = amplitudes.length;
-  const mean = amplitudes.reduce((a,b)=>a+b,0) / n;
-  // D|ψ⟩ = 2⟨ψ⟩|s⟩ - |ψ⟩ = 2*mean - amplitude (for each element)
-  return amplitudes.map(a => 2 * mean - a);
-}
-
-function qirlUpdatePolicy(
-  currentProbs: number[],   // current action probabilities
-  advantages: number[],      // advantage for each action A(s,a)
-  learningRate: number,
-  iterations: number = 2    // Grover iterations (√n optimal)
-): number[] {
-  // Step 1: Convert probabilities to amplitudes
-  // ψ_i = √P_i (quantum amplitude from probability)
-  let amplitudes = currentProbs.map(p => Math.sqrt(Math.max(0.001, p)));
-
-  // Step 2: Apply advantage-weighted oracle
-  // Oracle marks good actions: O|ψ⟩ = -|ψ⟩ for bad, +|ψ⟩ for good
-  // Implementation: multiply amplitude by sign of advantage
-  const oracleAmps = amplitudes.map((amp, i) => {
-    const advantage = advantages[i];
-    // Grover oracle: flip phase of marked (good) states
-    return advantage > 0 ? amp * (1 + learningRate * advantage)
-                         : amp * (1 + learningRate * advantage * 0.5);
-  });
-
-  // Step 3: Hadamard superposition (frequency domain)
-  const hadamardAmps = qirlHadamardTransform(oracleAmps);
-
-  // Step 4: Apply Grover diffusion (amplify good, suppress bad)
-  let diffusedAmps = hadamardAmps;
-  for (let iter = 0; iter < iterations; iter++) {
-    diffusedAmps = qirlGroverDiffusion(diffusedAmps);
-  }
-
-  // Step 5: Inverse Hadamard (back to action space)
-  const finalAmps = qirlHadamardTransform(diffusedAmps);
-
-  // Step 6: Convert back to probabilities P_i = |ψ_i|²
-  const newProbs = finalAmps.map(a => a * a);
-
-  // Normalize to valid probability distribution
-  const total = newProbs.reduce((a,b)=>a+b,0) + 1e-10;
-  return newProbs.map(p => Math.max(0.001, p/total));
-}
-
-// QIRL Online Update — called after each trade result
-// This is the live learning component that replaces classical PG
-function qirlOnlineUpdate(
-  currentProbs: number[],  // current RL policy action probs
-  takenAction: number,     // which action was taken (0-4)
-  reward: number,          // received reward
-  value: number,           // estimated value from policy network
-  lr: number = 0.005
-): number[] {
-  // Compute advantage for taken action
-  const advantage = reward - value;
-
-  // Build advantage vector for all actions
-  // Taken action gets full advantage
-  // Other actions get scaled counterfactual estimate
-  const advantages = currentProbs.map((p, i) => {
-    if (i === takenAction) return advantage;
-    // Counterfactual: if we had taken action i instead
-    // Estimate: -advantage × P(i) (opportunity cost)
-    return -advantage * p * 0.3;
-  });
-
-  // Apply QIRL update (Grover amplification)
-  return qirlUpdatePolicy(currentProbs, advantages, lr);
-}
-
-// QIRL Action Selection with quantum uncertainty principle
-// Heisenberg-like: can't know both action AND timing perfectly
-// → naturally introduces beneficial exploration
-function qirlSelectAction(
-  probs: number[],
-  epsilon: number,
-  confidence: number,
-  regime: string
-): { action: number; prob: number; uncertainty: number } {
-  // Quantum uncertainty: σ_action × σ_timing ≥ ℏ/2
-  // In trading: high confidence → low timing uncertainty
-  // Low confidence → high action uncertainty (explore more)
-  const uncertainty = (1 - confidence/100) * epsilon;
-
-  // Apply quantum noise to probabilities (decoherence model)
-  // High kurtosis markets decohere faster → more random
-  const noisyProbs = probs.map(p => {
-    const noise = (Math.random() - 0.5) * uncertainty * 0.2;
-    return Math.max(0.001, p + noise);
-  });
-
-  // Normalize
-  const total = noisyProbs.reduce((a,b)=>a+b,0);
-  const normProbs = noisyProbs.map(p=>p/total);
-
-  // Regime-based action masking (quantum measurement collapse)
-  // Ranging regime: SKIP probability amplified
-  // HighVol regime: LARGE actions suppressed
-  const maskedProbs = [...normProbs];
-  if (regime === "Ranging") {
-    maskedProbs[0] *= 1.3; // SKIP more likely in ranging
-    maskedProbs[3] *= 0.5; maskedProbs[4] *= 0.5; // large less likely
-  } else if (regime === "HighVolatility") {
-    maskedProbs[3] *= 0.3; maskedProbs[4] *= 0.3; // no large in high vol
-    maskedProbs[0] *= 1.2; // consider skipping
-  }
-
-  // Final normalization
-  const maskTotal = maskedProbs.reduce((a,b)=>a+b,0);
-  const finalProbs = maskedProbs.map(p=>p/maskTotal);
-
-  // Select action (quantum measurement = collapse to single outcome)
-  let cumProb = 0;
-  const rand = Math.random();
-  let selectedAction = finalProbs.length - 1;
-  for (let i = 0; i < finalProbs.length; i++) {
-    cumProb += finalProbs[i];
-    if (rand < cumProb) { selectedAction = i; break; }
-  }
-
-  return {
-    action:      selectedAction,
-    prob:        finalProbs[selectedAction],
-    uncertainty,
-  };
-}
-
-// ─────────────────────────────────────────────
-// REINFORCEMENT LEARNING AGENT
-// PPO-inspired policy network (pure JS)
-// Learns from every trade outcome live
-// State: regime + confidence + recent WR + symbol
-// Action: SKIP / BUY / SELL / BUY_LARGE / SELL_LARGE
-// ─────────────────────────────────────────────
-let RL_POLICY: any = null;
-let RL_EPSILON = 0.15;
-let RL_TOTAL_TRADES = 0;
-
-async function loadRLPolicy(supabase: any): Promise<void> {
-  if (RL_POLICY) return;
-  try {
-    const { data } = await supabase
-      .from("rl_policy")
-      .select("policy_json,epsilon,total_trades")
-      .eq("policy_name","timi_rl_v1")
-      .single();
-    if (data) {
-      RL_POLICY      = JSON.parse(data.policy_json);
-      RL_EPSILON     = data.epsilon || 0.15;
-      RL_TOTAL_TRADES = data.total_trades || 0;
-      console.log(`🤖 RL Policy loaded (${RL_TOTAL_TRADES} trades, ε=${RL_EPSILON.toFixed(3)})`);
-    }
-  } catch(e) {
-    console.log(`⚠️ RL Policy not found: ${e}`);
-  }
-}
-
-function rlRelu(x: number[]): number[] {
-  return x.map(v => Math.max(0, v));
-}
-
-function rlSoftmax(x: number[]): number[] {
-  const max = Math.max(...x);
-  const e   = x.map(v => Math.exp(v - max));
-  const sum = e.reduce((a,b)=>a+b,0) + 1e-10;
-  return e.map(v => v/sum);
-}
-
-function rlMatMul(W: number[][], x: number[], b: number[]): number[] {
-  return W.map((row, i) => row.reduce((sum, w, j) => sum + w * x[j], 0) + b[i]);
-}
-
-function rlForward(state: number[]): { probs: number[]; value: number } {
-  if (!RL_POLICY) return { probs: [0.2,0.2,0.2,0.2,0.2], value: 0 };
-  try {
-    const h1    = rlRelu(rlMatMul(RL_POLICY.W1, state, RL_POLICY.b1));
-    const h2    = rlRelu(rlMatMul(RL_POLICY.W2, h1, RL_POLICY.b2));
-    const probs = rlSoftmax(rlMatMul(RL_POLICY.Wp, h2, RL_POLICY.bp));
-    const value = rlMatMul(RL_POLICY.Wv, h2, RL_POLICY.bv)[0];
-    return { probs, value };
-  } catch(e) {
-    return { probs: [0.2,0.2,0.2,0.2,0.2], value: 0 };
-  }
-}
-
-function buildRLState(
-  symbol: string, confidence: number, regime: string,
-  stake: number, recentTrades: any[]
-): number[] {
-  const state = new Array(20).fill(0);
-  const SYMBOL_MAP: Record<string,number> = {
-    "BOOM500":0,"BOOM1000":1,"CRASH500":2,"CRASH1000":3,
-    "R_25":4,"R_50":5,"R_75":6,"R_100":7,
-    "frxUSDJPY":8,"frxEURUSD":9,"frxGBPUSD":10,
-    "cryBTCUSD":11,"cryETHUSD":12,"frxXAUUSD":13,
-    "frxGBPJPY":14,"frxEURGBP":15,
-  };
-  const REGIME_MAP: Record<string,number> = {
-    "Uptrend":0,"Downtrend":1,"Ranging":2,"HighVolatility":3
-  };
-
-  state[0]  = (SYMBOL_MAP[symbol] || 0) / 16;
-  state[1]  = (REGIME_MAP[regime] || 2) / 4;
-  state[2]  = confidence / 100;
-  state[3]  = Math.min(stake / 100, 1);
-
-  // Recent win rates (10, 20, 50 trades)
-  const decided = recentTrades.filter((t:any) =>
-    ["win","WIN","loss","LOSS"].includes(t.result));
-  for (let i=0; i<3; i++) {
-    const w = [10,20,50][i];
-    const slice = decided.slice(-w);
-    if (slice.length > 0) {
-      state[4+i] = slice.filter((t:any)=>["win","WIN"].includes(t.result)).length / slice.length;
-    }
-  }
-
-  // Recent avg pnl
-  const recentPnl = decided.slice(-10).map((t:any)=>parseFloat(t.pnl||0));
-  state[7] = Math.tanh((recentPnl.reduce((a:number,b:number)=>a+b,0) / (recentPnl.length||1)) / 5);
-
-  // Consecutive losses
-  let consec = 0;
-  for (let i=recentTrades.length-1; i>=0; i--) {
-    if (["loss","LOSS"].includes(recentTrades[i].result)) consec++;
-    else if (["win","WIN"].includes(recentTrades[i].result)) break;
-  }
-  state[8] = Math.min(consec/5, 1);
-
-  // Symbol-specific WR
-  const symTrades = decided.filter((t:any)=>t.symbol===symbol).slice(-20);
-  if (symTrades.length > 0) {
-    state[9] = symTrades.filter((t:any)=>["win","WIN"].includes(t.result)).length / symTrades.length;
-  }
-
-  // Time features
-  const hour = new Date().getUTCHours();
-  state[10] = Math.sin(2*Math.PI*hour/24);
-  state[11] = Math.cos(2*Math.PI*hour/24);
-  state[12] = (hour>=7&&hour<16) ? 1 : 0;  // London
-  state[13] = (hour>=12&&hour<21) ? 1 : 0; // NY
-  state[14] = (symbol.startsWith("BOOM")||symbol.startsWith("CRASH")) ? 1 : 0;
-  state[15] = symbol.startsWith("R_") ? 1 : 0;
-  state[16] = symbol.startsWith("frx") ? 1 : 0;
-  state[17] = regime==="HighVolatility" ? 1 : 0;
-  state[18] = (regime==="Uptrend"||regime==="Downtrend") ? 1 : 0;
-  state[19] = confidence >= 85 ? 1 : 0;
-
-  return state;
-}
-
-function rlSelectAction(
-  symbol: string, mlAction: string, confidence: number,
-  regime: string, stake: number, recentTrades: any[]
-): { action: string; stakeMult: number; rlConf: number; rlSkip: boolean } {
-  if (!RL_POLICY) return { action: mlAction, stakeMult: 1.0, rlConf: 0.5, rlSkip: false };
-
-  const state = buildRLState(symbol, confidence, regime, stake, recentTrades);
-  const { probs, value } = rlForward(state);
-
-  // Actions: 0=SKIP, 1=BUY, 2=SELL, 3=BUY_LARGE, 4=SELL_LARGE
-  const ACTION_NAMES = ["SKIP","BUY","SELL","BUY_LARGE","SELL_LARGE"];
-
-  // Epsilon-greedy (exploration during demo)
-  let action: number;
-  if (Math.random() < RL_EPSILON) {
-    action = Math.floor(Math.random() * 5);
-  } else {
-    action = probs.indexOf(Math.max(...probs));
-  }
-
-  const rlAction = ACTION_NAMES[action];
-  const rlSkip   = action === 0;
-
-  // Stake multiplier
-  const stakeMult = (action===3||action===4) ? 1.5 : 1.0;
-
-  // RL agrees with ML? If not, lower confidence
-  const mlBuy  = mlAction === "BUY";
-  const rlBuy  = action === 1 || action === 3;
-  const rlSell = action === 2 || action === 4;
-  const agrees = (mlBuy && rlBuy) || (!mlBuy && rlSell) || rlSkip;
-
-  console.log(`🤖 RL: ${symbol} → ${rlAction} (prob:${probs[action].toFixed(2)} val:${value.toFixed(2)} agrees:${agrees})`);
-
-  return {
-    action:    rlSkip ? "SKIP" : (rlBuy ? "BUY" : "SELL"),
-    stakeMult,
-    rlConf:    probs[action],
-    rlSkip,
-  };
-}
-
-async function rlLearnFromTrade(supabase: any, trade: {
-  symbol: string; action: string; result: string;
-  pnl: number; stake: number; confidence: number;
-  regime: string;
-}): Promise<void> {
-  if (!RL_POLICY) return;
-  try {
-    // Get recent trades for context
-    const { data: recentTrades } = await supabase
-      .from("trades")
-      .select("symbol,result,pnl,stake,confidence,patterns,created_at")
-      .eq("account_name","edge_function")
-      .order("created_at",{ascending:false})
-      .limit(50);
-
-    const recent = (recentTrades || []).reverse();
-    const state  = buildRLState(trade.symbol, trade.confidence, trade.regime, trade.stake, recent);
-
-    // Compute reward
-    let reward = 0;
-    if (trade.result === "win") {
-      reward = Math.min((trade.pnl / trade.stake), 3.0);
-      if (trade.pnl/trade.stake > 1) reward *= 1.3;
-    } else if (trade.result === "loss") {
-      reward = Math.max((trade.pnl / trade.stake), -3.0);
-      if (Math.abs(trade.pnl/trade.stake) > 0.8) reward *= 1.5;
-    } else if (trade.result === "error") {
-      reward = -0.5;
-    }
-
-    // Map action
-    const actionMap: Record<string,number> = {
-      "BUY":1,"SELL":2,"BUY_LARGE":3,"SELL_LARGE":4
-    };
-    const action = trade.result === "win"
-      ? (actionMap[trade.action] || 1)
-      : 0; // SKIP would have been better on loss
-
-    // Online TD update (simplified — update weights directly)
-    const { probs, value } = rlForward(state);
-    const target    = reward; // single-step for online learning
-    const advantage = target - value;
-
-    // Update Wp (policy head) — gradient step
-    const lr = 0.001;
-    if (RL_POLICY.bp && RL_POLICY.bp.length > action) {
-      RL_POLICY.bp[action] = (RL_POLICY.bp[action] || 0) + lr * advantage * (1 - probs[action]);
-    }
-
-    // Decay epsilon
-    RL_EPSILON = Math.max(0.02, RL_EPSILON * 0.9995);
-    RL_TOTAL_TRADES++;
-
-    // Save updated policy to Supabase every 10 trades
-    if (RL_TOTAL_TRADES % 10 === 0) {
-      const payload = JSON.stringify({
-        policy_name:  "timi_rl_v1",
-        policy_json:  JSON.stringify(RL_POLICY),
-        epsilon:      RL_EPSILON,
-        total_trades: RL_TOTAL_TRADES,
-        avg_reward:   reward,
-        win_rate:     trade.result === "win" ? 1 : 0,
-        trained_at:   new Date().toISOString(),
-      });
-      await supabase.from("rl_policy").upsert(
-        JSON.parse(payload),
-        { onConflict: "policy_name" }
-      );
-      console.log(`🤖 RL policy updated (trade #${RL_TOTAL_TRADES} reward:${reward.toFixed(2)} ε:${RL_EPSILON.toFixed(3)})`);
-    }
-  } catch(e) {
-    console.log(`⚠️ RL learn error: ${e}`);
-  }
-}
-
 async function loadSpecialistModels(supabase: any): Promise<void> {
   if (Object.keys(SPECIALIST_MODELS).length > 0) return;
   try {
@@ -2635,7 +1151,7 @@ function getTradingSession(): { active: boolean; name: string } {
 async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65, dynMultiplier: number = 100, fptTpPct: number = 0, fptSlPct: number = 0) {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 15000);
+    const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 25000);
     let authed = false;
     let contractId: number | null = null;
 
@@ -2648,8 +1164,7 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         let contractType: string;
         if (symbol.startsWith("BOOM"))       contractType = "MULTUP";
         else if (symbol.startsWith("CRASH")) contractType = "MULTDOWN";
-        else if (symbol.startsWith("R_") || symbol.startsWith("1HZ")) contractType = action === "BUY" ? "CALL" : "PUT";
-        else if (symbol.startsWith("frx") || symbol.startsWith("cry")) contractType = action === "BUY" ? "CALL" : "PUT";
+        else if (symbol.startsWith("R_"))    contractType = action === "BUY" ? "CALL" : "PUT";
         else                                  contractType = action === "BUY" ? "MULTUP" : "MULTDOWN";
 
         const isMult   = contractType.startsWith("MULT");
@@ -2691,15 +1206,12 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         }
 
         if (isMult) {
-          // Place MULT contract — no TP/SL in initial buy
-          // TP will be set via contract_update after placement
-          // This eliminates ALL error trades from invalid TP/SL
           ws.send(JSON.stringify({
             buy: 1, price: adjStake,
             parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: dynMultiplier }
           }));
           (ws as any)._tp = takeProfit;
-          (ws as any)._sl = 0; // no SL
+          (ws as any)._sl = stopLoss;
           (ws as any)._adjStake = adjStake;
         } else {
           ws.send(JSON.stringify({
@@ -2714,8 +1226,8 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         const tp = (ws as any)._tp;
         const sl = (ws as any)._sl;
         const adjStake = (ws as any)._adjStake;
-        if (tp && tp > 0) {
-          ws.send(JSON.stringify({ contract_update: 1, contract_id: contractId, limit_order: { take_profit: tp } }));
+        if (tp && sl) {
+          ws.send(JSON.stringify({ contract_update: 1, contract_id: contractId, limit_order: { take_profit: tp, stop_loss: sl } }));
         } else {
           clearTimeout(timeout); ws.close(); resolve({ ...d.buy, stake_used: adjStake });
         }
@@ -3174,374 +1686,96 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
   try {
     const { data: openTrades } = await supabase
       .from("trades")
-      .select("id,symbol,stake,created_at,type,patterns")
-      .eq("result","open")
-      .eq("account_name","edge_function")
-      .order("created_at",{ascending:false})
-      .limit(50);
+      .select("id, symbol, stake, created_at")
+      .eq("result", "open")
+      .eq("account_name", "edge_function")
+      .order("created_at", { ascending: false })
+      .limit(30);
 
     if (!openTrades || openTrades.length === 0) return;
+    console.log(`🔄 Checking ${openTrades.length} open trades...`);
 
-    // Get profit table from Deriv — guaranteed closed contracts only
-    const closed: any[] = await new Promise((resolve) => {
-      const ws  = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const tmo = setTimeout(() => { ws.close(); resolve([]); }, 12000);
+    // Fetch statement from Deriv
+    const transactions: any[] = await new Promise((resolve) => {
+      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+      const timeout = setTimeout(() => { ws.close(); resolve([]); }, 20000);
       let authed = false;
+      let allTx: any[] = [];
+      let pending = 2;
+
+      const done = () => {
+        pending--;
+        if (pending <= 0) {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(allTx);
+        }
+      };
 
       ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
       ws.onmessage = (e: any) => {
         const d = JSON.parse(e.data);
         if (d.authorize && !authed) {
           authed = true;
+          ws.send(JSON.stringify({ statement: 1, description: 1, limit: 200 }));
           ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
         }
-        if (d.profit_table) {
-          clearTimeout(tmo); ws.close();
-          // Only settled contracts: sell_price exists and differs from buy_price
-          resolve((d.profit_table.transactions || []).filter((t: any) => {
-            const buy  = parseFloat(t.buy_price  || "0");
-            const sell = parseFloat(t.sell_price || "0");
-            return buy > 0 && sell > 0 && Math.abs(sell - buy) > 0.01 && t.sell_time;
-          }));
+        if (d.statement) {
+          allTx = allTx.concat(d.statement.transactions || []);
+          done();
         }
-        if (d.error) { clearTimeout(tmo); ws.close(); resolve([]); }
+        if (d.profit_table) {
+          allTx = allTx.concat(d.profit_table.transactions || []);
+          done();
+        }
+        if (d.error) { done(); }
       };
-      ws.onerror = () => { clearTimeout(tmo); resolve([]); };
+      ws.onerror = () => { clearTimeout(timeout); resolve([]); };
     });
 
-    if (closed.length === 0) return;
+    console.log(`📊 Got ${transactions.length} transactions from Deriv`);
 
-    // Build lookup by contract_id for O(1) matching
-    const closedMap: Record<string, any> = {};
-    for (const t of closed) {
-      closedMap[String(t.contract_id)] = t;
-    }
-
-    const twoHrsAgo = new Date(Date.now() - 2*60*60*1000).toISOString();
     let updated = 0;
+    const twoHrsAgo = new Date(Date.now() - 2*60*60*1000).toISOString();
 
     for (const trade of openTrades) {
-      // Extract cid from patterns field
-      const cidMatch = (trade.patterns || "").match(/cid:(\d+)/);
-      const cid = cidMatch ? cidMatch[1] : "";
+      const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
 
-      // Match by contract_id (exact) — most reliable
-      const match = cid ? closedMap[cid] : null;
+      // Find matching transaction
+      const match = transactions.find((t: any) => {
+        const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
+        return pt > 0 && Math.abs(pt - tradeTimeSec) < 900;
+      }) || transactions.find((t: any) => {
+        const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
+        const buyPrice = parseFloat(t.buy_price || t.amount || "0");
+        return Math.abs(buyPrice - (trade.stake || 0)) < 0.5 && Math.abs(pt - tradeTimeSec) < 1800;
+      });
 
       if (match) {
-        const buy  = parseFloat(match.buy_price  || "0");
-        const sell = parseFloat(match.sell_price || "0");
-        const pnl  = sell - buy;
-        if (Math.abs(pnl) < 0.01) continue;
-        const result = pnl > 0 ? "win" : "loss";
+        let pnl = 0;
+        if (match.pnl != null)        pnl = parseFloat(match.pnl);
+        else if (match.sell_price != null && match.buy_price != null)
+          pnl = parseFloat(match.sell_price) - parseFloat(match.buy_price);
+        else if (match.profit != null) pnl = parseFloat(match.profit);
+
+        const result = pnl >= 0 ? "win" : "loss";
         await supabase.from("trades")
           .update({ result, pnl: parseFloat(pnl.toFixed(4)) })
           .eq("id", trade.id);
-        console.log(`✅ ${trade.symbol}: ${result} $${pnl.toFixed(2)}`);
+        console.log(`✅ ${trade.symbol}: ${result} pnl=$${pnl.toFixed(2)}`);
         updated++;
-        // RL learns immediately
-        await rlLearnFromTrade(supabase, {
-          symbol: trade.symbol, action: trade.type || "BUY",
-          result, pnl: parseFloat(pnl.toFixed(4)),
-          stake: parseFloat(trade.stake || "1"),
-          confidence: 75,
-          regime: (trade.patterns||"").includes("Uptrend") ? "Uptrend" :
-                  (trade.patterns||"").includes("Down") ? "Downtrend" : "Ranging",
-        });
       } else if (trade.created_at < twoHrsAgo) {
-        // Old unmatched trade — expire it
-        await supabase.from("trades").update({result:"expired"}).eq("id",trade.id);
+        // Stale trade — mark expired
+        await supabase.from("trades")
+          .update({ result: "expired" })
+          .eq("id", trade.id);
       }
     }
     console.log(`🔄 Updated ${updated}/${openTrades.length} trades`);
+
   } catch(e) {
-    console.log(`⚠️ Trade updater: ${e}`);
+    console.log(`⚠️ Trade result updater error: ${e}`);
   }
-}
-
-
-// ═══════════════════════════════════════════════════════════════════
-// QUANTUM FIELD THEORY ENGINE + DAILY PAIR RECOMMENDER
-// ═══════════════════════════════════════════════════════════════════
-//
-// 1. PATH INTEGRAL — Feynman's sum over all price paths
-//    Identifies "low action" paths = most probable price trajectory
-//    L = ½mẋ² - V(x)  (Lagrangian = kinetic - potential)
-//    S = ∫L dt         (Action = total path energy)
-//    Low S path = market's preferred trajectory
-//
-// 2. TEMPORAL TURBULENCE — non-linear market time
-//    High volume = "heavy" time = trend persistence
-//    Low volume  = "light" time = fast mean reversion
-//    Price jumps between QPLs like electron energy transitions
-//
-// 3. PAIR RECOMMENDER — daily best symbols analysis
-//    Scores each symbol on: trend clarity, volatility regime,
-//    harmonic setup, quantum spike probability, recent ML WR
-//    Returns ranked list of best symbols to trade today
-// ═══════════════════════════════════════════════════════════════════
-
-// ── PATH INTEGRAL: Feynman price path analysis ──────────────────────
-function computePathIntegral(candles: any[]): {
-  lowActionPath:    number;   // most probable next price
-  actionScore:      number;   // path action S (lower = more probable)
-  kineticEnergy:    number;   // price momentum energy
-  potentialEnergy:  number;   // mean reversion pull
-  lagrangian:       number;   // L = KE - PE (instantaneous)
-  mostProbableDir:  string;   // "UP" | "DOWN" | "NEUTRAL"
-  pathConfidence:   number;   // 0-1 confidence in direction
-} {
-  if (candles.length < 30) {
-    return { lowActionPath:0, actionScore:999, kineticEnergy:0,
-             potentialEnergy:0, lagrangian:0, mostProbableDir:"NEUTRAL", pathConfidence:0 };
-  }
-
-  const closes  = candles.map((c:any) => parseFloat(c.close));
-  const volumes = candles.map((c:any) => parseFloat(c.tick_count || c.volume || "1"));
-  const n       = closes.length;
-  const current = closes[n-1];
-
-  // Price "velocity" ẋ = price change per unit time
-  const velocities = closes.slice(1).map((c,i) => c - closes[i]);
-
-  // Price "mass" m = volume-weighted inertia
-  // High volume = heavy = hard to change direction
-  const avgVol  = volumes.reduce((a,b)=>a+b,0) / n;
-  const mass    = volumes[n-1] / (avgVol + 1e-10); // normalized mass
-
-  // Kinetic Energy: KE = ½mẋ²
-  const lastVelocity = velocities[velocities.length-1];
-  const kineticEnergy = 0.5 * mass * lastVelocity * lastVelocity;
-
-  // Potential Energy: V(x) = pull toward equilibrium (mean)
-  // V(x) = ½k(x - μ)² where k = mean reversion strength
-  const mean  = closes.reduce((a,b)=>a+b,0) / n;
-  const ouTheta = 0.1; // mean reversion speed (κ)
-  const potentialEnergy = 0.5 * ouTheta * Math.pow(current - mean, 2);
-
-  // Lagrangian: L = KE - PE
-  const lagrangian = kineticEnergy - potentialEnergy;
-
-  // Action S = Σ L × Δt for recent window
-  // Lower action = more "natural" path = more probable
-  const windowSize = Math.min(20, velocities.length);
-  let actionScore = 0;
-  for (let i = velocities.length - windowSize; i < velocities.length; i++) {
-    const v   = velocities[i];
-    const ke  = 0.5 * mass * v * v;
-    const pe  = 0.5 * ouTheta * Math.pow(closes[i] - mean, 2);
-    actionScore += Math.abs(ke - pe); // sum of |L| over path
-  }
-  actionScore /= windowSize; // normalize
-
-  // Most probable next price: Euler-Lagrange equation solution
-  // d/dt(∂L/∂ẋ) = ∂L/∂x
-  // mẍ = -∂V/∂x = -k(x - μ)
-  // Solution: x(t+1) = x + ẋ·Δt - (k/m)(x-μ)·Δt²
-  const dt = 1; // one period ahead
-  const acceleration = -(ouTheta / mass) * (current - mean);
-  const lowActionPath = current + lastVelocity * dt + 0.5 * acceleration * dt * dt;
-
-  // Direction and confidence
-  const expectedMove  = lowActionPath - current;
-  const mostProbableDir = expectedMove > 0.0001 ? "UP" :
-                          expectedMove < -0.0001 ? "DOWN" : "NEUTRAL";
-  // Confidence = how strong the path signal is
-  // High KE + aligned PE = high confidence
-  const pathConfidence = Math.min(1, Math.abs(expectedMove) / (Math.abs(current) * 0.001 + 1e-10));
-
-  return {
-    lowActionPath,
-    actionScore,
-    kineticEnergy,
-    potentialEnergy,
-    lagrangian,
-    mostProbableDir,
-    pathConfidence: Math.min(1, pathConfidence),
-  };
-}
-
-// ── TEMPORAL TURBULENCE: non-linear market time ──────────────────────
-function computeTemporalTurbulence(candles: any[]): {
-  marketMass:       number;   // volume-weighted inertia
-  timeDialation:    number;   // >1=slow time(trend), <1=fast time(reversal)
-  trendInertia:     number;   // resistance to direction change
-  nextLevelDist:    number;   // distance to next QPL (energy level)
-  jumpProbability:  number;   // probability of level transition (spike)
-} {
-  if (candles.length < 20) {
-    return { marketMass:1, timeDialation:1, trendInertia:0.5,
-             nextLevelDist:0, jumpProbability:0.1 };
-  }
-
-  const closes  = candles.map((c:any) => parseFloat(c.close));
-  const volumes = candles.map((c:any) => parseFloat(c.tick_count || "1"));
-  const n = closes.length;
-
-  // Market "mass" = volume momentum
-  const avgVol     = volumes.reduce((a,b)=>a+b,0) / n;
-  const recentVol  = volumes.slice(-5).reduce((a,b)=>a+b,0) / 5;
-  const marketMass = recentVol / (avgVol + 1e-10);
-
-  // Time dilation: Einstein's insight applied to markets
-  // Heavy markets (high volume) = time slows = trends persist longer
-  // Light markets (low volume) = time speeds = reversals happen faster
-  const timeDialation = Math.sqrt(marketMass); // √m scaling
-
-  // Trend inertia: how hard is it to reverse?
-  // High mass + strong trend = high inertia
-  const returns    = closes.slice(1).map((c,i) => c - closes[i]);
-  const trendStr   = Math.abs(returns.slice(-10).reduce((a,b)=>a+b,0)) /
-                     (returns.slice(-10).reduce((a,b)=>a+Math.abs(b),0) + 1e-10);
-  const trendInertia = marketMass * trendStr;
-
-  // Distance to next energy level (QPL)
-  // Based on average price "quantum" = σ/√n (minimum price grain)
-  const sigma = Math.sqrt(returns.reduce((a,b)=>a+b*b,0)/returns.length);
-  const hbar  = sigma / 10; // effective Planck constant
-  const omega = sigma;      // natural frequency
-  const E1    = hbar * omega * 1.5; // first excited state
-  const nextLevelDist = E1 * Math.sqrt(2 / 0.1); // classical turning point
-
-  // Jump probability: probability of transitioning to next energy level
-  // Boltzmann-like: P(jump) = exp(-ΔE/kT) where T = volatility "temperature"
-  const temperature    = sigma * 10; // market "temperature"
-  const jumpProbability = Math.exp(-nextLevelDist / (temperature + 1e-10));
-
-  return {
-    marketMass,
-    timeDialation,
-    trendInertia,
-    nextLevelDist,
-    jumpProbability: Math.min(0.95, jumpProbability),
-  };
-}
-
-// ── DAILY PAIR RECOMMENDER ───────────────────────────────────────────
-// Scores every available symbol and returns ranked recommendations
-// Uses ALL mathematical components collaboratively
-async function getDailyPairRecommendations(
-  supabase: any,
-  token: string,
-  availableSymbols: string[]
-): Promise<{
-  symbol:       string;
-  score:        number;
-  grade:        string;   // A+ A B C
-  reason:       string;
-  direction:    string;   // BUY or SELL
-  confidence:   number;
-  components:   Record<string, number>;
-}[]> {
-  const recommendations = [];
-
-  for (const symbol of availableSymbols) {
-    try {
-      const candles = await fetchCandles(symbol, 60, 200);
-      if (candles.length < 60) continue;
-
-      const closes  = candles.map((c:any) => parseFloat(c.close));
-      const returns = closes.slice(1).map((c,i) => Math.log(c/closes[i]));
-
-      // 1. Path Integral score
-      const path = computePathIntegral(candles);
-      const pathScore = path.pathConfidence * (path.mostProbableDir === "UP" ? 1 : -1);
-
-      // 2. Temporal turbulence
-      const temporal = computeTemporalTurbulence(candles);
-      const temporalScore = temporal.jumpProbability; // spike opportunity
-
-      // 3. Anharmonic spike probability
-      const spike = detectAnharmonicSpike(candles);
-      const spikeScore = spike.spikeProbability;
-
-      // 4. QPL positioning
-      const qpl = computeQuantumPriceLevels(candles);
-      const qplScore = qpl.inTransit ? 0.8 : // in transit = momentum play
-                       qpl.distanceToNearest < 0.001 ? 0.6 : 0.3;
-
-      // 5. Trend clarity (Hurst)
-      const hurst = qpl.omega > 0 ? Math.min(1, qpl.omega * 10) : 0.5;
-      const trendScore = hurst > 0.6 ? 1.0 : hurst < 0.4 ? 0.5 : 0.7;
-
-      // 6. Volatility regime (is it tradeable?)
-      const sigma = Math.sqrt(returns.reduce((a,b)=>a+b*b,0)/returns.length);
-      const volScore = sigma > 0.0001 && sigma < 0.01 ? 1.0 : // ideal volatility
-                       sigma < 0.0001 ? 0.2 : 0.5; // too quiet or too wild
-
-      // 7. Harmonic pattern present?
-      const harmonic = harmonicSignal(candles, symbol);
-      const harmonicScore = harmonic.hasSignal ? harmonic.strength : 0.3;
-
-      // COMPOSITE SCORE (weighted)
-      const score =
-        0.20 * pathScore +
-        0.15 * temporalScore +
-        0.15 * spikeScore +
-        0.15 * qplScore +
-        0.15 * trendScore +
-        0.10 * volScore +
-        0.10 * harmonicScore;
-
-      // Direction from path integral (most mathematically grounded)
-      let direction = path.mostProbableDir === "UP" ? "BUY" : "SELL";
-      // Override for BOOM/CRASH
-      if (symbol.startsWith("BOOM"))  direction = "BUY";
-      if (symbol.startsWith("CRASH")) direction = "SELL";
-
-      const absScore = Math.abs(score);
-      const grade = absScore > 0.7 ? "A+" :
-                    absScore > 0.5 ? "A"  :
-                    absScore > 0.3 ? "B"  : "C";
-
-      const reasons = [];
-      if (harmonic.hasSignal) reasons.push(`${harmonic.pattern} pattern`);
-      if (spike.spikeImminent) reasons.push(`spike imminent λ=${spike.lambda.toFixed(2)}`);
-      if (qpl.inTransit) reasons.push("in transit zone");
-      if (temporal.jumpProbability > 0.5) reasons.push("level transition likely");
-
-      const currentPrice = closes[closes.length-1];
-      const qplData = computeQuantumPriceLevels(candles);
-      let tpPrice = direction==="BUY" ? qplData.nearestResistance : qplData.nearestSupport;
-      let slPrice = direction==="BUY" ? qplData.nearestSupport   : qplData.nearestResistance;
-      if (harmonic.hasSignal) {
-        tpPrice = direction==="BUY" ? currentPrice*(1+harmonic.tpPct) : currentPrice*(1-harmonic.tpPct);
-        slPrice = direction==="BUY" ? currentPrice*(1-harmonic.slPct) : currentPrice*(1+harmonic.slPct);
-      }
-      const tpDist = Math.abs(tpPrice-currentPrice);
-      const slDist = Math.abs(slPrice-currentPrice);
-      const rrRatio = slDist>0 ? parseFloat((tpDist/slDist).toFixed(2)) : 0;
-
-      recommendations.push({
-        symbol,
-        score: absScore,
-        grade,
-        reason: reasons.join(" + ") || "ensemble signal",
-        direction,
-        confidence: Math.round(Math.min(95, absScore * 100)),
-        entry:      parseFloat(currentPrice.toFixed(5)),
-        takeProfit: parseFloat(tpPrice.toFixed(5)),
-        stopLoss:   parseFloat(slPrice.toFixed(5)),
-        rrRatio,
-        tpPct:      parseFloat((tpDist/currentPrice*100).toFixed(3)),
-        slPct:      parseFloat((slDist/currentPrice*100).toFixed(3)),
-        pattern:    harmonic.hasSignal ? harmonic.pattern : "QPL",
-        components: {
-          path:     parseFloat(pathScore.toFixed(3)),
-          temporal: parseFloat(temporalScore.toFixed(3)),
-          spike:    parseFloat(spikeScore.toFixed(3)),
-          qpl:      parseFloat(qplScore.toFixed(3)),
-          trend:    parseFloat(trendScore.toFixed(3)),
-          harmonic: parseFloat(harmonicScore.toFixed(3)),
-        }
-      });
-    } catch(e) {
-      console.log(`⚠️ Recommender skip ${symbol}: ${e}`);
-    }
-  }
-
-  // Sort by score descending
-  return recommendations.sort((a,b) => b.score - a.score);
 }
 
 
@@ -3563,7 +1797,7 @@ Deno.serve(async (req) => {
   try {
     const realBalance = await new Promise<number>((resolve) => {
       const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const t = setTimeout(() => { ws.close(); resolve(balance); }, 4000);
+      const t = setTimeout(() => { ws.close(); resolve(balance); }, 8000);
       ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
       ws.onmessage = (e) => {
         const d = JSON.parse(e.data);
@@ -3727,16 +1961,6 @@ Deno.serve(async (req) => {
         console.log(`✅ ${symbol}: HMM→${regime.name} (allowed:${regime.allowedAction})`);
       }
 
-      // ── Minimum stake check — skip if stake too small for MULT ──
-      const isMULT = symbol.startsWith("BOOM") || symbol.startsWith("CRASH") ||
-                     symbol.startsWith("R_") || symbol.startsWith("1HZ");
-      const minViableStake = isMULT ? 1.00 : 0.35;
-      const projectedStake = Math.max(minViableStake, parseFloat(((balance * (cfg.risk_pct || 2)) / 100).toFixed(2)));
-      if (projectedStake < minViableStake) {
-        scanLog.push(`${symbol}: stake_too_small ($${projectedStake.toFixed(2)} < $${minViableStake})`);
-        continue;
-      }
-
       // ── News Guard — skip forex during high-impact events ──
       const newsCheck = await checkNewsGuard(symbol);
       if (newsCheck.blocked) {
@@ -3744,162 +1968,79 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const features = featuresEarly;
       let sig: any;
-      const rlStakeMult = 1.0;
+      const features = featuresEarly; // reuse features computed for OGD
 
       if (ML_MODELS[symbol]) {
-        // ══════════════════════════════════════════════════════════════
-        // TIMI UNIFIED INTELLIGENCE ENGINE
-        // Every mathematical component contributes a SCORE
-        // All scores combine into one final decision
-        // No single component blocks — all collaborate
-        // ══════════════════════════════════════════════════════════════
-
-        const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-
-        // ── SIGNAL SCORES: each returns +1 (BUY), -1 (SELL), 0 (neutral) ──
-        // Scale: strong signal = near ±1, weak = near 0
-
-        // 1. ML SPECIALIST — trained pattern recognition
+        // ── STEP 3: ML Prediction — Specialist Routing ──
+        const specData   = SPECIALIST_MODELS[symbol];
         const hurst_val  = features[44] || 0.5;
         const kurt_val   = features[52] || 1.0;
         const specRegime = hurst_val > 0.58 ? "trending" : (hurst_val < 0.42 || kurt_val > 3.0) ? "volatile" : "ranging";
-        const specData   = SPECIALIST_MODELS[symbol];
-        let mlRaw: any;
+
         if (specData) {
           const specResult = mlPredictSpecialist(specData, specRegime, features);
-          mlRaw = (specResult && specResult.action !== "HOLD") ? specResult : mlPredict(ML_MODELS[symbol], features);
-        } else {
-          mlRaw = mlPredict(ML_MODELS[symbol], features);
-        }
-        const mlScore = mlRaw.action === "BUY" ? mlRaw.confidence/100 :
-                        mlRaw.action === "SELL" ? -mlRaw.confidence/100 : 0;
-        const mlWeight = 0.25; // ML has proven accuracy
-
-        // 2. HARMONIC PATTERNS — Fibonacci geometry PRZ
-        const harmonic = harmonicSignal(c1m, symbol);
-        const harmonicScore = harmonic.hasSignal ?
-          (harmonic.direction === "BUY" ? harmonic.strength : -harmonic.strength) : 0;
-        const harmonicWeight = 0.20; // Fibonacci is mathematically precise
-
-        // 3. OGD REGIME — HMM + Rules + Momentum ensemble
-        const regimeScore = regime.name === "Uptrend" ? 0.8 :
-                           regime.name === "Downtrend" ? -0.8 :
-                           regime.allowedAction === "BUY" ? 0.5 :
-                           regime.allowedAction === "SELL" ? -0.5 : 0;
-        const regimeWeight = 0.15;
-
-        // 4. QUANTUM PRICE FIELD — Schrödinger QPLs + spike detection
-        const qpf = quantumPriceFieldSignal(c1m, "BUY", symbol, 70);
-        const spikeDir = qpf.inTransit ? 1 : 0; // in transit = momentum
-        const qpfScore = qpf.spikeBoost > 1.1 ?
-          (isBoomCrash ? spikeDir * qpf.spikeBoost * 0.8 : 0.3) :
-          qpf.inTransit ? 0.3 : 0;
-        const qpfWeight = 0.15;
-
-        // 5. ANHARMONIC SPIKE DETECTOR — λ coefficient timing
-        const spike = detectAnharmonicSpike(c1m);
-        const spikeScore = spike.spikeImminent ?
-          (spike.spikeDirection === "UP" ? spike.spikeProbability :
-           spike.spikeDirection === "DOWN" ? -spike.spikeProbability : 0) : 0;
-        const spikeWeight = 0.10;
-
-        // 5b. PATH INTEGRAL — Feynman most probable path
-        const pathIntegral = computePathIntegral(c1m);
-        const pathScore = pathIntegral.mostProbableDir === "UP" ? pathIntegral.pathConfidence :
-                          pathIntegral.mostProbableDir === "DOWN" ? -pathIntegral.pathConfidence : 0;
-
-        // 5c. TEMPORAL TURBULENCE — non-linear market time
-        const temporal = computeTemporalTurbulence(c1m);
-        const temporalScore = temporal.jumpProbability > 0.5 ? 0.4 : 0.1;
-
-        // 6. RL POLICY — learned from real trade outcomes
-        const { data: rlTrades } = await supabase.from("trades")
-          .select("symbol,result,pnl,confidence,patterns,created_at")
-          .eq("account_name","edge_function")
-          .order("created_at",{ascending:false}).limit(30);
-        const rlState = buildRLState(symbol, 70, regime.name, 10, (rlTrades||[]).reverse());
-        const rlFwd   = rlForward(rlState);
-        const rlBuy   = (rlFwd.probs[1]||0) + (rlFwd.probs[3]||0);
-        const rlSell  = (rlFwd.probs[2]||0) + (rlFwd.probs[4]||0);
-        const rlScore = rlBuy - rlSell; // -1 to +1
-        const rlWeight = 0.10;
-
-        // 7. KALMAN + OU — momentum and mean reversion mathematics
-        const kalmanVelocity = features[22] || 0;
-        const ouZscore       = features[28] || 0;
-        const kalmanScore = Math.tanh(kalmanVelocity * 500);
-        const ouScore     = -Math.tanh(ouZscore * 0.5); // mean reversion
-        const mathWeight  = 0.05; // each of kalman + ou
-
-        // ── WEIGHTED ENSEMBLE — all systems vote together ──
-        const ensembleScore =
-          0.35 * mlScore       +  // ML is most reliable — highest weight
-          0.20 * harmonicScore +  // Fibonacci geometry
-          0.10 * regimeScore   +  // regime reduced — was dominating wrongly
-          0.10 * qpfScore      +
-          0.08 * spikeScore    +
-          0.08 * rlScore       +
-          0.05 * pathScore     +
-          0.02 * temporalScore +
-          0.01 * kalmanScore   +
-          0.01 * ouScore;
-
-        // ── BOOM/CRASH: force direction (they only go one way) ──
-        let finalScore = ensembleScore;
-        if (isBoomCrash) {
-          if (symbol.startsWith("BOOM"))  finalScore = Math.abs(ensembleScore);  // always positive = BUY
-          if (symbol.startsWith("CRASH")) finalScore = -Math.abs(ensembleScore); // always negative = SELL
-        }
-
-        // ── CONVERT SCORE TO ACTION ──
-        // Threshold: need clear signal (>0.15) not noise
-        if (Math.abs(finalScore) < 0.15) {
-          scanLog.push(`${symbol}: ensemble_weak score=${finalScore.toFixed(3)} (ML:${mlScore.toFixed(2)} H:${harmonicScore.toFixed(2)} R:${regimeScore.toFixed(2)} RL:${rlScore.toFixed(2)})`);
-          continue;
-        }
-
-        const action     = finalScore > 0 ? "BUY" : "SELL";
-        // Confidence = how strong the ensemble agreement is (50-95%)
-        const confidence = Math.round(Math.min(95, 50 + Math.abs(finalScore) * 45));
-
-        sig = {
-          action,
-          confidence,
-          reason: `ensemble:${finalScore.toFixed(3)}`,
-          ensembleComponents: {
-            ml: mlScore, harmonic: harmonicScore, regime: regimeScore,
-            qpf: qpfScore, spike: spikeScore, rl: rlScore,
-            kalman: kalmanScore, ou: ouScore
+          if (specResult && specResult.action !== "HOLD") {
+            sig = specResult;
+            scanLog.push(`${symbol}: specialist_${specRegime}→${sig.action} ${sig.confidence}%`);
+          } else {
+            sig = mlPredict(ML_MODELS[symbol], features);
+            if (specResult?.action === "HOLD") {
+              scanLog.push(`${symbol}: spec_blocked, general→${sig.action}`);
+            }
           }
-        };
+        } else {
+          sig = mlPredict(ML_MODELS[symbol], features);
+        }
 
-        scanLog.push(`${symbol}: ML→${action} conf:${confidence}% (ensemble=${finalScore.toFixed(3)} ML:${mlScore.toFixed(2)} H:${harmonicScore.toFixed(2)} RL:${rlScore.toFixed(2)})`);
+        if (sig.action === "HOLD") {
+          scanLog.push(`${symbol}: ML→HOLD (${sig.reason})`); continue;
+        }
 
-        // ── BAYESIAN FINAL GATE — P(win) must be > 0.52 ──
-        // Only hard block if BOTH bayesian AND ensemble are negative
+        // ── STEP 4: HMM direction alignment ──
+        // Only allow signal if it matches HMM regime direction
+        // Exception: weak trends allow both directions if confidence is very high
+        if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
+           regime.name !== "WeakUptrend" && regime.name !== "WeakDowntrend") {
+          if (sig.action !== regime.allowedAction) {
+            scanLog.push(`${symbol}: HMM_direction_blocked — regime says ${regime.allowedAction} but ML says ${sig.action}`);
+            continue;
+          }
+        }
+
+        // ── STEP 5: Indicator confirmation ──
+        const { confirmed, reason } = confirmWithIndicators(features, sig.action, sig.confidence, symbol);
+        if (!confirmed) {
+          scanLog.push(`${symbol}: indicator_rejected:${reason}`); continue;
+        }
+
+        // ── Pre-calculate FPT for Bayesian (inline, no extra fetch) ──
+        const fpt_inline = firstPassageTime(
+          [], sig.action, symbol,
+          features[27] || 0.003,  // garch_vol
+          features[29] || 0,      // ou_zscore
+          sig.confidence
+        );
+
+        // ── STEP 6: TRUE Bayesian Win Probability ──
+        // P(win|conditions) = P(conditions|win) × P(win) / P(conditions)
+        // Uses trained win rate as prior, updates with 7 likelihood factors
+        // Runs in microseconds — pure math, no simulation
+        // Use actual trained win rate as Bayesian prior
         const mlWinRate = mlRows?.find((r: any) => r.symbol === symbol)?.win_rate || 0.65;
         const bayesian = trueBayesianWinProb(
-          c1m, action, symbol, features, mlWinRate, regime.name, features[40] || 0.5
+          c1m, sig.action, symbol, features,
+          mlWinRate, regime.name,
+          features[40] || 0.5  // session_strength (last feature)
         );
-        if (bayesian.winProb < 0.52 && Math.abs(finalScore) < 0.25) {
-          scanLog.push(`${symbol}: bayes_skip P(win)=${(bayesian.winProb*100).toFixed(1)}% + weak ensemble`);
+        if (bayesian.winProb < 0.55) {
+          scanLog.push(`${symbol}: bayes_skip P(win)=${(bayesian.winProb*100).toFixed(1)}% prior→posterior (${bayesian.recommendation})`);
           continue;
         }
-
-        // Bayesian boosts confidence further
-        if (bayesian.winProb > 0.65) {
-          sig.confidence = Math.min(95, sig.confidence + 5);
-        }
-
-        // QPF spike boost
-        if (qpf.spikeBoost > 1.1 && isBoomCrash) {
-          sig.confidence = Math.min(95, sig.confidence + Math.round((qpf.spikeBoost-1)*20));
-          scanLog.push(`${symbol}: QPF_spike_boost → conf=${sig.confidence}%`);
-        }
-
-        const bayesianBoost = 0; // already incorporated above
+        // Boost confidence for strong Bayesian signal
+        const bayesianBoost = bayesian.winProb >= 0.72 ? 4
+                            : bayesian.winProb >= 0.62 ? 2
+                            : 0;
 
         // ── STEP 7: AI Brain — check loss patterns ──
         const fingerprint = buildMarketFingerprint(features, symbol, sig.action, regime.name, session.name);
@@ -3984,22 +2125,6 @@ Deno.serve(async (req) => {
     best.confidence
   );
 
-  // Quantum Price Level TP/SL — more precise than FPT alone
-  // QPL gives mathematically derived support/resistance
-  const bestCandles = await fetchCandles(best.symbol, 60, 100);
-  const qpfFinal = quantumPriceFieldSignal(bestCandles, best.action, best.symbol, best.confidence);
-
-  // Use QPL TP/SL if they give better reward:risk than FPT
-  // QPL TP must be > QPL SL (positive expectancy)
-  const useQPL = qpfFinal.qplAdjustedTP > 0 &&
-                 qpfFinal.qplAdjustedTP > qpfFinal.qplAdjustedSL &&
-                 qpfFinal.qplAdjustedTP > 0.002; // meaningful TP distance
-
-  const finalTpPct = useQPL ? qpfFinal.qplAdjustedTP : fpt.tpPct;
-  const finalSlPct = useQPL ? qpfFinal.qplAdjustedSL : fpt.slPct;
-
-  console.log(`📐 TP/SL: ${useQPL ? "QPL" : "FPT"} tp=${(finalTpPct*100).toFixed(3)}% sl=${(finalSlPct*100).toFixed(3)}%`);
-
   const dynMult = selectMultiplier(
     best.symbol,
     best.confidence,
@@ -4009,124 +2134,8 @@ Deno.serve(async (req) => {
   );
 
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
-  // ── CONTRACT LIMIT CHECK — max 90 open contracts ──
-  const openContractCount: number = await new Promise((resolve) => {
-    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    const t  = setTimeout(() => { ws.close(); resolve(0); }, 5000);
-    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-    ws.onmessage = (e: any) => {
-      const d = JSON.parse(e.data);
-      if (d.authorize) {
-        ws.send(JSON.stringify({ portfolio: 1 }));
-      }
-      if (d.portfolio) {
-        clearTimeout(t); ws.close();
-        resolve((d.portfolio.contracts || []).length);
-      }
-      if (d.error) { clearTimeout(t); ws.close(); resolve(0); }
-    };
-    ws.onerror = () => { clearTimeout(t); resolve(0); };
-  });
-
-  if (openContractCount >= 5) {
-    console.log(`⚠️ Contract limit: ${openContractCount} open — waiting for closes`);
-    // Still run update to record closed trades
-    await updateOpenTradeResults(supabase, token);
-    return new Response(JSON.stringify({
-      status: "contract_limit",
-      open_contracts: openContractCount,
-      message: `${openContractCount} contracts open — waiting for TP hits`
-    }), { headers: CORS });
-  }
-  console.log(`📊 Open contracts: ${openContractCount}`);
-
-  try {
-    await supabase.from("mt5_signals").insert({
-      symbol: best.symbol, action: best.action,
-      confidence: best.confidence, status: "pending"
-    });
-    // Send to Telegram for MT5 to pick up
-    const telegramMsg = `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`;
-    await fetch(
-      `https://api.telegram.org/bot8617289462:AAEhpKyWCcFPVEULoaWfOfj7moUJ7MPS_nA/sendMessage`,
-      { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({chat_id:"6367921503", text: telegramMsg}) }
-    );
-    console.log(`📡 Signal sent to Telegram: ${telegramMsg}`);
-  } catch(e) { console.log("Signal error:", e); }
-
-  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, finalTpPct, finalSlPct);
+  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
   const success = result && !result.error;
-
-  // ── IMMEDIATE RESULT SUBSCRIPTION ──
-  // Subscribe to contract updates RIGHT AFTER placing
-  // This catches the result within seconds of closing
-  // Does NOT wait for next 5-min cycle
-  if (success && result?.contract_id) {
-    const cid = result.contract_id;
-    // Fire and forget — don't await to avoid timeout
-    (async () => {
-      try {
-        await new Promise<void>((resolve) => {
-          const ws  = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-          // Max 55 seconds (just under Supabase 60s limit)
-          const tmo = setTimeout(() => { ws.close(); resolve(); }, 55000);
-          let authed = false;
-
-          ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-          ws.onmessage = async (e: any) => {
-            const d = JSON.parse(e.data);
-            if (d.authorize && !authed) {
-              authed = true;
-              // Subscribe to this specific contract updates
-              ws.send(JSON.stringify({
-                proposal_open_contract: 1,
-                contract_id: cid,
-                subscribe: 1
-              }));
-            }
-            if (d.proposal_open_contract) {
-              const c = d.proposal_open_contract;
-              // Contract closed!
-              if (c.is_sold === 1 || c.status === "sold") {
-                clearTimeout(tmo);
-                ws.close();
-                const buyPrice  = parseFloat(c.buy_price  || "0");
-                const sellPrice = parseFloat(c.sell_price || "0");
-                const pnl       = sellPrice - buyPrice;
-                if (Math.abs(pnl) >= 0.01) {
-                  const res = pnl > 0 ? "win" : "loss";
-                  // Update immediately
-                  await supabase.from("trades")
-                    .update({ result: res, pnl: parseFloat(pnl.toFixed(4)) })
-                    .eq("account_name","edge_function")
-                    .like("patterns", `%cid:${cid}%`);
-                  console.log(`⚡ INSTANT: ${best.symbol} ${res} pnl=$${pnl.toFixed(2)} (contract closed)`);
-                  // RL learns immediately
-                  await rlLearnFromTrade(supabase, {
-                    symbol: best.symbol, action: best.action,
-                    result: res, pnl: parseFloat(pnl.toFixed(4)),
-                    stake, confidence: best.confidence,
-                    regime: best.regime || "Ranging",
-                  });
-                }
-                resolve();
-              }
-            }
-            if (d.error) { clearTimeout(tmo); ws.close(); resolve(); }
-          };
-          ws.onerror = () => { clearTimeout(tmo); resolve(); };
-        });
-      } catch(e) {
-        console.log(`⚠️ Instant updater: ${e}`);
-      }
-    })();
-  }
-  
-  // If trade errored due to TP/SL rejection — mark as error not loss
-  // AI Brain should NOT learn from placement errors
-  const tradeResult = !success && result?.tp_sl_error ? "error" :
-                      !success ? "error" : "open";
 
   // Log trade with extra fields for AI Brain to learn from
   const features = buildFeatures(
@@ -4137,7 +2146,6 @@ Deno.serve(async (req) => {
   await supabase.from("trades").insert({
     symbol:       best.symbol,
     type:         best.action,
-
     stake,
     result:       success ? "open" : "error",
     confidence:   best.confidence,
@@ -4147,16 +2155,11 @@ Deno.serve(async (req) => {
     macd_hist:    Array.isArray(features) ? features[1] : null,
     bb_position:  Array.isArray(features) ? features[2] : null,
     ema_stack:    Array.isArray(features) ? (features[4] ? 1 : features[5] ? -1 : 0) : null,
-        patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}|cid:${result?.contract_id || result?.buy?.contract_id || ""}`,  
+    patterns:     `regime:${best.regime || "unknown"}|trend5m:${Array.isArray(features) ? features[20] : 0}`,
   });
 
   if (success) {
     await supabase.from("bot_config").update({ balance_cache: balance - stake }).eq("active", true);
-
-    // ── RL LIVE LEARNING ──
-    // Will learn when trade result is updated in next cycle
-    // Store trade context for RL to learn from
-    console.log(`🤖 RL trade recorded for learning: ${best.symbol} ${best.action}`);
 
     // ── BINANCE SIGNAL ROUTING ──
     // Only route if:
@@ -4211,21 +2214,6 @@ Deno.serve(async (req) => {
         console.log(`⚠️ Binance routing error: ${binErr}`);
       }
     }
-  }
-
-  // Daily pair recommendations (called when no body or ?recommend)
-  const body3 = await req.clone().json().catch(() => ({}));
-  if (body3?.recommend === true) {
-    const allSym = ["BOOM500","BOOM1000","CRASH500","CRASH1000",
-                    "R_25","R_50","R_75","R_100",
-                    "frxUSDJPY","frxEURUSD","frxGBPUSD","frxXAUUSD"];
-    const recs = await getDailyPairRecommendations(supabase, token, allSym);
-    return new Response(JSON.stringify({
-      status: "recommendations",
-      date:   new Date().toISOString().split("T")[0],
-      top_pairs: recs.slice(0,5),
-      all_pairs: recs,
-    }), { headers: CORS });
   }
 
   return new Response(JSON.stringify({
