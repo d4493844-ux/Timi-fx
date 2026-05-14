@@ -193,15 +193,31 @@ function getTradingSession() {
 // ══════════════════════════════════════════════
 function getMartingaleStake(baseStake, tradeHistory, mode = "anti") {
   if (tradeHistory.length === 0) return baseStake;
-  const last = tradeHistory[0];
+  const last    = tradeHistory[0];
+  const recent3 = tradeHistory.slice(0, 3);
+  const wins3   = recent3.filter(t => ["WIN","win"].includes(t.result)).length;
+  const losses3 = recent3.filter(t => ["LOSS","loss"].includes(t.result)).length;
+
   if (mode === "martingale") {
-    // Double after loss to recover
-    if (last.result === "LOSS") return Math.min(baseStake * 2, baseStake * 4);
+    // FIX: cap at 3x, not 4x. Only double once per loss, not cascading
+    if (["LOSS","loss"].includes(last.result)) {
+      const multiplier = losses3 >= 3 ? 2.5 : losses3 === 2 ? 2.0 : 1.5;
+      return Math.min(baseStake * multiplier, baseStake * 3); // hard cap 3x
+    }
+    return baseStake;
+  } else if (mode === "anti") {
+    // FIX: cap streak boost at 3x. Win streak can't compound unbounded
+    if (["WIN","win"].includes(last.result)) {
+      const streakMult = wins3 >= 3 ? 1.75 : wins3 === 2 ? 1.35 : 1.15;
+      return Math.min(baseStake * streakMult, baseStake * 3); // hard cap 3x
+    }
+    if (["LOSS","loss"].includes(last.result)) {
+      // After a loss following a hot streak, step down gradually
+      return losses3 >= 2 ? baseStake * 0.6 : baseStake * 0.8;
+    }
     return baseStake;
   } else {
-    // Anti-martingale: increase after win, reduce after loss
-    if (last.result === "WIN") return baseStake * 1.5;
-    if (last.result === "LOSS") return baseStake * 0.75;
+    // fixed mode
     return baseStake;
   }
 }
@@ -386,8 +402,10 @@ export default function useDerivWS({ ai } = {}) {
   const takeProfitRef = useRef(0);
   const martingaleRef = useRef("anti");
   const wsConnections = useRef({});
-  const signalsRef = useRef({});
-  const runAnalysisRef = useRef(null);
+  const signalsRef        = useRef({});
+  const runAnalysisRef    = useRef(null);
+  const symbolCooldownRef = useRef({});  // { symbol: timestamp } — 15min cooldown after loss
+  const edgeFnActiveRef   = useRef(new Set()); // symbols edge function already traded
 
 
   // ── Load token from Supabase on startup ──
@@ -587,6 +605,50 @@ export default function useDerivWS({ ai } = {}) {
     if (openTradesRef.current.length >= MAX_TRADES) return;
     if (openTradesRef.current.find(t => t.symbol === best.sym)) return;
 
+    // ── Dual-engine guard ──────────────────────────────────────────────
+    // FIX: runAnalysis is sync so we use a cached ref updated every 30s
+    // Edge fn trades are written to Supabase — we check the open trades ref
+    // which already polls every 60s via REST. If edge fn symbol is in
+    // openTradesRef, the find() check above already blocks it.
+    // Additional: block if edge fn traded same symbol in last 6min via cache
+    const _edgeCacheKey = "timi_edge_" + best.sym;
+    const _edgeTs = (() => { try { return parseInt(localStorage.getItem(_edgeCacheKey) || "0"); } catch { return 0; } })();
+    if (Date.now() - _edgeTs < 6 * 60 * 1000) {
+      setTimiStatus("⏸️ Edge fn active on " + best.sym + " — skipping frontend trade");
+      return;
+    }
+    // Async background check — updates cache for NEXT cycle (no await needed)
+    supabase.from("trades").select("symbol")
+      .eq("account_name", "edge_function").eq("symbol", best.sym)
+      .gte("created_at", new Date(Date.now() - 6 * 60 * 1000).toISOString())
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          try { localStorage.setItem(_edgeCacheKey, Date.now().toString()); } catch {}
+        }
+      });
+
+    // ── Frontend symbol cooldown (15 min after a loss) ────────────────
+    const cooldownTs = symbolCooldownRef.current[best.sym];
+    if (cooldownTs && Date.now() - cooldownTs < 15 * 60 * 1000) {
+      const minsLeft = Math.ceil((15 * 60 * 1000 - (Date.now() - cooldownTs)) / 60000);
+      setTimiStatus("⏱️ " + best.sym + " cooldown — " + minsLeft + "min remaining");
+      return;
+    }
+
+    // ── Daily hard loss limit ──────────────────────────────────────────
+    const riskCfg = (() => { try { return pGetSync("timi_risk", {}); } catch { return {}; } })();
+    const dailyLossLimitPct = (riskCfg.dailyLossLimitPct || 5) / 100;
+    const bal2 = parseFloat(balanceRef.current?.balance || 0);
+    if (bal2 > 0 && dailyPnlRef.current <= -(bal2 * dailyLossLimitPct)) {
+      if (autoTradeRef.current) {
+        setAutoTrade(false);
+        autoTradeRef.current = false;
+        setTimiStatus("🛑 Daily loss limit hit — trading halted");
+        sendNotification("🛑 TIMI", "Daily loss limit reached. Trading stopped.", "alert");
+      }
+      return;
+    }
+
     const bal = parseFloat(balanceRef.current?.balance || 0);
     if (!bal || bal < 1) return;
 
@@ -640,8 +702,24 @@ export default function useDerivWS({ ai } = {}) {
       // BOOM/CRASH → MULTUP/MULTDOWN. Everything else → CALL/PUT with 5m duration
       const isBoomCrash = best.sym.startsWith("BOOM") || best.sym.startsWith("CRASH");
       const adjAutoStake = isBoomCrash ? Math.min(9, Math.max(1, stake)) : Math.max(0.35, stake);
-      const autoTp = parseFloat((adjAutoStake * 0.5).toFixed(2));
-      const autoSl = parseFloat((adjAutoStake * 0.9).toFixed(2));
+
+      // FIX: Positive EV TP/SL — TP must be > SL for profitability
+      // Risk-reward 2:1 minimum → even at 50% WR: EV = 0.5*2 - 0.5*1 = +0.5 per unit ✅
+      // OLD (broken): TP=0.5x, SL=0.9x → EV was negative at realistic win rates
+      const sigConf = best.sig.confidence || 65;
+      const tpMult  = sigConf >= 85 ? 3.0 : sigConf >= 75 ? 2.5 : 2.0;
+      const autoTp  = parseFloat((adjAutoStake * tpMult).toFixed(2));
+      const autoSl  = parseFloat((adjAutoStake * 0.5).toFixed(2));  // risk only 50% of stake
+
+      // Dynamic duration based on signal ATR (low volatility = faster resolution)
+      const sigAtr  = best.sig.atr || 0;
+      const avgAtr  = 0.002; // rough baseline
+      let   duration = 5;    // default 5min
+      if (sigAtr > 0) {
+        if (sigAtr < avgAtr * 0.5)  duration = 3;   // low vol → fast move
+        else if (sigAtr > avgAtr * 2) duration = 10; // high vol → give it time
+      }
+
       const proposal = isBoomCrash ? {
         proposal: 1, amount: adjAutoStake, basis: "stake",
         contract_type: best.sig.action === "BUY" ? "MULTUP" : "MULTDOWN",
@@ -650,7 +728,7 @@ export default function useDerivWS({ ai } = {}) {
       } : {
         proposal: 1, amount: adjAutoStake, basis: "stake",
         contract_type: best.sig.action === "BUY" ? "CALL" : "PUT",
-        currency: "USD", duration: 5, duration_unit: "m", symbol: best.sym
+        currency: "USD", duration: duration, duration_unit: "m", symbol: best.sym
       };
       sendTo(acc.id, proposal);
     });
@@ -731,6 +809,15 @@ export default function useDerivWS({ ai } = {}) {
               // Notify
               setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2));
               sendNotification(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + tradeSymbol, pnl > 0 ? "win" : "loss");
+
+              // ── Set symbol cooldown on loss ──
+              if (pnl <= 0) {
+                symbolCooldownRef.current[tradeSymbol] = Date.now();
+                console.log("⏱️ Cooldown set for", tradeSymbol, "— 15min");
+              } else {
+                // Clear cooldown on win
+                delete symbolCooldownRef.current[tradeSymbol];
+              }
 
               // AI learning
               if (ai?.recordTrade) {
