@@ -100,6 +100,171 @@ function mlPredict(model: any, featVals: number[]): { action: string; confidence
   return { action, confidence, reason: `ML:${mlProb.toFixed(2)} meta:${metaConf.toFixed(2)}` };
 }
 
+// ─────────────────────────────────────────────
+// WALK-FORWARD MODEL VALIDATOR
+// Checks if a newly trained model beats the current one
+// on the last 50 candles before it is deployed live
+// Called by timi-retrain before swapping ml_models table
+// Returns: { approved: bool, newWR: number, oldWR: number }
+// ─────────────────────────────────────────────
+function walkForwardValidate(
+  newModel: any,
+  oldModel: any,
+  recentFeatures: number[][],
+  recentOutcomes: number[]  // 1 = win, 0 = loss (last 50 trades)
+): { approved: boolean; newWR: number; oldWR: number; reason: string } {
+  if (!recentFeatures || recentFeatures.length < 20) {
+    return { approved: true, newWR: 0, oldWR: 0, reason: "insufficient_history_auto_approve" };
+  }
+  let newCorrect = 0, oldCorrect = 0;
+  const n = Math.min(recentFeatures.length, recentOutcomes.length);
+  for (let i = 0; i < n; i++) {
+    const feat = recentFeatures[i];
+    const actual = recentOutcomes[i];
+    // New model prediction
+    const newSum  = newModel.main_trees.reduce((s: number, t: any) => s + predictTree(t, feat), 0);
+    const newPred = sigmoid(newSum) > 0.5 ? 1 : 0;
+    if (newPred === actual) newCorrect++;
+    // Old model prediction
+    if (oldModel?.main_trees) {
+      const oldSum  = oldModel.main_trees.reduce((s: number, t: any) => s + predictTree(t, feat), 0);
+      const oldPred = sigmoid(oldSum) > 0.5 ? 1 : 0;
+      if (oldPred === actual) oldCorrect++;
+    } else {
+      oldCorrect++; // no old model = auto approve
+    }
+  }
+  const newWR = newCorrect / n;
+  const oldWR = oldCorrect / n;
+  // Only deploy if new model is at least as good as old (within 2% tolerance)
+  const approved = newWR >= oldWR - 0.02;
+  const reason   = approved
+    ? `new_model_approved: ${(newWR*100).toFixed(1)}% vs old ${(oldWR*100).toFixed(1)}%`
+    : `new_model_rejected: ${(newWR*100).toFixed(1)}% < old ${(oldWR*100).toFixed(1)}% - 2%`;
+  console.log(`🔬 Walk-forward: ${reason}`);
+  return { approved, newWR, oldWR, reason };
+}
+
+// ─────────────────────────────────────────────
+// PSI DRIFT DETECTOR
+// Compares live feature distributions vs training baseline
+// If PSI > 0.25 for any feature → model is stale → force retrain
+// PSI < 0.1 = stable, 0.1-0.25 = slight shift, > 0.25 = major drift
+// ─────────────────────────────────────────────
+function psiScore(trainDist: number[], liveDist: number[], bins = 10): number {
+  const min = Math.min(...trainDist, ...liveDist);
+  const max = Math.max(...trainDist, ...liveDist);
+  if (max === min) return 0;
+  const step = (max - min) / bins;
+  let psi = 0;
+  for (let i = 0; i < bins; i++) {
+    const lo = min + i * step, hi = lo + step;
+    const expPct = (trainDist.filter(v => v >= lo && v < hi).length / trainDist.length) || 0.001;
+    const actPct = (liveDist.filter(v => v >= lo && v < hi).length / liveDist.length) || 0.001;
+    psi += (actPct - expPct) * Math.log(actPct / expPct);
+  }
+  return Math.abs(psi);
+}
+
+async function checkFeatureDrift(supabase: any, liveFeatures: number[][]): Promise<{ drifted: boolean; worstFeature: number; worstPsi: number }> {
+  try {
+    const { data } = await supabase.from("feature_baselines").select("feature_index, baseline_values").limit(10);
+    if (!data || data.length === 0) return { drifted: false, worstFeature: -1, worstPsi: 0 };
+    let worstPsi = 0, worstFeature = -1;
+    for (const row of data) {
+      const liveVals = liveFeatures.map(f => f[row.feature_index]).filter(v => !isNaN(v));
+      const psi = psiScore(row.baseline_values, liveVals);
+      if (psi > worstPsi) { worstPsi = psi; worstFeature = row.feature_index; }
+    }
+    const drifted = worstPsi > 0.25;
+    if (drifted) {
+      console.log(`⚠️  Feature drift detected! Feature #${worstFeature} PSI=${worstPsi.toFixed(3)} > 0.25 — retrain recommended`);
+      await supabase.from("bot_config").update({ needs_retrain: true, drift_psi: worstPsi }).eq("active", true);
+    }
+    return { drifted, worstFeature, worstPsi };
+  } catch(e) {
+    return { drifted: false, worstFeature: -1, worstPsi: 0 };
+  }
+}
+
+// ─────────────────────────────────────────────
+// INTER-SYMBOL CORRELATION ENGINE
+// BOOM/CRASH are anti-correlated — when one gives BUY the other
+// should give SELL. Agreement = noise, Disagreement = confirmation.
+// VIX pairs (R_75/R_100) are positively correlated — agreement = stronger signal.
+// ─────────────────────────────────────────────
+const SYMBOL_CORRELATIONS: Record<string, { partner: string; type: "anti" | "positive" }[]> = {
+  "BOOM1000":  [{ partner: "CRASH1000", type: "anti"     }, { partner: "BOOM500",   type: "positive" }],
+  "BOOM500":   [{ partner: "CRASH500",  type: "anti"     }, { partner: "BOOM1000",  type: "positive" }],
+  "CRASH1000": [{ partner: "BOOM1000",  type: "anti"     }, { partner: "CRASH500",  type: "positive" }],
+  "CRASH500":  [{ partner: "BOOM500",   type: "anti"     }, { partner: "CRASH1000", type: "positive" }],
+  "R_75":      [{ partner: "R_100",     type: "positive" }, { partner: "R_50",      type: "positive" }],
+  "R_100":     [{ partner: "R_75",      type: "positive" }, { partner: "R_50",      type: "positive" }],
+  "R_50":      [{ partner: "R_75",      type: "positive" }, { partner: "R_25",      type: "positive" }],
+  "R_25":      [{ partner: "R_50",      type: "positive" }],
+  "frxEURUSD": [{ partner: "frxGBPUSD", type: "positive" }, { partner: "frxUSDCHF", type: "anti" }],
+  "frxGBPUSD": [{ partner: "frxEURUSD", type: "positive" }],
+  "frxUSDJPY": [{ partner: "frxEURJPY", type: "positive" }, { partner: "frxGBPJPY", type: "positive" }],
+};
+
+// Checks all signals collected so far and applies a confidence boost/penalty
+// based on whether correlated symbols agree or conflict
+function applyCorrelationScoring(signals: any[]): any[] {
+  if (signals.length < 2) return signals;
+
+  // Build lookup: symbol → signal
+  const sigMap: Record<string, any> = {};
+  for (const s of signals) sigMap[s.symbol] = s;
+
+  return signals.map(sig => {
+    const rels = SYMBOL_CORRELATIONS[sig.symbol];
+    if (!rels) return sig;
+
+    let corrBoost = 0;
+    const corrReasons: string[] = [];
+
+    for (const rel of rels) {
+      const partner = sigMap[rel.partner];
+      if (!partner) continue;
+
+      const agrees = sig.action === partner.action;
+
+      if (rel.type === "anti") {
+        // Anti-correlated: disagreement is the correct pattern
+        // BOOM BUY + CRASH SELL = both correct → boost both
+        // BOOM BUY + CRASH BUY = both same direction = noise → penalise
+        if (!agrees) {
+          corrBoost += 5;
+          corrReasons.push(`✅ ${rel.partner} anti-confirms (${partner.action})`);
+        } else {
+          corrBoost -= 8;
+          corrReasons.push(`⚠️ ${rel.partner} anti-conflict (both ${sig.action} — noise)`);
+        }
+      } else {
+        // Positive-correlated: agreement = stronger signal
+        if (agrees) {
+          corrBoost += 4;
+          corrReasons.push(`✅ ${rel.partner} confirms (${partner.action})`);
+        } else {
+          corrBoost -= 4;
+          corrReasons.push(`⚠️ ${rel.partner} conflicts (${partner.action} vs ${sig.action})`);
+        }
+      }
+    }
+
+    if (corrBoost !== 0) {
+      console.log(`🔗 ${sig.symbol} correlation: ${corrBoost > 0 ? "+" : ""}${corrBoost} — ${corrReasons.join(", ")}`);
+    }
+
+    return {
+      ...sig,
+      confidence:   Math.min(95, Math.max(40, sig.confidence + corrBoost)),
+      corr_boost:   corrBoost,
+      corr_reasons: corrReasons,
+    };
+  });
+}
+
 function calcEMA(prices: number[], period: number): number {
   const k = 2 / (period + 1); let ema = prices[0];
   for (let i = 1; i < prices.length; i++) ema = prices[i] * k + ema * (1 - k);
@@ -632,6 +797,36 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
   // Contrarian composite (1)
   const contrarian = contrarianComposite(rsi, ou.zscore, retail_exhaustion, ft.toxicity, hurst_exponent);
 
+  // ── Tick Density + Volume Features (4) ──
+  // Synthetics have no real volume but tick density encodes volatility regime
+  // better than GARCH alone — how many ticks fired per candle
+  const recentCandles20 = candles1m.slice(-20);
+  const tickCounts = recentCandles20.map((c: any) => {
+    // Deriv candles don't have explicit tick_count but we can proxy it:
+    // wider candle range = more activity = more ticks
+    const h2 = parseFloat(c.high), l2 = parseFloat(c.low), o2 = parseFloat(c.open), cl2 = parseFloat(c.close);
+    const range2 = h2 - l2;
+    const body2  = Math.abs(cl2 - o2);
+    return range2 > 0 ? body2 / range2 : 0.5; // range_density per candle
+  });
+
+  // Tick velocity: avg candle range relative to price (activity proxy)
+  const avgRange = recentCandles20.reduce((s: number, c: any) =>
+    s + (parseFloat(c.high) - parseFloat(c.low)), 0) / recentCandles20.length;
+  const tick_velocity = avgRange / (price + 1e-10);  // normalized
+
+  // Bull ratio: proportion of up-close candles (order flow direction)
+  const upCandles = recentCandles20.filter((c: any) => parseFloat(c.close) > parseFloat(c.open)).length;
+  const tick_bull_ratio = upCandles / recentCandles20.length;  // 0-1, >0.6 = bullish flow
+
+  // Range density: avg body/range (high = trending, low = indecisive)
+  const range_density = tickCounts.reduce((a: number, b: number) => a + b, 0) / tickCounts.length;
+
+  // Volume momentum: compare last 5 candle activity vs last 20
+  const recent5Ranges = candles1m.slice(-5).map((c: any) => parseFloat(c.high) - parseFloat(c.low));
+  const avgRange5 = recent5Ranges.reduce((a: number, b: number) => a + b, 0) / recent5Ranges.length;
+  const vol_momentum = (avgRange5 - avgRange) / (avgRange + 1e-10);  // positive = accelerating
+
   return [
     // Base 21
     rsi, macd_hist, bb_pos, bb_width, ema_bull, ema_bear,
@@ -666,8 +861,10 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
     // Gram-Charlier 3
     gc.skewness, gc.kurtosis, gc.gcWeight,
     // Contrarian Composite 1
-    contrarian
-  ]; // total: 56 features
+    contrarian,
+    // Tick Density + Volume 4
+    tick_velocity, tick_bull_ratio, range_density, vol_momentum
+  ]; // total: 60 features
 }
 
 
@@ -1252,10 +1449,17 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
 }
 
 async function getConsecutiveLosses(supabase: any): Promise<number> {
-  const { data } = await supabase.from("trades").select("result").eq("account_name", "edge_function").order("created_at", { ascending: false }).limit(5);
+  // FIX: match both lowercase (edge function) and uppercase (frontend) result values
+  const { data } = await supabase.from("trades").select("result")
+    .in("account_name", ["edge_function", "Primary", "primary"])
+    .order("created_at", { ascending: false }).limit(8);
   if (!data) return 0;
   let count = 0;
-  for (const t of data) { if (t.result === "loss") count++; else break; }
+  for (const t of data) {
+    if (["loss", "LOSS"].includes(t.result)) count++;
+    else if (["win", "WIN"].includes(t.result)) break;
+    // skip 'open'/'expired' entries without breaking streak
+  }
   return count;
 }
 
@@ -1490,7 +1694,7 @@ function firstPassageTime(
   const slPct = Math.min(tpPct * 0.5, 0.90);
 
   // Calculate actual win probability
-  const winProb = slPct / (tpPct + slPct);
+  const winProb = tpPct / (tpPct + slPct);  // FIX: TP/(TP+SL) = probability of hitting TP first (Brownian motion FPT)
 
   // tpMultiplier = TP as fraction of stake (for contract_update)
   // stake * multiplier * tpPct = TP profit
@@ -1897,12 +2101,57 @@ Deno.serve(async (req) => {
   // Rename for rest of function
   const allSymbolsList = finalSymbols;
 
+  // ── Per-symbol cooldown map (15 min after any loss) ──────────────────
+  // Prevents re-entering same symbol immediately after a loss
+  const { data: recentLosses } = await supabase
+    .from("trades")
+    .select("symbol, created_at")
+    .in("result", ["loss", "LOSS"])
+    .gte("created_at", new Date(Date.now() - 15 * 60 * 1000).toISOString())
+    .order("created_at", { ascending: false });
+
+  const cooldownSymbols = new Set<string>();
+  for (const loss of (recentLosses || [])) {
+    cooldownSymbols.add(loss.symbol);
+  }
+  if (cooldownSymbols.size > 0) {
+    console.log(`⏱️  Cooldown active for: ${[...cooldownSymbols].join(", ")}`);
+  }
+
+  // ── Daily hard loss limit ───────────────────────────────────────────
+  // If today's total PnL < -dailyLossLimitPct% of balance → halt trading
+  const dailyLossLimitPct = cfg.daily_loss_limit_pct || 5; // default 5%
+  const { data: todayTrades } = await supabase
+    .from("trades")
+    .select("pnl")
+    .in("result", ["win", "loss", "WIN", "LOSS"])
+    .gte("created_at", new Date(new Date().setUTCHours(0,0,0,0)).toISOString());
+
+  const todayPnl = (todayTrades || []).reduce((s: number, t: any) => s + (parseFloat(t.pnl) || 0), 0);
+  const dailyLossLimit = -(balance * dailyLossLimitPct / 100);
+  if (todayPnl <= dailyLossLimit) {
+    console.log(`🛑 Daily loss limit hit: $${todayPnl.toFixed(2)} <= $${dailyLossLimit.toFixed(2)} (${dailyLossLimitPct}% of $${balance})`);
+    return new Response(JSON.stringify({
+      status: "daily_loss_limit",
+      today_pnl: todayPnl,
+      limit: dailyLossLimit,
+      message: `Trading halted — daily loss limit of ${dailyLossLimitPct}% reached`,
+    }), { headers: CORS });
+  }
+
   const signals: any[]  = [];
   const scanLog: string[] = [];
   const session = getTradingSession();
 
   for (const symbol of allSymbolsList) {
     try {
+      // ── Cooldown check — skip if lost on this symbol in last 15 min ──
+      if (cooldownSymbols.has(symbol)) {
+        scanLog.push(`${symbol}: cooldown_active (15min after loss)`);
+        console.log(`⏱️  ${symbol}: skipped — in cooldown`);
+        continue;
+      }
+
       // ── STEP 1: Session check (forex only) ──
       const isSynthetic = symbol.startsWith("R_") || symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
       if (!isSynthetic && !session.active) {
@@ -2098,6 +2347,13 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ── PSI Drift Detection — collect all features from this scan ──
+  const allScannedFeatures: number[][] = signals.map(s => s.features || []).filter(f => f.length > 0);
+  let driftResult = { drifted: false, worstFeature: -1, worstPsi: 0 };
+  if (allScannedFeatures.length >= 3) {
+    driftResult = await checkFeatureDrift(supabase, allScannedFeatures);
+  }
+
   if (signals.length === 0) {
     return new Response(JSON.stringify({
       status: "no_signal",
@@ -2107,12 +2363,16 @@ Deno.serve(async (req) => {
     }), { headers: CORS });
   }
 
-  // Pick best signal — ML > fallback, then by confidence
-  signals.sort((a, b) => {
+  // ── Apply inter-symbol correlation scoring ──
+  // Boosts signals confirmed by correlated symbols, penalises conflicting ones
+  const correlatedSignals = applyCorrelationScoring(signals);
+
+  // Pick best signal — ML > fallback, then by correlation-adjusted confidence
+  correlatedSignals.sort((a, b) => {
     if (a.is_ml !== b.is_ml) return a.is_ml ? -1 : 1;
     return b.confidence - a.confidence;
   });
-  const best = signals[0];
+  const best = correlatedSignals[0];
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
   // ── FIX 3: Reuse already-fetched features from scan (no double fetch) ──
@@ -2212,6 +2472,46 @@ Deno.serve(async (req) => {
         }
       } catch(binErr) {
         console.log(`⚠️ Binance routing error: ${binErr}`);
+      }
+    }
+  }
+
+  // ── MT5 Signal Writer ─────────────────────────────────────────────────
+  // Writes to mt5_signals table so MT5 EA can poll and execute on Deriv MT5
+  // EA flow: poll pending → map symbol name → mark executed → confirm on Telegram
+  if (success) {
+    // Deriv → MT5 symbol mapping
+    const DERIV_TO_MT5: Record<string,string> = {
+      "frxEURUSD": "EURUSD",  "frxGBPUSD": "GBPUSD",
+      "frxUSDJPY": "USDJPY",  "frxAUDUSD": "AUDUSD",
+      "frxUSDCAD": "USDCAD",  "frxUSDCHF": "USDCHF",
+      "frxEURGBP": "EURGBP",  "frxEURJPY": "EURJPY",
+      "frxGBPJPY": "GBPJPY",  "frxXAUUSD": "XAUUSD",
+      "frxXAGUSD": "XAGUSD",  "frxNZDUSD": "NZDUSD",
+      "cryBTCUSD": "BTCUSD",  "cryETHUSD": "ETHUSD",
+    };
+    const mt5Symbol = DERIV_TO_MT5[best.symbol];
+    if (mt5Symbol) {
+      try {
+        const { error: mt5Err } = await supabase.from("mt5_signals").insert({
+          symbol:          mt5Symbol,
+          deriv_symbol:    best.symbol,
+          action:          best.action,        // "BUY" | "SELL"
+          confidence:      best.confidence,
+          stake:           stake,
+          tp_pct:          fpt.tpPct,
+          sl_pct:          fpt.slPct,
+          win_prob:        fpt.winProb,
+          regime:          best.regime || "unknown",
+          session:         session.name,
+          status:          "pending",          // EA sets to "executed" after trade
+          source:          "timi_edge_fn",
+          created_at:      new Date().toISOString(),
+        });
+        if (mt5Err) console.log(`⚠️  MT5 signal write error: ${mt5Err.message}`);
+        else console.log(`📡 MT5 signal written: ${mt5Symbol} ${best.action} conf:${best.confidence}%`);
+      } catch(mt5Ex) {
+        console.log(`⚠️  MT5 signal exception: ${mt5Ex}`);
       }
     }
   }
