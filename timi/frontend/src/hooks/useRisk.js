@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Preferences } from "@capacitor/preferences";
 
 const KEY = "timi_risk";
-const DEFAULTS = { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5 };
+const DEFAULTS = { riskPct: 2, maxTrades: 3, minConfidence: 45, duration: 5, dailyLossLimitPct: 5 };
 
 async function saveRisk(data) {
   const v = JSON.stringify(data);

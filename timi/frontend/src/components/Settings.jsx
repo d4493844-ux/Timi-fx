@@ -474,6 +474,49 @@ export default function Settings({
             )}
           </motion.div>
 
+          {/* ── DAILY LOSS LIMIT CARD ── */}
+          <motion.div style={c.card} initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }} transition={{ delay: 0.11 }}>
+            <div style={c.ct}>DAILY LOSS LIMIT</div>
+            <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: "#3a6080", marginBottom: 14, lineHeight: 1.7 }}>
+              Bot auto-stops if daily loss hits this % of balance. Protects your account from a bad day wiping a week of gains.
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div style={c.lbl}>Max Daily Loss</div>
+              <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 18, fontWeight: 700,
+                color: riskParams.dailyLossLimitPct <= 3 ? "#00ff9d" : riskParams.dailyLossLimitPct <= 7 ? "#ffcc00" : "#ff3366" }}>
+                {riskParams.dailyLossLimitPct}%
+              </div>
+            </div>
+            <input type="range" min={1} max={20} step={1}
+              value={riskParams.dailyLossLimitPct}
+              onChange={e => {
+                updateRisk("dailyLossLimitPct", e.target.value);
+                // also sync to Supabase bot_config so edge function picks it up
+                import("../lib/supabase").then(({ supabase }) => {
+                  supabase.from("bot_config")
+                    .update({ daily_loss_limit_pct: parseFloat(e.target.value) })
+                    .eq("active", true);
+                });
+              }}
+              style={c.slider} />
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <span style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: "#00ff9d" }}>1% — Conservative</span>
+              <span style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: "#ff3366" }}>20% — Aggressive</span>
+            </div>
+            {/* Live preview */}
+            <div style={{ background: "rgba(255,51,102,0.06)", border: "1px solid rgba(255,51,102,0.15)", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: "#3a6080", marginBottom: 6, letterSpacing: 2 }}>LOSS LIMIT PREVIEW</div>
+              {[100, 500, 1000, 5000].map(bal => (
+                <div key={bal} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                  <span style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 10, color: "#3a6080" }}>${bal} balance</span>
+                  <span style={{ fontFamily: "'Orbitron',monospace", fontSize: 11, color: "#ff3366", fontWeight: 700 }}>
+                    -${(bal * riskParams.dailyLossLimitPct / 100).toFixed(2)} stops bot
+                  </span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+
           {setMartingaleMode && (
             <motion.div style={c.card} initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }} transition={{ delay: 0.12 }}>
               <div style={c.ct}>STAKE STRATEGY</div>
