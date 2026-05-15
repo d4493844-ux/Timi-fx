@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-05-15 02:55:11.654987",
+  "trained_at": "2026-05-15 02:57:36.923906",
   "trainer": "advanced_v2",
   "deploy_symbols": [
     "frxEURUSD",
@@ -69,7 +69,7 @@
         "max_hold": 30
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:54:17.456976",
+      "trained_at": "2026-05-15 02:56:45.762673",
       "n_rows": 4870,
       "discard_rate": 0.021,
       "labels": {
@@ -132,7 +132,7 @@
         "max_hold": 30
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:54:24.636845",
+      "trained_at": "2026-05-15 02:56:53.182515",
       "n_rows": 4839,
       "discard_rate": 0.028,
       "labels": {
@@ -195,7 +195,7 @@
         "max_hold": 30
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:54:30.450962",
+      "trained_at": "2026-05-15 02:56:58.534645",
       "n_rows": 4863,
       "discard_rate": 0.023,
       "labels": {
@@ -251,7 +251,7 @@
         "max_hold": 30
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:54:37.625498",
+      "trained_at": "2026-05-15 02:57:05.127190",
       "n_rows": 4893,
       "discard_rate": 0.017,
       "labels": {
@@ -314,7 +314,7 @@
         "max_hold": 20
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:54:44.242355",
+      "trained_at": "2026-05-15 02:57:11.653798",
       "n_rows": 4560,
       "discard_rate": 0.037,
       "labels": {
@@ -377,7 +377,7 @@
         "max_hold": 25
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:54:50.126740",
+      "trained_at": "2026-05-15 02:57:17.354378",
       "n_rows": 4756,
       "discard_rate": 0.044,
       "labels": {
@@ -440,7 +440,7 @@
         "max_hold": 25
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:54:56.046539",
+      "trained_at": "2026-05-15 02:57:22.900319",
       "n_rows": 4785,
       "discard_rate": 0.038,
       "labels": {
@@ -503,7 +503,7 @@
         "max_hold": 8
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:55:00.850068",
+      "trained_at": "2026-05-15 02:57:27.408801",
       "n_rows": 4051,
       "discard_rate": 0.186,
       "labels": {
@@ -566,7 +566,7 @@
         "max_hold": 8
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:55:06.508959",
+      "trained_at": "2026-05-15 02:57:32.118616",
       "n_rows": 4194,
       "discard_rate": 0.157,
       "labels": {
@@ -629,7 +629,7 @@
         "max_hold": 8
       },
       "deploy": true,
-      "trained_at": "2026-05-15 02:55:11.653716",
+      "trained_at": "2026-05-15 02:57:36.922833",
       "n_rows": 4128,
       "discard_rate": 0.17,
       "labels": {

@@ -1613,16 +1613,7 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
 
       if (d.contract_update) {
         clearTimeout(timeout); ws.close();
-        // FIX: TP/SL set ≠ contract closed. Log as "open" not "win".
-        // The reconciler will update to real win/loss when contract closes.
-        resolve({
-          contract_id:  contractId,
-          stake_used:   (ws as any)._adjStake,
-          take_profit:  (ws as any)._tp,
-          stop_loss:    (ws as any)._sl,
-          tp_sl_set:    true,
-          status:       "open"  // NOT a win yet — still running
-        });
+        resolve({ contract_id: contractId, stake_used: (ws as any)._adjStake, take_profit: (ws as any)._tp, stop_loss: (ws as any)._sl, tp_sl_set: true });
       }
 
       if (d.error) {
@@ -2136,21 +2127,11 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
     for (const trade of openTrades) {
       const tradeTimeSec = new Date(trade.created_at).getTime() / 1000;
 
-      // Find matching transaction — improved matching for MULT contracts
-      // Priority: match by contract_id first (most reliable)
-      // Fallback: match by timestamp + stake amount
+      // Find matching transaction
       const match = transactions.find((t: any) => {
-        // Direct contract_id match
-        if (trade.contract_ref && t.contract_id) {
-          return String(t.contract_id) === String(trade.contract_ref);
-        }
-        return false;
-      }) || transactions.find((t: any) => {
-        // Timestamp match within 15 minutes
         const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
         return pt > 0 && Math.abs(pt - tradeTimeSec) < 900;
       }) || transactions.find((t: any) => {
-        // Stake + time match within 30 minutes
         const pt = parseFloat(t.purchase_time || t.transaction_time || "0");
         const buyPrice = parseFloat(t.buy_price || t.amount || "0");
         return Math.abs(buyPrice - (trade.stake || 0)) < 0.5 && Math.abs(pt - tradeTimeSec) < 1800;
@@ -2391,29 +2372,6 @@ Deno.serve(async (req) => {
 
       const isSpikeSym = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
 
-      // ── RSI sanity filter for BOOM/CRASH ────────────────────────────
-      // CRASH SELL requires RSI to not be at extremes in wrong direction
-      // RSI=99 means pure uptrend — CRASH won't spike down in this condition
-      // BOOM BUY requires RSI not to be in extreme downtrend
-      if (isSpikeSym) {
-        const c1mRsi = c1m.map((x: any) => parseFloat(x.close));
-        const currentRsi = calcRSI(c1mRsi);
-        const isCrash = symbol.startsWith("CRASH");
-        const isBoom  = symbol.startsWith("BOOM");
-
-        // CRASH: block if RSI > 72 (too overbought = uptrend too strong for crash spike)
-        if (isCrash && currentRsi > 72) {
-          scanLog.push(`${symbol}: rsi_block_crash RSI=${currentRsi.toFixed(1)} > 72 (uptrend too strong)`);
-          continue;
-        }
-        // BOOM: block if RSI < 28 (too oversold = downtrend too strong for boom spike)
-        if (isBoom && currentRsi < 28) {
-          scanLog.push(`${symbol}: rsi_block_boom RSI=${currentRsi.toFixed(1)} < 28 (downtrend too strong)`);
-          continue;
-        }
-        console.log(`📈 ${symbol} RSI=${currentRsi.toFixed(1)} — passed RSI filter`);
-      }
-
       // ── PHASE 1+2: Poisson + Topological gate for BOOM/CRASH ──────────
       // Novel mathematics: only enter when spike probability is elevated
       // AND pre-spike compression pattern is detected
@@ -2588,19 +2546,6 @@ Deno.serve(async (req) => {
           bayesian_rec: bayesian.recommendation,
           bayesian_factors: bayesian.factors };
 
-        // ── BOOM/CRASH direction lock (ML path) ─────────────────────────
-        // CRASH = always SELL, BOOM = always BUY — no exceptions
-        if (symbol.startsWith("CRASH") && sig.action === "BUY") {
-          console.log(`🔒 ${symbol}: ML said BUY but CRASH must SELL — forcing SELL`);
-          sig.action = "SELL";
-          sig.reason = sig.reason + " [direction_corrected]";
-        }
-        if (symbol.startsWith("BOOM") && sig.action === "SELL") {
-          console.log(`🔒 ${symbol}: ML said SELL but BOOM must BUY — forcing BUY`);
-          sig.action = "BUY";
-          sig.reason = sig.reason + " [direction_corrected]";
-        }
-
         // Apply Poisson/Topo confidence boost for BOOM/CRASH
         const spikeMeta = (global as any)[`${symbol}_spike_meta`];
         if (spikeMeta && isSpikeSym) {
@@ -2726,19 +2671,6 @@ Deno.serve(async (req) => {
               }
             } catch(e2) { /* fail open */ }
           }
-        }
-
-        // ── BOOM/CRASH direction lock ──────────────────────────────────
-        // CRASH indices ONLY spike DOWN → always SELL (MULTDOWN profits)
-        // BOOM indices ONLY spike UP   → always BUY  (MULTUP profits)
-        // Any opposite signal = wrong direction = block immediately
-        if (symbol.startsWith("CRASH") && sig.action === "BUY") {
-          scanLog.push(`${symbol}: direction_locked — CRASH must SELL only (got BUY)`);
-          sig.action = "SELL"; // force correct direction
-        }
-        if (symbol.startsWith("BOOM") && sig.action === "SELL") {
-          scanLog.push(`${symbol}: direction_locked — BOOM must BUY only (got SELL)`);
-          sig.action = "BUY"; // force correct direction
         }
 
         // Fallback also respects HMM
