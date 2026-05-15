@@ -187,98 +187,6 @@ async function checkFeatureDrift(supabase: any, liveFeatures: number[][]): Promi
   }
 }
 
-// ─────────────────────────────────────────────
-// INTER-SYMBOL CORRELATION ENGINE
-// BOOM/CRASH are anti-correlated — when one gives BUY the other
-// should give SELL. Agreement = noise, Disagreement = confirmation.
-// VIX pairs (R_75/R_100) are positively correlated — agreement = stronger signal.
-// ─────────────────────────────────────────────
-const SYMBOL_CORRELATIONS: Record<string, { partner: string; type: "anti" | "positive" }[]> = {
-  "BOOM1000":  [{ partner: "CRASH1000", type: "anti"     }, { partner: "BOOM500",   type: "positive" }],
-  "BOOM500":   [{ partner: "CRASH500",  type: "anti"     }, { partner: "BOOM1000",  type: "positive" }],
-  "CRASH1000": [{ partner: "BOOM1000",  type: "anti"     }, { partner: "CRASH500",  type: "positive" }],
-  "CRASH500":  [{ partner: "BOOM500",   type: "anti"     }, { partner: "CRASH1000", type: "positive" }],
-  "R_75":      [{ partner: "R_100",     type: "positive" }, { partner: "R_50",      type: "positive" }],
-  "R_100":     [{ partner: "R_75",      type: "positive" }, { partner: "R_50",      type: "positive" }],
-  "R_50":      [{ partner: "R_75",      type: "positive" }, { partner: "R_25",      type: "positive" }],
-  "R_25":      [{ partner: "R_50",      type: "positive" }],
-  "frxEURUSD": [{ partner: "frxGBPUSD", type: "positive" }, { partner: "frxUSDCHF", type: "anti" }],
-  "frxGBPUSD": [{ partner: "frxEURUSD", type: "positive" }],
-  "frxUSDJPY": [{ partner: "frxEURJPY", type: "positive" }, { partner: "frxGBPJPY", type: "positive" }],
-};
-
-// Checks all signals collected so far and applies a confidence boost/penalty
-// based on whether correlated symbols agree or conflict
-function applyCorrelationScoring(signals: any[]): any[] {
-  if (signals.length < 2) return signals;
-
-  // Build lookup: symbol → signal
-  const sigMap: Record<string, any> = {};
-  for (const s of signals) sigMap[s.symbol] = s;
-
-  return signals.map(sig => {
-    const rels = SYMBOL_CORRELATIONS[sig.symbol];
-    if (!rels) return sig;
-
-    let corrBoost = 0;
-    const corrReasons: string[] = [];
-
-    for (const rel of rels) {
-      const partner = sigMap[rel.partner];
-      if (!partner) continue;
-
-      const agrees = sig.action === partner.action;
-
-      if (rel.type === "anti") {
-        // Anti-correlated: disagreement is the correct pattern
-        // BOOM BUY + CRASH SELL = both correct → boost both
-        // BOOM BUY + CRASH BUY = both same direction = noise → penalise
-        if (!agrees) {
-          corrBoost += 5;
-          corrReasons.push(`✅ ${rel.partner} anti-confirms (${partner.action})`);
-        } else {
-          corrBoost -= 8;
-          corrReasons.push(`⚠️ ${rel.partner} anti-conflict (both ${sig.action} — noise)`);
-        }
-      } else {
-        // Positive-correlated: agreement = stronger signal
-        if (agrees) {
-          corrBoost += 4;
-          corrReasons.push(`✅ ${rel.partner} confirms (${partner.action})`);
-        } else {
-          corrBoost -= 4;
-          corrReasons.push(`⚠️ ${rel.partner} conflicts (${partner.action} vs ${sig.action})`);
-        }
-      }
-    }
-
-    if (corrBoost !== 0) {
-      console.log(`🔗 ${sig.symbol} correlation: ${corrBoost > 0 ? "+" : ""}${corrBoost} — ${corrReasons.join(", ")}`);
-    }
-
-    return {
-      ...sig,
-      confidence:   Math.min(95, Math.max(40, sig.confidence + corrBoost)),
-      corr_boost:   corrBoost,
-      corr_reasons: corrReasons,
-    };
-  });
-}
-
-// StochRSI for R_75 mean reversion strategy
-function calcStochRSI(closes: number[], period: number = 14): number {
-  if (closes.length < period * 2) return 50;
-  const rsiVals: number[] = [];
-  for (let i = period; i < closes.length; i++) {
-    rsiVals.push(calcRSI(closes.slice(0, i + 1)));
-  }
-  if (rsiVals.length < period) return 50;
-  const recent = rsiVals.slice(-period);
-  const minR   = Math.min(...recent), maxR = Math.max(...recent);
-  if (maxR === minR) return 50;
-  return ((rsiVals[rsiVals.length - 1] - minR) / (maxR - minR)) * 100;
-}
-
 function calcEMA(prices: number[], period: number): number {
   const k = 2 / (period + 1); let ema = prices[0];
   for (let i = 1; i < prices.length; i++) ema = prices[i] * k + ema * (1 - k);
@@ -811,36 +719,6 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
   // Contrarian composite (1)
   const contrarian = contrarianComposite(rsi, ou.zscore, retail_exhaustion, ft.toxicity, hurst_exponent);
 
-  // ── Tick Density + Volume Features (4) ──
-  // Synthetics have no real volume but tick density encodes volatility regime
-  // better than GARCH alone — how many ticks fired per candle
-  const recentCandles20 = candles1m.slice(-20);
-  const tickCounts = recentCandles20.map((c: any) => {
-    // Deriv candles don't have explicit tick_count but we can proxy it:
-    // wider candle range = more activity = more ticks
-    const h2 = parseFloat(c.high), l2 = parseFloat(c.low), o2 = parseFloat(c.open), cl2 = parseFloat(c.close);
-    const range2 = h2 - l2;
-    const body2  = Math.abs(cl2 - o2);
-    return range2 > 0 ? body2 / range2 : 0.5; // range_density per candle
-  });
-
-  // Tick velocity: avg candle range relative to price (activity proxy)
-  const avgRange = recentCandles20.reduce((s: number, c: any) =>
-    s + (parseFloat(c.high) - parseFloat(c.low)), 0) / recentCandles20.length;
-  const tick_velocity = avgRange / (price + 1e-10);  // normalized
-
-  // Bull ratio: proportion of up-close candles (order flow direction)
-  const upCandles = recentCandles20.filter((c: any) => parseFloat(c.close) > parseFloat(c.open)).length;
-  const tick_bull_ratio = upCandles / recentCandles20.length;  // 0-1, >0.6 = bullish flow
-
-  // Range density: avg body/range (high = trending, low = indecisive)
-  const range_density = tickCounts.reduce((a: number, b: number) => a + b, 0) / tickCounts.length;
-
-  // Volume momentum: compare last 5 candle activity vs last 20
-  const recent5Ranges = candles1m.slice(-5).map((c: any) => parseFloat(c.high) - parseFloat(c.low));
-  const avgRange5 = recent5Ranges.reduce((a: number, b: number) => a + b, 0) / recent5Ranges.length;
-  const vol_momentum = (avgRange5 - avgRange) / (avgRange + 1e-10);  // positive = accelerating
-
   return [
     // Base 21
     rsi, macd_hist, bb_pos, bb_width, ema_bull, ema_bear,
@@ -875,10 +753,8 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
     // Gram-Charlier 3
     gc.skewness, gc.kurtosis, gc.gcWeight,
     // Contrarian Composite 1
-    contrarian,
-    // Tick Density + Volume 4
-    tick_velocity, tick_bull_ratio, range_density, vol_momentum
-  ]; // total: 60 features
+    contrarian
+  ]; // total: 56 features
 }
 
 
@@ -1701,12 +1577,11 @@ function firstPassageTime(
     tpPct = adjVol * 2.0;
   }
 
-  // SL multiplier from diagnostic data:
-  // BOOM/CRASH: SL=1.5×ATR (65-74% of losses were SL clips at 1×ATR)
-  // Others: SL=1.0×ATR (standard 2:1 RR)
-  const isBoomCrashSymbol = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-  const slMult = isBoomCrashSymbol ? 1.5 : 1.0;
-  const slPct  = Math.min(tpPct * slMult * 0.5, 0.90);
+  // SL must be SMALLER than TP for positive expectancy
+  // With 64% WR: need avg_win > avg_loss × (36/64) = 0.5625
+  // Set SL = 0.5 × TP → win/loss ratio = 2.0
+  // Even at 55% WR: EV = 0.55×2 - 0.45×1 = +0.65 per unit ✅
+  const slPct = Math.min(tpPct * 0.5, 0.90);
 
   // Calculate actual win probability
   const winProb = tpPct / (tpPct + slPct);  // FIX: TP/(TP+SL) = probability of hitting TP first (Brownian motion FPT)
@@ -2328,97 +2203,28 @@ Deno.serve(async (req) => {
         console.log(logLine);
 
       } else {
-        // ── Fallback: 4-Strategy Adaptive Engine (non-ML symbols) ──
-        const fc   = c1m.map((x: any) => parseFloat(x.close));
-        const fc5  = c5m.map((x: any) => parseFloat(x.close));
-        const fp   = fc[fc.length - 1];
-        const fatr = (() => {
-          const sl = c1m.slice(-14);
-          const trs = sl.map((can: any, i: number) => {
-            const pc = i > 0 ? parseFloat(sl[i-1].close) : parseFloat(can.close);
-            return Math.max(parseFloat(can.high)-parseFloat(can.low),
-              Math.abs(parseFloat(can.high)-pc), Math.abs(parseFloat(can.low)-pc));
-          });
-          return trs.reduce((a: number, b: number) => a+b, 0) / trs.length;
-        })();
-
-        // ── Detect market type (ranging vs trending) ──
-        const fn = Math.min(14, fc.length - 1);
-        let dmP = 0, dmM = 0, trS = 0;
-        for (let i = fc.length - fn; i < fc.length; i++) {
-          const d = fc[i] - fc[i-1];
-          if (d > 0) dmP += d; else dmM -= d;
-          trS += Math.abs(d);
-        }
-        const adxP   = trS > 0 ? Math.abs(dmP - dmM) / trS : 0;
-        const fema21 = calcEMA(fc, 21), fema50 = calcEMA(fc.slice(-60), 50);
-        const emaSpread = Math.abs(fema21 - fema50) / (fema50 + 1e-10);
-        const isRanging  = adxP < 0.25 && emaSpread < 0.0015;
-        const isTrending = adxP > 0.40 || emaSpread > 0.003;
-
-        const frsi  = calcRSI(fc);
-        const fema8 = calcEMA(fc, 8);
-        const fprev = fc[fc.length - 2];
-
-        // ── Strategy A: Mean Reversion (ranging) ──
-        const fmean = fc.slice(-20).reduce((a: number, b: number) => a+b, 0) / 20;
-        const fstd  = Math.sqrt(fc.slice(-20).reduce((a: number, b: number) =>
-          a + Math.pow(b-fmean, 2), 0) / 20) + 1e-10;
-        const fz    = (fp - fmean) / fstd;
-
-        // ── Strategy B: Pullback (trending) ──
+        // ── Fallback path for non-ML symbols ──
+        const c  = c1m.map((x: any) => parseFloat(x.close));
+        const c5 = c5m.map((x: any) => parseFloat(x.close));
+        const price = c[c.length-1], prev = c[c.length-2];
         let trend5m = 0;
-        if (fc5.length >= 30) {
-          const e20 = calcEMA(fc5, 20), e50b = calcEMA(fc5, 50), r5 = calcRSI(fc5);
-          trend5m = e20 > e50b && r5 > 52 ? 1 : e20 < e50b && r5 < 48 ? -1 : 0;
+        if (c5.length >= 50) {
+          const e20 = calcEMA(c5, 20), e50 = calcEMA(c5, 50), r5 = calcRSI(c5);
+          trend5m = e20 > e50 && r5 > 50 ? 1 : e20 < e50 && r5 < 50 ? -1 : 0;
         }
-        const nearEMA21 = Math.abs(fp - fema21) < fatr * 0.5;
-
-        // ── Strategy C: Breakout ──
-        const recent10h = Math.max(...c1m.slice(-11, -1).map((x: any) => parseFloat(x.high)));
-        const recent10l = Math.min(...c1m.slice(-11, -1).map((x: any) => parseFloat(x.low)));
-        const range10   = recent10h - recent10l;
-        const curRange  = parseFloat(c1m[c1m.length-1].high) - parseFloat(c1m[c1m.length-1].low);
-        const isBreakout = range10 < fatr * 2.5 && curRange > fatr * 1.2;
-
-        // Pick strategy based on market type
-        if (isRanging && fz < -1.5 && frsi < 40) {
-          sig = { action: "BUY",  confidence: Math.min(82, 60 + Math.round(Math.abs(fz)*8)),
-            reason: `fb_mean_rev_buy z=${fz.toFixed(2)}` };
-        } else if (isRanging && fz > 1.5 && frsi > 60) {
-          sig = { action: "SELL", confidence: Math.min(82, 60 + Math.round(Math.abs(fz)*8)),
-            reason: `fb_mean_rev_sell z=${fz.toFixed(2)}` };
-        } else if (isTrending && trend5m === 1 && fema8 > fema21 && nearEMA21 && fp > fprev && frsi >= 40 && frsi <= 60) {
-          sig = { action: "BUY",  confidence: 72, reason: "fb_pullback_bull" };
-        } else if (isTrending && trend5m === -1 && fema8 < fema21 && nearEMA21 && fp < fprev && frsi >= 40 && frsi <= 60) {
-          sig = { action: "SELL", confidence: 72, reason: "fb_pullback_bear" };
-        } else if (isBreakout && fp > recent10h && frsi > 50 && frsi < 75) {
-          sig = { action: "BUY",  confidence: 70, reason: "fb_breakout_bull" };
-        } else if (isBreakout && fp < recent10l && frsi < 50 && frsi > 25) {
-          sig = { action: "SELL", confidence: 70, reason: "fb_breakout_bear" };
-        } else {
-          scanLog.push(`${symbol}: no-fallback-setup (ranging:${isRanging} trend:${isTrending} z:${fz.toFixed(2)})`);
-          continue;
-        }
-
-        if (frsi > 80 || frsi < 20) { scanLog.push(`${symbol}: fb_rsi_extreme`); continue; }
-
-        // ── Block TA trades on instruments where ML is required ──
-        // Diagnostic confirmed TA-only not viable on these (WR < 50% across all windows)
-        const taOnlySymbols = ["R_50","R_25","R_100",
-          "frxEURUSD","frxGBPUSD","frxUSDJPY","frxGBPJPY","frxAUDUSD",
-          "frxXAUUSD","frxXAGUSD","cryBTCUSD","cryETHUSD"];
-        if (taOnlySymbols.includes(symbol)) {
-          scanLog.push(`${symbol}: ML_required (TA blocked by diagnostic)`);
-          continue;
-        }
+        if (trend5m === 0) { scanLog.push(`${symbol}: 5M unclear`); continue; }
+        const e8 = calcEMA(c, 8), e21 = calcEMA(c, 21), rsi = calcRSI(c);
+        if (trend5m === 1 && e8 > e21 && price > e8 && price > prev && rsi >= 40 && rsi <= 65)
+          sig = { action: "BUY",  confidence: 65, reason: "fallback-bull" };
+        else if (trend5m === -1 && e8 < e21 && price < e8 && price < prev && rsi >= 35 && rsi <= 60)
+          sig = { action: "SELL", confidence: 65, reason: "fallback-bear" };
+        else { scanLog.push(`${symbol}: no-fallback-signal`); continue; }
 
         // Fallback also respects HMM
-        if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
-            sig.action !== regime.allowedAction) {
+        if (sig.action !== regime.allowedAction) {
           scanLog.push(`${symbol}: fallback HMM_direction_blocked`); continue;
         }
-        scanLog.push(`${symbol}: Fallback4S→${sig.action} ${sig.confidence}% (${sig.reason}) HMM:${regime.name}`);
+        scanLog.push(`${symbol}: Fallback→${sig.action} HMM:${regime.name}`);
       }
 
       if (sig && sig.action !== "HOLD" && sig.confidence >= minConf) {
@@ -2447,16 +2253,12 @@ Deno.serve(async (req) => {
     }), { headers: CORS });
   }
 
-  // ── Apply inter-symbol correlation scoring ──
-  // Boosts signals confirmed by correlated symbols, penalises conflicting ones
-  const correlatedSignals = applyCorrelationScoring(signals);
-
-  // Pick best signal — ML > fallback, then by correlation-adjusted confidence
-  correlatedSignals.sort((a, b) => {
+  // Pick best signal — ML > fallback, then by confidence
+  signals.sort((a, b) => {
     if (a.is_ml !== b.is_ml) return a.is_ml ? -1 : 1;
     return b.confidence - a.confidence;
   });
-  const best = correlatedSignals[0];
+  const best = signals[0];
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
   // ── FIX 3: Reuse already-fetched features from scan (no double fetch) ──

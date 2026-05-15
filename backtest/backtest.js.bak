@@ -47,188 +47,55 @@ function calcATR(candles, period = 14) {
   return trs.reduce((a, b) => a + b, 0) / trs.length;
 }
 
-// ── Helper: detect if market is ranging or trending ──
-function detectMarketType(closes, atr) {
+// ── Signal engine — mirrors live bot logic ──
+function getSignal(candles, candles5m = []) {
+  if (candles.length < 50) return { action: "HOLD", confidence: 0 };
+  const closes = candles.map(c => parseFloat(c.close));
   const price  = closes[closes.length - 1];
-  const ema21  = calcEMA(closes, 21);
-  const ema50  = calcEMA(closes.slice(-60), 50);
-  // ADX proxy: ratio of directional move to total range
-  const n = Math.min(14, closes.length - 1);
-  let dmPlus = 0, dmMinus = 0, trSum = 0;
-  for (let i = closes.length - n; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) dmPlus  += diff;
-    else          dmMinus -= diff;
-    trSum += Math.abs(diff);
-  }
-  const adxProxy = trSum > 0 ? Math.abs(dmPlus - dmMinus) / trSum : 0;
-  const emaSpread = Math.abs(ema21 - ema50) / (ema50 + 1e-10);
-  // If both ADX proxy and EMA spread are small → ranging
-  const isRanging = adxProxy < 0.25 && emaSpread < 0.0015;
-  const isTrending = adxProxy > 0.40 || emaSpread > 0.003;
-  return { isRanging, isTrending, adxProxy, emaSpread };
-}
 
-// ── Session gate per instrument ──
-// Returns true if NOW is a good session for this symbol
-function isGoodSession(symbol) {
-  const h = new Date().getUTCHours();
-  // EUR/USD, GBP/USD, EUR/GBP: London + NY overlap (8-20 UTC)
-  if (["frxEURUSD","frxGBPUSD","frxEURGBP"].includes(symbol))
-    return h >= 8 && h < 20;
-  // USD/JPY, EUR/JPY, GBP/JPY: Tokyo + London (0-16 UTC)
-  if (["frxUSDJPY","frxEURJPY","frxGBPJPY"].includes(symbol))
-    return h >= 0 && h < 16;
-  // Gold: London open + NY (7-20 UTC) — most volatile then
-  if (["frxXAUUSD","frxXAGUSD"].includes(symbol))
-    return h >= 7 && h < 20;
-  // BTC/ETH: 24/7 but avoid dead zone 2-6 UTC
-  if (symbol.startsWith("cry"))
-    return !(h >= 2 && h < 6);
-  // Synthetics: always on
-  return true;
-}
-
-// ── Strategy 1: Mean Reversion (for ranging markets) ──
-// Buy when price is too far below mean, sell when too far above
-// Works best on forex 70% of the time when market is ranging
-function meanReversionSignal(closes, candles, atr) {
-  const price = closes[closes.length - 1];
-  const n = 20;
-  const sl = closes.slice(-n);
-  const mean = sl.reduce((a, b) => a + b, 0) / n;
-  const std  = Math.sqrt(sl.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / n);
-  if (std < 1e-10) return null;
-
-  const zscore = (price - mean) / std;
-  const rsi    = calcRSI(closes);
-
-  // Price stretched 1.5 std below mean AND RSI oversold → mean reversion BUY
-  if (zscore < -1.5 && rsi < 40) {
-    const conf = Math.min(85, 60 + Math.round(Math.abs(zscore) * 8));
-    return { action: "BUY", confidence: conf, reason: `mean_rev_buy z=${zscore.toFixed(2)}`, atr };
-  }
-  // Price stretched 1.5 std above mean AND RSI overbought → mean reversion SELL
-  if (zscore > 1.5 && rsi > 60) {
-    const conf = Math.min(85, 60 + Math.round(Math.abs(zscore) * 8));
-    return { action: "SELL", confidence: conf, reason: `mean_rev_sell z=${zscore.toFixed(2)}`, atr };
-  }
-  return null;
-}
-
-// ── Strategy 2: Pullback Entry (for trending markets) ──
-// Wait for price to pull back to EMA21 after a trend move, then enter
-// This avoids chasing the top of a move — the classic mistake
-function pullbackSignal(closes, candles, candles5m, atr) {
-  const price  = closes[closes.length - 1];
-  const prev   = closes[closes.length - 2];
   const ema8   = calcEMA(closes, 8);
   const ema21  = calcEMA(closes, 21);
   const ema50  = calcEMA(closes.slice(-60), 50);
+  const ema200 = calcEMA(closes, Math.min(200, closes.length));
   const rsi    = calcRSI(closes);
-
-  // 5m trend must be clear
-  let trend5m = 0;
-  if (candles5m.length >= 30) {
-    const c5  = candles5m.map(c => parseFloat(c.close));
-    const e20 = calcEMA(c5, 20), e50b = calcEMA(c5, 50), r5 = calcRSI(c5);
-    trend5m = e20 > e50b && r5 > 52 ? 1 : e20 < e50b && r5 < 48 ? -1 : 0;
-  }
-  if (trend5m === 0) return null;
-
-  // Bullish: EMA stack bull, price pulled back to EMA21 zone (within 0.5 ATR)
-  const nearEMA21 = Math.abs(price - ema21) < atr * 0.5;
-  if (trend5m === 1 && ema8 > ema21 && ema21 > ema50 && nearEMA21 && price > prev && rsi >= 40 && rsi <= 60) {
-    return { action: "BUY", confidence: 72, reason: "pullback_bull_ema21", atr };
-  }
-  // Bearish: EMA stack bear, price bounced back up to EMA21 zone
-  if (trend5m === -1 && ema8 < ema21 && ema21 < ema50 && nearEMA21 && price < prev && rsi >= 40 && rsi <= 60) {
-    return { action: "SELL", confidence: 72, reason: "pullback_bear_ema21", atr };
-  }
-  return null;
-}
-
-// ── Strategy 3: Volatility Breakout (for expansion moments) ──
-// Detect when price breaks out of a tight consolidation
-// Consolidation = last 10 candles within 1.5x ATR range
-function breakoutSignal(closes, candles, atr) {
-  const price = closes[closes.length - 1];
-  const n = 10;
-  const recent = closes.slice(-n - 1, -1); // exclude current
-  const high10 = Math.max(...recent);
-  const low10  = Math.min(...recent);
-  const range10 = high10 - low10;
-
-  // Only valid if recent range was tight (consolidation)
-  if (range10 > atr * 2.5) return null;
-  // And volume is expanding now (current candle range > avg)
-  const curRange = parseFloat(candles[candles.length-1].high) - parseFloat(candles[candles.length-1].low);
-  if (curRange < atr * 1.2) return null;
-
-  const rsi = calcRSI(closes);
-
-  // Breakout above consolidation high → BUY
-  if (price > high10 && rsi > 50 && rsi < 75) {
-    return { action: "BUY", confidence: 70, reason: `breakout_bull range=${range10.toFixed(5)}`, atr };
-  }
-  // Breakout below consolidation low → SELL
-  if (price < low10 && rsi < 50 && rsi > 25) {
-    return { action: "SELL", confidence: 70, reason: `breakout_bear range=${range10.toFixed(5)}`, atr };
-  }
-  return null;
-}
-
-// ── MASTER signal engine — routes to best strategy per market state ──
-function getSignal(candles, candles5m = [], symbol = "") {
-  if (candles.length < 60) return { action: "HOLD", confidence: 0 };
-
-  const closes = candles.map(c => parseFloat(c.close));
-  const price  = closes[closes.length - 1];
   const atr    = calcATR(candles);
   const atrPct = atr / price;
 
-  // Hard gate 1: session filter — only trade in optimal hours
-  if (symbol && !isGoodSession(symbol))
-    return { action: "HOLD", confidence: 0, reason: "off_session" };
+  // Skip ultra-high volatility (unfavorable for binary options)
+  if (atrPct > 0.008) return { action: "HOLD", confidence: 0, reason: "high_vol" };
 
-  // Hard gate 2: extreme volatility
-  if (atrPct > 0.012) return { action: "HOLD", confidence: 0, reason: "extreme_vol" };
+  // EMA stack
+  const emaBull = ema8 > ema21 && ema21 > ema50;
+  const emaBear = ema8 < ema21 && ema21 < ema50;
+  if (!emaBull && !emaBear) return { action: "HOLD", confidence: 0, reason: "ema_unaligned" };
 
-  // Hard gate 3: minimum volatility (dead market — no movement to profit from)
-  if (atrPct < 0.00005) return { action: "HOLD", confidence: 0, reason: "dead_market" };
+  // 200 EMA trend filter
+  if (emaBull && price < ema200) return { action: "HOLD", confidence: 0, reason: "below_ema200" };
+  if (emaBear && price > ema200) return { action: "HOLD", confidence: 0, reason: "above_ema200" };
 
-  const { isRanging, isTrending } = detectMarketType(closes, atr);
+  // RSI filter — avoid extremes, require momentum alignment
+  if (rsi > 75 || rsi < 25) return { action: "HOLD", confidence: 0, reason: "rsi_extreme" };
 
-  // Route to strategy based on detected market state
-  // Priority: ranging → mean reversion, trending → pullback, else → breakout
-  let sig = null;
-
-  if (isRanging) {
-    // Ranging market: mean reversion is king
-    sig = meanReversionSignal(closes, candles, atr);
-    // Also try breakout in case range is about to break
-    if (!sig) sig = breakoutSignal(closes, candles, atr);
-  } else if (isTrending) {
-    // Trending: only enter on pullbacks, never chase
-    sig = pullbackSignal(closes, candles, candles5m, atr);
-  } else {
-    // Transitioning: try all strategies, take strongest
-    const s1 = meanReversionSignal(closes, candles, atr);
-    const s2 = pullbackSignal(closes, candles, candles5m, atr);
-    const s3 = breakoutSignal(closes, candles, atr);
-    // Pick highest confidence
-    [s1, s2, s3].forEach(s => {
-      if (s && (!sig || s.confidence > sig.confidence)) sig = s;
-    });
+  // 5m trend confirmation
+  let trend5m = 0;
+  if (candles5m.length >= 30) {
+    const c5 = candles5m.map(c => parseFloat(c.close));
+    const e20 = calcEMA(c5, 20), e50b = calcEMA(c5, 50), r5 = calcRSI(c5);
+    trend5m = e20 > e50b && r5 > 50 ? 1 : e20 < e50b && r5 < 50 ? -1 : 0;
   }
 
-  if (!sig) return { action: "HOLD", confidence: 0, reason: "no_setup" };
+  let bull = 0, bear = 0;
+  if (emaBull)   bull += 3; else bear += 3;
+  if (rsi < 50)  bull += 2; else bear += 2;
+  if (trend5m === 1) bull += 3;
+  else if (trend5m === -1) bear += 3;
 
-  // Final confirmation: require RSI not in extreme territory
-  const rsi = calcRSI(closes);
-  if (rsi > 80 || rsi < 20) return { action: "HOLD", confidence: 0, reason: "rsi_extreme" };
+  const net = bull - bear;
+  if (Math.abs(net) < 4) return { action: "HOLD", confidence: 0, reason: "weak_signal" };
 
-  return { ...sig, atrPct };
+  const action     = net > 0 ? "BUY" : "SELL";
+  const confidence = Math.min(Math.round(Math.abs(net) / 11 * 100), 95);
+  return { action, confidence, atr, atrPct };
 }
 
 // ── Stats engine ──
@@ -289,7 +156,7 @@ async function backtest(symbol, granularity = 60, count = 1500, minConfidence = 
   for (let i = 60; i < candles.length - OUTCOME_WINDOW; i++) {
     const slice   = candles.slice(0, i);
     const slice5m = candles5m.slice(0, Math.floor(i / 5));
-    const sig     = getSignal(slice, slice5m, symbol);
+    const sig     = getSignal(slice, slice5m);
 
     if (sig.action === "HOLD" || sig.confidence < minConfidence) {
       holds++;

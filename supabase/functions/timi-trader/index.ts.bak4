@@ -265,20 +265,6 @@ function applyCorrelationScoring(signals: any[]): any[] {
   });
 }
 
-// StochRSI for R_75 mean reversion strategy
-function calcStochRSI(closes: number[], period: number = 14): number {
-  if (closes.length < period * 2) return 50;
-  const rsiVals: number[] = [];
-  for (let i = period; i < closes.length; i++) {
-    rsiVals.push(calcRSI(closes.slice(0, i + 1)));
-  }
-  if (rsiVals.length < period) return 50;
-  const recent = rsiVals.slice(-period);
-  const minR   = Math.min(...recent), maxR = Math.max(...recent);
-  if (maxR === minR) return 50;
-  return ((rsiVals[rsiVals.length - 1] - minR) / (maxR - minR)) * 100;
-}
-
 function calcEMA(prices: number[], period: number): number {
   const k = 2 / (period + 1); let ema = prices[0];
   for (let i = 1; i < prices.length; i++) ema = prices[i] * k + ema * (1 - k);
@@ -1701,12 +1687,11 @@ function firstPassageTime(
     tpPct = adjVol * 2.0;
   }
 
-  // SL multiplier from diagnostic data:
-  // BOOM/CRASH: SL=1.5×ATR (65-74% of losses were SL clips at 1×ATR)
-  // Others: SL=1.0×ATR (standard 2:1 RR)
-  const isBoomCrashSymbol = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-  const slMult = isBoomCrashSymbol ? 1.5 : 1.0;
-  const slPct  = Math.min(tpPct * slMult * 0.5, 0.90);
+  // SL must be SMALLER than TP for positive expectancy
+  // With 64% WR: need avg_win > avg_loss × (36/64) = 0.5625
+  // Set SL = 0.5 × TP → win/loss ratio = 2.0
+  // Even at 55% WR: EV = 0.55×2 - 0.45×1 = +0.65 per unit ✅
+  const slPct = Math.min(tpPct * 0.5, 0.90);
 
   // Calculate actual win probability
   const winProb = tpPct / (tpPct + slPct);  // FIX: TP/(TP+SL) = probability of hitting TP first (Brownian motion FPT)
@@ -2402,16 +2387,6 @@ Deno.serve(async (req) => {
         }
 
         if (frsi > 80 || frsi < 20) { scanLog.push(`${symbol}: fb_rsi_extreme`); continue; }
-
-        // ── Block TA trades on instruments where ML is required ──
-        // Diagnostic confirmed TA-only not viable on these (WR < 50% across all windows)
-        const taOnlySymbols = ["R_50","R_25","R_100",
-          "frxEURUSD","frxGBPUSD","frxUSDJPY","frxGBPJPY","frxAUDUSD",
-          "frxXAUUSD","frxXAGUSD","cryBTCUSD","cryETHUSD"];
-        if (taOnlySymbols.includes(symbol)) {
-          scanLog.push(`${symbol}: ML_required (TA blocked by diagnostic)`);
-          continue;
-        }
 
         // Fallback also respects HMM
         if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
