@@ -1,9 +1,9 @@
 {
-  "symbol": "cryBTCUSD",
-  "instrument_class": "crypto",
-  "cv_accuracy": 0.5158,
-  "meta_win_rate": 0.9563,
-  "meta_trades": 3751,
+  "symbol": "frxEURGBP",
+  "instrument_class": "forex",
+  "cv_accuracy": 0.5726,
+  "meta_win_rate": 0.9825,
+  "meta_trades": 3091,
   "meta_threshold": 0.8,
   "features": [
     "rsi",
@@ -48,16 +48,16 @@
     "regime_vol"
   ],
   "barrier_config": {
-    "tp_mult": 2.5,
+    "tp_mult": 2.0,
     "sl_mult": 1.0,
-    "max_hold": 25
+    "max_hold": 30
   },
   "deploy": true,
-  "trained_at": "2026-05-16 11:01:35.452180",
-  "n_rows": 4756,
-  "discard_rate": 0.044,
+  "trained_at": "2026-05-16 11:02:10.637516",
+  "n_rows": 4843,
+  "discard_rate": 0.027,
   "labels": {
-    "buy": 1474,
-    "sell": 3282
+    "buy": 1636,
+    "sell": 3207
   }
 }

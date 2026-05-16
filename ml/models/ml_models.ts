@@ -1,7 +1,7 @@
 
 // ── ML Model: BOOM1000 ──
 // Trained on 4976 candles, tested on unseen future data
-// Main model trees: 120, Meta trees: 50
+// Main model trees: 120, Meta trees: 300
 function predict_BOOMk(features: Record<string,number>): {action:string, confidence:number, reason:string} {
   const f = [features["rsi"] ?? 0, features["macd_hist"] ?? 0, features["bb_pos"] ?? 0, features["bb_width"] ?? 0, features["ema_bull"] ?? 0, features["ema_bear"] ?? 0, features["price_ema8_dist"] ?? 0, features["price_ema21_dist"] ?? 0, features["price_ema50_dist"] ?? 0, features["atr_pct"] ?? 0, features["candle_body"] ?? 0, features["candle_dir"] ?? 0, features["high_low_range"] ?? 0, features["momentum_1"] ?? 0, features["momentum_3"] ?? 0, features["momentum_5"] ?? 0, features["momentum_10"] ?? 0, features["rsi_oversold"] ?? 0, features["rsi_overbought"] ?? 0, features["rsi_neutral"] ?? 0, features["trend5m"] ?? 0];
   
@@ -5057,151 +5057,163 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
   const metaScores = [
     // Meta Tree 0
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[8] <= -0.000554) {
-            if (f[16] <= 0.521382) {
-              return 1.205970;
+      if (f[40] <= 0.496058) {
+        if (f[18] <= 0.000000) {
+          if (f[29] <= 0.000008) {
+            if (f[40] <= 0.233330) {
+              return 2.766146;
             } else {
-              return 1.054430;
+              return 2.519152;
             }
           } else {
-            if (f[8] <= -0.000450) {
-              return 1.005934;
+            if (f[8] <= -0.001217) {
+              return 2.747544;
             } else {
-              return 1.136248;
+              return 2.786314;
             }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[6] <= 0.000361) {
-              return 1.247611;
+          if (f[29] <= 0.115036) {
+            if (f[24] <= 0.175000) {
+              return 2.702450;
             } else {
-              return 1.214997;
+              return 2.762449;
             }
           } else {
-            if (f[8] <= 0.000980) {
-              return 1.063794;
-            } else {
-              return 1.185529;
-            }
+            return 2.485565;
           }
         }
       } else {
-        if (f[0] <= 32.464361) {
-          if (f[15] <= 0.000008) {
-            return 1.119980;
+        if (f[40] <= 0.663249) {
+          if (f[38] <= 1.000000) {
+            if (f[1] <= 0.099405) {
+              return 2.153054;
+            } else {
+              return 2.082521;
+            }
           } else {
-            return 1.251079;
+            if (f[29] <= 0.018363) {
+              return 2.540984;
+            } else {
+              return 2.297186;
+            }
           }
         } else {
-          if (f[15] <= -0.000000) {
-            return 0.814082;
+          if (f[34] <= 0.077462) {
+            return 2.628581;
           } else {
-            return 0.931735;
+            if (f[24] <= 0.025000) {
+              return 2.747544;
+            } else {
+              return 2.787849;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 1
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[8] <= -0.000554) {
-            if (f[16] <= 0.521382) {
-              return 0.057382;
-            } else {
-              return -0.080003;
-            }
+      if (f[24] <= 0.000000) {
+        if (f[8] <= 0.000438) {
+          if (f[35] <= 0.492286) {
+            return -0.362529;
           } else {
-            if (f[8] <= -0.000450) {
-              return -0.119629;
+            if (f[9] <= 0.000137) {
+              return -0.066605;
             } else {
-              return -0.008595;
+              return -0.319865;
             }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[6] <= 0.000361) {
-              return 0.099312;
-            } else {
-              return 0.066304;
-            }
+          if (f[3] <= 0.001350) {
+            return -0.059218;
           } else {
-            if (f[17] <= 0.555685) {
-              return -0.075461;
+            if (f[0] <= 62.385507) {
+              return 0.042705;
             } else {
-              return 0.039393;
+              return 0.042639;
             }
           }
         }
       } else {
-        if (f[0] <= 32.464361) {
-          if (f[20] <= 0.904042) {
-            return -0.024461;
-          } else {
-            return 0.103206;
-          }
-        } else {
-          if (f[15] <= -0.000000) {
-            if (f[0] <= 60.827739) {
-              return -0.260568;
+        if (f[34] <= 0.129236) {
+          if (f[9] <= 0.000157) {
+            if (f[7] <= -0.000146) {
+              return 0.020555;
             } else {
-              return -0.260568;
+              return -0.057752;
             }
           } else {
-            return -0.176868;
+            return -0.228853;
+          }
+        } else {
+          if (f[35] <= 2.503777) {
+            if (f[29] <= 0.126210) {
+              return 0.022684;
+            } else {
+              return -0.084004;
+            }
+          } else {
+            if (f[1] <= 3.687682) {
+              return -0.124445;
+            } else {
+              return 0.023535;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 2
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[8] <= -0.000554) {
-            if (f[16] <= 0.521382) {
-              return 0.054555;
-            } else {
-              return -0.070781;
-            }
+      if (f[40] <= 0.320023) {
+        if (f[24] <= 0.000000) {
+          if (f[8] <= -0.000605) {
+            return -0.253743;
           } else {
-            if (f[18] <= 0.018333) {
-              return 0.073831;
+            if (f[9] <= 0.000143) {
+              return 0.005878;
             } else {
-              return -0.050358;
+              return -0.151324;
             }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[6] <= 0.000361) {
-              return 0.096927;
+          if (f[9] <= 0.000138) {
+            if (f[20] <= 0.002582) {
+              return -0.030605;
             } else {
-              return 0.063380;
+              return 0.032589;
             }
           } else {
-            if (f[17] <= 0.555685) {
-              return -0.066832;
+            if (f[9] <= 0.000143) {
+              return -0.216718;
             } else {
-              return 0.037036;
+              return 0.020848;
             }
           }
         }
       } else {
-        if (f[0] <= 32.464361) {
-          if (f[20] <= 0.904042) {
-            return -0.022214;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[34] <= 0.113638) {
+              return -0.108461;
+            } else {
+              return 0.003587;
+            }
           } else {
-            return 0.100932;
+            if (f[40] <= 0.587517) {
+              return -0.336361;
+            } else {
+              return -0.132634;
+            }
           }
         } else {
-          if (f[14] <= -0.000179) {
-            return -0.154162;
+          if (f[34] <= 0.119124) {
+            return 0.042974;
           } else {
-            if (f[17] <= 0.503020) {
-              return -0.206140;
+            if (f[29] <= 0.090551) {
+              return 0.042426;
             } else {
-              return -0.233601;
+              return 0.042567;
             }
           }
         }
@@ -5209,767 +5221,1011 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 3
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[4] <= -0.000320) {
-            return -0.129770;
-          } else {
-            if (f[17] <= 0.486470) {
-              return -0.052614;
+      if (f[24] <= 0.000000) {
+        if (f[8] <= 0.000438) {
+          if (f[32] <= 0.000114) {
+            if (f[8] <= -0.000535) {
+              return -0.177778;
             } else {
-              return 0.025459;
+              return -0.026999;
             }
+          } else {
+            return -0.212730;
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[0] <= 78.041023) {
-              return 0.084943;
-            } else {
-              return 0.033566;
-            }
+          if (f[20] <= 0.002588) {
+            return -0.060977;
           } else {
-            if (f[8] <= 0.000980) {
-              return -0.061959;
+            if (f[34] <= 0.284312) {
+              return 0.042831;
             } else {
-              return 0.036407;
+              return 0.042594;
             }
           }
         }
       } else {
-        if (f[20] <= 0.803360) {
-          if (f[0] <= 50.000822) {
-            return -0.057964;
-          } else {
-            if (f[20] <= 0.573067) {
-              return -0.168889;
+        if (f[15] <= 0.000288) {
+          if (f[18] <= 0.000000) {
+            if (f[8] <= -0.001198) {
+              return -0.000782;
             } else {
-              return -0.201022;
+              return 0.032624;
+            }
+          } else {
+            if (f[3] <= 0.001417) {
+              return -0.038684;
+            } else {
+              return 0.025884;
             }
           }
         } else {
-          return 0.074902;
+          if (f[0] <= 63.614602) {
+            if (f[35] <= 0.554744) {
+              return -0.144940;
+            } else {
+              return -0.035441;
+            }
+          } else {
+            if (f[35] <= 2.503777) {
+              return 0.027487;
+            } else {
+              return -0.035151;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 4
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[8] <= -0.000554) {
-            if (f[16] <= 0.524949) {
-              return 0.052836;
-            } else {
-              return -0.094299;
-            }
+      if (f[40] <= 0.320023) {
+        if (f[24] <= 0.000000) {
+          if (f[8] <= -0.000619) {
+            return -0.173460;
           } else {
-            if (f[18] <= 0.018333) {
-              return 0.070797;
+            if (f[1] <= -0.702368) {
+              return 0.043046;
             } else {
-              return -0.044627;
+              return -0.069649;
             }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[6] <= 0.000361) {
-              return 0.093008;
+          if (f[18] <= 0.000000) {
+            if (f[8] <= -0.001198) {
+              return 0.012627;
             } else {
-              return 0.057396;
+              return 0.039823;
             }
           } else {
-            if (f[17] <= 0.555685) {
-              return -0.055446;
+            if (f[34] <= 0.181516) {
+              return -0.047750;
             } else {
-              return 0.034216;
+              return 0.019007;
             }
           }
         }
       } else {
-        if (f[0] <= 32.464361) {
-          if (f[15] <= 0.000008) {
-            return -0.017645;
-          } else {
-            return 0.097836;
-          }
-        } else {
-          if (f[15] <= -0.000000) {
-            if (f[14] <= -0.000177) {
-              return -0.182504;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.018986;
             } else {
-              return -0.172676;
+              return -0.064187;
             }
           } else {
-            return -0.110878;
+            if (f[40] <= 0.636745) {
+              return -0.224673;
+            } else {
+              return -0.078835;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.042915;
+          } else {
+            if (f[35] <= 2.503777) {
+              return 0.042293;
+            } else {
+              return 0.042465;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 5
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[5] <= -0.000564) {
-            if (f[14] <= -0.000193) {
-              return -0.090029;
-            } else {
-              return 0.020093;
-            }
+      if (f[40] <= 0.320023) {
+        if (f[24] <= 0.000000) {
+          if (f[8] <= -0.000605) {
+            return -0.138372;
           } else {
-            return -0.124917;
+            if (f[1] <= -0.702368) {
+              return 0.042894;
+            } else {
+              return -0.063078;
+            }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[20] <= 0.179494) {
-              return 0.097150;
+          if (f[34] <= 0.124475) {
+            if (f[32] <= 0.000127) {
+              return 0.023220;
             } else {
-              return 0.059149;
+              return -0.116065;
             }
           } else {
-            if (f[9] <= 0.496787) {
-              return -0.056891;
+            if (f[20] <= 0.002583) {
+              return 0.016744;
             } else {
-              return 0.028629;
+              return 0.034901;
             }
           }
         }
       } else {
-        if (f[20] <= 0.803360) {
-          if (f[0] <= 50.000822) {
-            return -0.046910;
-          } else {
-            if (f[20] <= 0.573067) {
-              return -0.136468;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[34] <= 0.113638) {
+              return -0.083787;
             } else {
-              return -0.165143;
+              return 0.004258;
+            }
+          } else {
+            if (f[19] <= -0.028454) {
+              return -0.096557;
+            } else {
+              return -0.211216;
             }
           }
         } else {
-          return 0.071918;
+          if (f[34] <= 0.119124) {
+            return 0.042792;
+          } else {
+            if (f[35] <= 2.503777) {
+              return 0.042198;
+            } else {
+              return 0.042363;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 6
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[2] <= 0.001437) {
-            if (f[17] <= 0.504379) {
-              return -0.032187;
+      if (f[40] <= 0.281719) {
+        if (f[24] <= 0.000000) {
+          if (f[14] <= -0.000163) {
+            if (f[15] <= -0.000595) {
+              return -0.005224;
             } else {
-              return 0.052350;
+              return -0.111203;
             }
           } else {
-            if (f[14] <= -0.000191) {
-              return -0.167515;
-            } else {
-              return -0.011153;
-            }
+            return 0.043149;
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[6] <= 0.000361) {
-              return 0.089863;
+          if (f[9] <= 0.000138) {
+            if (f[8] <= -0.001198) {
+              return 0.008297;
             } else {
-              return 0.051365;
+              return 0.035338;
             }
           } else {
-            if (f[8] <= 0.000980) {
-              return -0.051378;
+            if (f[9] <= 0.000142) {
+              return -0.181142;
             } else {
-              return 0.035285;
+              return 0.024536;
             }
           }
         }
       } else {
-        if (f[20] <= 0.803360) {
-          if (f[0] <= 50.000822) {
-            return -0.042420;
-          } else {
-            if (f[2] <= 0.001584) {
-              return -0.152609;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[24] <= 0.758333) {
+              return -0.009411;
             } else {
-              return -0.125827;
+              return -0.160620;
+            }
+          } else {
+            if (f[40] <= 0.663249) {
+              return -0.156550;
+            } else {
+              return -0.042562;
             }
           }
         } else {
-          return 0.068971;
+          if (f[34] <= 0.119124) {
+            return 0.042676;
+          } else {
+            if (f[35] <= 2.503777) {
+              return 0.042107;
+            } else {
+              return 0.042265;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 7
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[6] <= 0.000470) {
-            if (f[20] <= 0.105699) {
-              return 0.065336;
+      if (f[40] <= 0.281719) {
+        if (f[24] <= 0.000000) {
+          if (f[40] <= 0.154086) {
+            if (f[8] <= 0.000034) {
+              return -0.058880;
             } else {
-              return -0.006489;
+              return 0.044195;
             }
           } else {
-            if (f[5] <= -0.000601) {
-              return 0.023609;
+            if (f[29] <= 0.042186) {
+              return -0.038293;
             } else {
-              return -0.190034;
+              return -0.150866;
             }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[20] <= 0.179494) {
-              return 0.094561;
+          if (f[18] <= 0.000000) {
+            if (f[8] <= -0.001198) {
+              return 0.011047;
             } else {
-              return 0.053633;
+              return 0.039935;
             }
           } else {
-            if (f[9] <= 0.496787) {
-              return -0.050824;
+            if (f[9] <= 0.000095) {
+              return 0.027450;
             } else {
-              return 0.028403;
+              return -0.025050;
             }
           }
         }
       } else {
-        if (f[3] <= 0.000060) {
-          return 0.056319;
-        } else {
-          if (f[15] <= 0.000005) {
-            if (f[6] <= 0.000333) {
-              return -0.148128;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.019353;
             } else {
-              return -0.114886;
+              return -0.048778;
             }
           } else {
-            return -0.050072;
+            if (f[38] <= 0.972856) {
+              return -0.154476;
+            } else {
+              return -0.068301;
+            }
+          }
+        } else {
+          if (f[31] <= 0.618593) {
+            if (f[3] <= 0.001886) {
+              return 0.042502;
+            } else {
+              return 0.042083;
+            }
+          } else {
+            return 0.042052;
           }
         }
       }
     })(f)
     // Meta Tree 8
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[5] <= -0.000564) {
-            if (f[14] <= -0.000193) {
-              return -0.072571;
-            } else {
-              return 0.018019;
-            }
+      if (f[18] <= 0.000000) {
+        if (f[15] <= 0.000288) {
+          if (f[28] <= 0.681037) {
+            return -0.100317;
           } else {
-            return -0.106562;
+            if (f[8] <= -0.001198) {
+              return -0.001468;
+            } else {
+              return 0.032037;
+            }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[6] <= 0.000361) {
-              return 0.087161;
+          if (f[8] <= 0.000034) {
+            if (f[15] <= 0.000634) {
+              return -0.029422;
             } else {
-              return 0.045591;
+              return -0.127356;
             }
           } else {
-            if (f[8] <= 0.000980) {
-              return -0.046041;
+            if (f[36] <= 0.783979) {
+              return 0.021089;
             } else {
-              return 0.034573;
+              return -0.042345;
             }
           }
         }
       } else {
-        if (f[20] <= 0.803360) {
-          if (f[0] <= 50.000822) {
-            return -0.035979;
-          } else {
-            if (f[20] <= 0.573067) {
-              return -0.107351;
+        if (f[29] <= 0.120538) {
+          if (f[24] <= 0.175000) {
+            if (f[8] <= 0.000534) {
+              return -0.057952;
             } else {
-              return -0.136067;
+              return 0.013845;
+            }
+          } else {
+            if (f[24] <= 0.708333) {
+              return 0.020575;
+            } else {
+              return -0.111377;
             }
           }
         } else {
-          return 0.067040;
+          return -0.151686;
         }
       }
     })(f)
     // Meta Tree 9
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[17] <= 0.539654) {
-            if (f[3] <= 0.000059) {
-              return 0.052810;
+      if (f[40] <= 0.281719) {
+        if (f[24] <= 0.000000) {
+          if (f[7] <= 0.000175) {
+            if (f[35] <= 0.498588) {
+              return -0.152444;
             } else {
-              return -0.044436;
+              return -0.016654;
             }
           } else {
-            if (f[16] <= 0.340522) {
-              return -0.029009;
-            } else {
-              return 0.059386;
-            }
+            return 0.044134;
           }
         } else {
-          if (f[6] <= 0.000361) {
-            if (f[15] <= -0.000006) {
-              return 0.056507;
+          if (f[34] <= 0.124475) {
+            if (f[1] <= 0.732995) {
+              return 0.042356;
             } else {
-              return 0.091842;
+              return -0.061919;
             }
           } else {
-            if (f[6] <= 0.000442) {
-              return -0.051059;
+            if (f[20] <= 0.002582) {
+              return -0.035012;
             } else {
-              return 0.056825;
+              return 0.031138;
             }
           }
         }
       } else {
-        if (f[0] <= 32.464361) {
-          if (f[20] <= 0.708386) {
-            return -0.051207;
-          } else {
-            return 0.096515;
-          }
-        } else {
-          if (f[15] <= -0.000000) {
-            if (f[16] <= 0.185307) {
-              return -0.124861;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[31] <= 0.616380) {
+              return -0.072360;
             } else {
-              return -0.136387;
+              return 0.001172;
             }
           } else {
-            return -0.068298;
+            if (f[40] <= 0.663249) {
+              return -0.121532;
+            } else {
+              return -0.031892;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.042527;
+          } else {
+            if (f[35] <= 2.185765) {
+              return 0.041897;
+            } else {
+              return 0.042038;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 10
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[14] <= -0.000193) {
-          if (f[2] <= 0.001431) {
-            return 0.107800;
-          } else {
-            return -0.155752;
-          }
-        } else {
-          if (f[16] <= 0.530780) {
-            if (f[5] <= -0.000461) {
-              return 0.013740;
+      if (f[40] <= 0.281719) {
+        if (f[24] <= 0.000000) {
+          if (f[20] <= 0.002592) {
+            if (f[35] <= 0.505213) {
+              return -0.132315;
             } else {
-              return 0.052925;
+              return -0.017456;
             }
           } else {
-            return -0.077761;
+            return 0.028576;
+          }
+        } else {
+          if (f[18] <= 0.000000) {
+            if (f[8] <= -0.001198) {
+              return 0.009989;
+            } else {
+              return 0.039563;
+            }
+          } else {
+            if (f[34] <= 0.341392) {
+              return -0.022841;
+            } else {
+              return 0.030815;
+            }
           }
         }
       } else {
-        if (f[3] <= 0.000060) {
-          return 0.052170;
-        } else {
-          if (f[15] <= 0.000005) {
-            if (f[20] <= 0.569567) {
-              return -0.093921;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.018909;
             } else {
-              return -0.127932;
+              return -0.040994;
             }
           } else {
-            return -0.038540;
+            if (f[32] <= 0.000108) {
+              return -0.059905;
+            } else {
+              return -0.130856;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.042422;
+          } else {
+            if (f[35] <= 2.185765) {
+              return 0.041819;
+            } else {
+              return 0.041954;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 11
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[6] <= 0.000320) {
-            if (f[17] <= 0.501032) {
-              return -0.034706;
+      if (f[40] <= 0.274903) {
+        if (f[24] <= 0.000000) {
+          if (f[7] <= 0.000175) {
+            if (f[35] <= 0.492286) {
+              return -0.125250;
             } else {
-              return 0.040696;
+              return -0.015764;
             }
           } else {
-            if (f[9] <= 0.480657) {
-              return -0.158378;
-            } else {
-              return 0.005170;
-            }
+            return 0.043937;
           }
         } else {
-          if (f[6] <= 0.000361) {
-            if (f[20] <= 0.436020) {
-              return 0.090378;
-            } else {
-              return 0.051068;
-            }
+          if (f[28] <= 0.755496) {
+            return -0.067623;
           } else {
-            if (f[6] <= 0.000442) {
-              return -0.049055;
+            if (f[34] <= 0.034867) {
+              return -0.014086;
             } else {
-              return 0.052373;
+              return 0.029466;
             }
           }
         }
       } else {
-        if (f[20] <= 0.803360) {
-          if (f[0] <= 50.000822) {
-            return -0.027221;
-          } else {
-            if (f[20] <= 0.573067) {
-              return -0.090015;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[24] <= 0.808333) {
+              return -0.005542;
             } else {
-              return -0.120323;
+              return -0.179150;
+            }
+          } else {
+            if (f[40] <= 0.587517) {
+              return -0.117065;
+            } else {
+              return -0.049714;
             }
           }
         } else {
-          return 0.064757;
+          if (f[34] <= 0.119124) {
+            return 0.042321;
+          } else {
+            if (f[35] <= 2.185765) {
+              return 0.041744;
+            } else {
+              return 0.041874;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 12
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[4] <= -0.000320) {
-          return -0.070740;
-        } else {
-          if (f[16] <= 0.530780) {
-            if (f[6] <= 0.000526) {
-              return 0.031941;
+      if (f[40] <= 0.274903) {
+        if (f[18] <= 0.000000) {
+          if (f[20] <= 0.002582) {
+            return -0.056421;
+          } else {
+            if (f[9] <= 0.000059) {
+              return 0.017965;
             } else {
-              return -0.018595;
+              return 0.039337;
+            }
+          }
+        } else {
+          if (f[21] <= -0.000649) {
+            if (f[6] <= -0.000218) {
+              return -0.040562;
+            } else {
+              return 0.042464;
             }
           } else {
-            return -0.078308;
+            if (f[14] <= -0.000281) {
+              return -0.041561;
+            } else {
+              return 0.032189;
+            }
           }
         }
       } else {
-        if (f[20] <= 0.803360) {
-          if (f[0] <= 50.000822) {
-            return -0.024864;
-          } else {
-            if (f[20] <= 0.573067) {
-              return -0.085213;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[24] <= 0.808333) {
+              return -0.005295;
             } else {
-              return -0.115853;
+              return -0.147168;
+            }
+          } else {
+            if (f[38] <= 0.972856) {
+              return -0.106531;
+            } else {
+              return -0.043954;
             }
           }
         } else {
-          return 0.061971;
+          if (f[34] <= 0.119124) {
+            return 0.042225;
+          } else {
+            if (f[35] <= 2.185765) {
+              return 0.041673;
+            } else {
+              return 0.041797;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 13
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[5] <= -0.000461) {
-          if (f[5] <= -0.000564) {
-            if (f[9] <= 0.461807) {
-              return -0.050747;
+      if (f[40] <= 0.274903) {
+        if (f[24] <= 0.000000) {
+          if (f[13] <= -0.000171) {
+            if (f[40] <= 0.154086) {
+              return -0.012855;
             } else {
-              return 0.017752;
+              return -0.075263;
             }
           } else {
-            return -0.095867;
+            return 0.030104;
           }
         } else {
-          if (f[6] <= 0.000361) {
-            if (f[20] <= 0.436020) {
-              return 0.089321;
-            } else {
-              return 0.047841;
-            }
+          if (f[28] <= 0.755496) {
+            return -0.062370;
           } else {
-            if (f[6] <= 0.000442) {
-              return -0.046628;
+            if (f[20] <= 0.002582) {
+              return -0.032072;
             } else {
-              return 0.049842;
+              return 0.027716;
             }
           }
         }
       } else {
-        if (f[3] <= 0.000060) {
-          return 0.049078;
-        } else {
-          if (f[15] <= 0.000001) {
-            if (f[4] <= -0.000289) {
-              return -0.125621;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[24] <= 0.808333) {
+              return -0.005060;
             } else {
-              return -0.079560;
+              return -0.124758;
             }
           } else {
-            return -0.037054;
+            if (f[40] <= 0.611852) {
+              return -0.096667;
+            } else {
+              return -0.035002;
+            }
+          }
+        } else {
+          if (f[31] <= 0.618593) {
+            if (f[0] <= 65.414793) {
+              return 0.042077;
+            } else {
+              return 0.041678;
+            }
+          } else {
+            if (f[35] <= 1.779494) {
+              return 0.041607;
+            } else {
+              return 0.041733;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 14
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[14] <= -0.000193) {
-          if (f[2] <= 0.001431) {
-            return 0.105668;
-          } else {
-            return -0.133563;
-          }
-        } else {
-          if (f[8] <= -0.000655) {
-            if (f[9] <= 0.509795) {
-              return 0.100239;
+      if (f[40] <= 0.281719) {
+        if (f[18] <= 0.000000) {
+          if (f[29] <= 0.000008) {
+            if (f[40] <= 0.157732) {
+              return 0.026309;
             } else {
-              return 0.069674;
+              return -0.103392;
             }
           } else {
-            if (f[8] <= -0.000402) {
-              return -0.023394;
+            if (f[8] <= -0.001217) {
+              return 0.006891;
             } else {
-              return 0.033016;
+              return 0.040795;
+            }
+          }
+        } else {
+          if (f[21] <= -0.000649) {
+            if (f[6] <= -0.000218) {
+              return -0.052949;
+            } else {
+              return 0.042482;
+            }
+          } else {
+            if (f[25] <= 0.750000) {
+              return 0.026961;
+            } else {
+              return -0.039655;
             }
           }
         }
       } else {
-        if (f[20] <= 0.803360) {
-          if (f[0] <= 50.000822) {
-            return -0.021441;
-          } else {
-            if (f[20] <= 0.573067) {
-              return -0.076991;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.019715;
             } else {
-              return -0.109797;
+              return -0.036441;
+            }
+          } else {
+            if (f[32] <= 0.000108) {
+              return -0.041018;
+            } else {
+              return -0.100358;
             }
           }
         } else {
-          return 0.060456;
+          if (f[34] <= 0.119124) {
+            return 0.042046;
+          } else {
+            if (f[35] <= 2.185765) {
+              return 0.041539;
+            } else {
+              return 0.041653;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 15
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[0] <= 79.997706) {
-          if (f[3] <= 0.000214) {
-            if (f[18] <= 0.018333) {
-              return 0.051487;
+      if (f[18] <= 0.000000) {
+        if (f[34] <= 0.083718) {
+          if (f[8] <= 0.000104) {
+            if (f[15] <= 0.000634) {
+              return -0.024124;
             } else {
-              return -0.000330;
+              return -0.141848;
             }
           } else {
-            return -0.143653;
+            if (f[36] <= 0.624688) {
+              return 0.042094;
+            } else {
+              return 0.003504;
+            }
           }
         } else {
-          return 0.095940;
+          if (f[20] <= 0.002582) {
+            if (f[31] <= 3.262217) {
+              return 0.010569;
+            } else {
+              return -0.218055;
+            }
+          } else {
+            if (f[35] <= 2.232122) {
+              return 0.028735;
+            } else {
+              return -0.020211;
+            }
+          }
         }
       } else {
-        if (f[0] <= 50.000822) {
-          if (f[20] <= 0.679207) {
-            return -0.075011;
-          } else {
-            return 0.100577;
-          }
-        } else {
-          if (f[2] <= 0.001827) {
-            if (f[8] <= 0.000082) {
-              return -0.090025;
+        if (f[29] <= 0.147056) {
+          if (f[13] <= -0.000049) {
+            if (f[39] <= 0.116998) {
+              return -0.010667;
             } else {
-              return -0.115335;
+              return -0.065547;
             }
           } else {
-            return -0.048900;
+            if (f[10] <= -0.000064) {
+              return -0.010285;
+            } else {
+              return 0.043291;
+            }
           }
+        } else {
+          return -0.138435;
         }
       }
     })(f)
     // Meta Tree 16
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[16] <= 0.530780) {
-          if (f[4] <= -0.000320) {
-            return -0.061760;
-          } else {
-            if (f[6] <= 0.000516) {
-              return 0.028045;
+      if (f[34] <= 0.129236) {
+        if (f[26] <= 0.016656) {
+          if (f[14] <= -0.000294) {
+            if (f[1] <= 0.859180) {
+              return 0.037746;
             } else {
-              return -0.021913;
+              return -0.017823;
+            }
+          } else {
+            if (f[15] <= -0.000587) {
+              return -0.090898;
+            } else {
+              return 0.009358;
             }
           }
         } else {
-          return -0.069707;
+          if (f[8] <= 0.000550) {
+            if (f[35] <= 0.554744) {
+              return -0.111556;
+            } else {
+              return -0.026930;
+            }
+          } else {
+            if (f[36] <= 0.577406) {
+              return 0.009429;
+            } else {
+              return 0.043679;
+            }
+          }
         }
       } else {
-        if (f[0] <= 50.000822) {
-          if (f[20] <= 0.679207) {
-            return -0.068250;
-          } else {
-            return 0.098958;
-          }
-        } else {
-          if (f[15] <= 0.000001) {
-            if (f[5] <= 0.000656) {
-              return -0.101151;
+        if (f[24] <= 0.000000) {
+          if (f[14] <= -0.000283) {
+            if (f[14] <= -0.000299) {
+              return -0.012399;
             } else {
-              return -0.111067;
+              return -0.088550;
             }
           } else {
-            return -0.048628;
+            return 0.043363;
+          }
+        } else {
+          if (f[1] <= -5.489305) {
+            if (f[15] <= -0.000590) {
+              return 0.025483;
+            } else {
+              return -0.183057;
+            }
+          } else {
+            if (f[15] <= 0.000125) {
+              return 0.024563;
+            } else {
+              return -0.005975;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 17
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[3] <= 0.000265) {
-          if (f[6] <= 0.000526) {
-            if (f[8] <= -0.000402) {
-              return -0.003487;
+      if (f[40] <= 0.274903) {
+        if (f[18] <= 0.000000) {
+          if (f[29] <= 0.000008) {
+            if (f[40] <= 0.157732) {
+              return 0.025667;
             } else {
-              return 0.036484;
+              return -0.070342;
             }
           } else {
-            if (f[5] <= -0.000598) {
-              return 0.004843;
+            if (f[8] <= -0.001217) {
+              return 0.004823;
             } else {
-              return -0.130406;
+              return 0.040583;
             }
           }
         } else {
-          return 0.094907;
+          if (f[25] <= 0.750000) {
+            if (f[30] <= 0.125435) {
+              return 0.037934;
+            } else {
+              return -0.047910;
+            }
+          } else {
+            if (f[21] <= -0.000649) {
+              return 0.026639;
+            } else {
+              return -0.034506;
+            }
+          }
         }
       } else {
-        if (f[0] <= 50.000822) {
-          if (f[20] <= 0.679207) {
-            return -0.062281;
-          } else {
-            return 0.097478;
-          }
-        } else {
-          if (f[15] <= 0.000001) {
-            if (f[1] <= 2.792677) {
-              return -0.099006;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.018090;
             } else {
-              return -0.108852;
+              return -0.030877;
             }
           } else {
-            return -0.045397;
+            if (f[40] <= 0.587517) {
+              return -0.089043;
+            } else {
+              return -0.034193;
+            }
+          }
+        } else {
+          if (f[35] <= 2.362866) {
+            return 0.041505;
+          } else {
+            if (f[1] <= 4.288024) {
+              return 0.042166;
+            } else {
+              return 0.041564;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 18
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[3] <= 0.000265) {
-          if (f[3] <= 0.000214) {
-            if (f[5] <= -0.000461) {
-              return -0.001214;
-            } else {
-              return 0.047939;
-            }
+      if (f[40] <= 0.274903) {
+        if (f[18] <= 0.000000) {
+          if (f[20] <= 0.002582) {
+            return -0.049814;
           } else {
-            return -0.118556;
+            if (f[8] <= -0.001136) {
+              return 0.017015;
+            } else {
+              return 0.039537;
+            }
           }
         } else {
-          return 0.093595;
+          if (f[21] <= -0.000649) {
+            if (f[14] <= -0.000313) {
+              return -0.014290;
+            } else {
+              return 0.042358;
+            }
+          } else {
+            if (f[14] <= -0.000281) {
+              return -0.034466;
+            } else {
+              return 0.031687;
+            }
+          }
         }
       } else {
-        if (f[0] <= 50.000822) {
-          if (f[20] <= 0.679207) {
-            return -0.056968;
-          } else {
-            return 0.096123;
-          }
-        } else {
-          if (f[15] <= 0.000001) {
-            if (f[1] <= 2.792677) {
-              return -0.097222;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[1] <= -5.500440) {
+              return -0.086245;
             } else {
-              return -0.106297;
+              return -0.001926;
             }
           } else {
-            return -0.042374;
+            if (f[40] <= 0.663249) {
+              return -0.073069;
+            } else {
+              return -0.011606;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.042018;
+          } else {
+            if (f[35] <= 2.185765) {
+              return 0.041376;
+            } else {
+              return 0.041548;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 19
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[14] <= -0.000193) {
-          if (f[2] <= 0.001431) {
-            return 0.104042;
+      if (f[40] <= 0.274903) {
+        if (f[18] <= 0.000000) {
+          if (f[20] <= 0.002582) {
+            return -0.046106;
           } else {
-            return -0.121504;
+            if (f[9] <= 0.000059) {
+              return 0.013983;
+            } else {
+              return 0.038512;
+            }
           }
         } else {
-          if (f[8] <= -0.000655) {
-            if (f[9] <= 0.509795) {
-              return 0.098484;
+          if (f[25] <= 0.750000) {
+            if (f[30] <= 0.125435) {
+              return 0.037743;
             } else {
-              return 0.066649;
+              return -0.043757;
             }
           } else {
-            if (f[8] <= -0.000402) {
-              return -0.022566;
+            if (f[9] <= 0.000063) {
+              return 0.011327;
             } else {
-              return 0.027202;
+              return -0.041294;
             }
           }
         }
       } else {
-        if (f[3] <= 0.000061) {
-          return 0.034400;
-        } else {
-          if (f[15] <= -0.000000) {
-            if (f[16] <= 0.190479) {
-              return -0.095547;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.018020;
             } else {
-              return -0.112896;
+              return -0.028595;
             }
           } else {
-            return -0.022525;
+            if (f[19] <= -0.028454) {
+              return -0.031835;
+            } else {
+              return -0.083192;
+            }
+          }
+        } else {
+          if (f[35] <= 2.362866) {
+            if (f[9] <= 0.000118) {
+              return 0.041289;
+            } else {
+              return 0.041471;
+            }
+          } else {
+            if (f[1] <= 4.288024) {
+              return 0.041991;
+            } else {
+              return 0.041440;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 20
     (function(f) {
-      if (f[20] <= 0.167764) {
-        if (f[5] <= -0.000588) {
-          if (f[5] <= -0.000595) {
-            if (f[17] <= 0.539654) {
-              return -0.025884;
+      if (f[40] <= 0.274903) {
+        if (f[24] <= 0.000000) {
+          if (f[7] <= 0.000175) {
+            if (f[15] <= -0.000581) {
+              return -0.008902;
             } else {
-              return 0.081176;
+              return -0.086692;
             }
           } else {
-            return -0.110707;
+            return 0.044742;
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[9] <= 0.533310) {
-              return 0.094438;
+          if (f[9] <= 0.000138) {
+            if (f[20] <= 0.002583) {
+              return 0.011079;
             } else {
-              return 0.020993;
+              return 0.033963;
             }
           } else {
-            return -0.011967;
+            if (f[9] <= 0.000140) {
+              return -0.161303;
+            } else {
+              return 0.019116;
+            }
           }
         }
       } else {
-        if (f[7] <= -0.977224) {
-          if (f[17] <= 0.504379) {
-            return -0.039053;
-          } else {
-            return 0.076178;
-          }
-        } else {
-          if (f[19] <= 0.002583) {
-            if (f[6] <= 0.000093) {
-              return -0.028720;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[31] <= 0.616380) {
+              return -0.050708;
             } else {
-              return -0.142047;
+              return 0.003970;
             }
           } else {
-            if (f[6] <= 0.000267) {
-              return 0.045909;
+            if (f[38] <= 0.972856) {
+              return -0.076023;
             } else {
-              return -0.031968;
+              return -0.025873;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.041857;
+          } else {
+            if (f[15] <= 0.000237) {
+              return 0.041231;
+            } else {
+              return 0.041355;
             }
           }
         }
@@ -5977,279 +6233,375 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 21
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[0] <= 79.997706) {
-          if (f[6] <= 0.000526) {
-            if (f[16] <= 0.565065) {
-              return 0.018070;
+      if (f[18] <= 0.000000) {
+        if (f[29] <= 0.000008) {
+          if (f[19] <= -1.814059) {
+            if (f[3] <= 0.001420) {
+              return 0.041657;
             } else {
-              return -0.086918;
+              return 0.042668;
             }
           } else {
-            if (f[0] <= 56.516886) {
-              return -0.135221;
+            if (f[25] <= 0.500000) {
+              return -0.106862;
             } else {
-              return -0.018254;
+              return -0.010627;
             }
           }
         } else {
-          return 0.092057;
+          if (f[36] <= 0.645368) {
+            if (f[8] <= -0.001179) {
+              return -0.000397;
+            } else {
+              return 0.029101;
+            }
+          } else {
+            if (f[28] <= 0.982609) {
+              return -0.005891;
+            } else {
+              return 0.041823;
+            }
+          }
         }
       } else {
-        if (f[20] <= 0.764615) {
-          if (f[6] <= 0.000346) {
-            if (f[15] <= -0.000000) {
-              return -0.064158;
+        if (f[13] <= -0.000049) {
+          if (f[9] <= 0.000063) {
+            if (f[39] <= 0.098666) {
+              return 0.010545;
             } else {
-              return -0.131575;
+              return -0.165659;
             }
           } else {
-            return -0.009835;
+            if (f[3] <= 0.002021) {
+              return -0.054650;
+            } else {
+              return 0.009401;
+            }
           }
         } else {
-          return 0.048431;
+          if (f[10] <= -0.000064) {
+            return -0.005435;
+          } else {
+            if (f[31] <= 0.616049) {
+              return 0.044635;
+            } else {
+              return 0.042938;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 22
     (function(f) {
-      if (f[20] <= 0.167764) {
-        if (f[9] <= 0.480657) {
-          if (f[17] <= 0.562539) {
-            if (f[2] <= 0.001474) {
-              return 0.009596;
+      if (f[18] <= 0.000000) {
+        if (f[29] <= 0.000008) {
+          if (f[19] <= -1.814059) {
+            if (f[3] <= 0.001420) {
+              return 0.041589;
             } else {
-              return -0.133184;
+              return 0.042561;
             }
           } else {
-            return 0.093620;
+            if (f[25] <= 0.500000) {
+              return -0.095811;
+            } else {
+              return -0.010143;
+            }
           }
         } else {
-          if (f[9] <= 0.491045) {
-            if (f[5] <= -0.000589) {
-              return 0.101725;
+          if (f[36] <= 0.645368) {
+            if (f[8] <= -0.001179) {
+              return -0.000381;
             } else {
-              return 0.094715;
+              return 0.028650;
             }
           } else {
-            if (f[18] <= 0.018333) {
-              return 0.092819;
+            if (f[28] <= 0.982609) {
+              return -0.005631;
             } else {
-              return 0.004189;
+              return 0.041750;
             }
           }
         }
       } else {
-        if (f[6] <= 0.000573) {
-          if (f[3] <= 0.000214) {
-            if (f[20] <= 0.501048) {
-              return 0.003405;
+        if (f[8] <= 0.000550) {
+          if (f[1] <= 1.026602) {
+            if (f[39] <= 0.401371) {
+              return -0.003301;
             } else {
-              return -0.043074;
+              return -0.106122;
             }
           } else {
-            return -0.186045;
+            if (f[3] <= 0.002021) {
+              return -0.107975;
+            } else {
+              return 0.002792;
+            }
           }
         } else {
-          return 0.079638;
+          if (f[21] <= -0.000455) {
+            return -0.046422;
+          } else {
+            if (f[32] <= 0.000160) {
+              return 0.043995;
+            } else {
+              return -0.005059;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 23
     (function(f) {
-      if (f[20] <= 0.167764) {
-        if (f[5] <= -0.000588) {
-          if (f[5] <= -0.000595) {
-            if (f[9] <= 0.465744) {
-              return -0.086639;
-            } else {
-              return 0.046405;
-            }
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[20] <= 0.002582) {
+            return -0.012148;
           } else {
-            return -0.097030;
+            if (f[36] <= 0.351547) {
+              return 0.004140;
+            } else {
+              return 0.039755;
+            }
           }
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[9] <= 0.533310) {
-              return 0.092711;
+          if (f[34] <= 0.276306) {
+            if (f[7] <= -0.000100) {
+              return -0.065323;
             } else {
-              return 0.015115;
+              return 0.022159;
             }
           } else {
-            return -0.012084;
+            if (f[38] <= 0.748590) {
+              return -0.008249;
+            } else {
+              return 0.042372;
+            }
           }
         }
       } else {
-        if (f[6] <= 0.000573) {
-          if (f[3] <= 0.000214) {
-            if (f[15] <= 0.000001) {
-              return -0.018049;
+        if (f[31] <= 0.616380) {
+          if (f[31] <= 0.607992) {
+            if (f[40] <= 0.510807) {
+              return 0.042550;
             } else {
-              return 0.026683;
+              return -0.021264;
             }
           } else {
-            return -0.165109;
+            if (f[9] <= 0.000139) {
+              return -0.015510;
+            } else {
+              return -0.095183;
+            }
           }
         } else {
-          return 0.077038;
+          if (f[20] <= 0.002582) {
+            if (f[31] <= 3.262217) {
+              return -0.033159;
+            } else {
+              return -0.163346;
+            }
+          } else {
+            if (f[40] <= 0.496058) {
+              return 0.013028;
+            } else {
+              return -0.025620;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 24
     (function(f) {
-      if (f[0] <= 79.997706) {
-        if (f[2] <= 0.001435) {
-          if (f[5] <= -0.000609) {
-            if (f[2] <= 0.001360) {
-              return 0.109174;
-            } else {
-              return 0.073376;
-            }
-          } else {
-            if (f[19] <= 0.002585) {
-              return -0.021991;
-            } else {
-              return 0.063160;
-            }
-          }
+      if (f[40] <= 0.138959) {
+        if (f[36] <= 0.338542) {
+          return -0.022933;
         } else {
-          if (f[14] <= -0.000192) {
-            return -0.110224;
-          } else {
-            if (f[5] <= -0.000599) {
-              return 0.038489;
+          if (f[15] <= -0.000589) {
+            if (f[28] <= 0.996260) {
+              return 0.039883;
             } else {
-              return -0.020621;
+              return -0.012041;
+            }
+          } else {
+            if (f[30] <= 0.097221) {
+              return 0.025984;
+            } else {
+              return -0.022478;
             }
           }
         }
       } else {
-        return 0.089942;
+        if (f[26] <= 0.016656) {
+          if (f[20] <= 0.002582) {
+            if (f[31] <= 3.256525) {
+              return -0.008417;
+            } else {
+              return -0.132099;
+            }
+          } else {
+            if (f[40] <= 0.452360) {
+              return 0.018059;
+            } else {
+              return -0.016248;
+            }
+          }
+        } else {
+          if (f[1] <= 3.289782) {
+            if (f[35] <= 0.560658) {
+              return -0.074942;
+            } else {
+              return -0.016817;
+            }
+          } else {
+            if (f[40] <= 0.170921) {
+              return -0.053292;
+            } else {
+              return 0.024452;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 25
     (function(f) {
-      if (f[20] <= 0.501048) {
-        if (f[9] <= 0.457461) {
-          if (f[20] <= 0.248423) {
-            return 0.020613;
-          } else {
-            return 0.101192;
-          }
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.062727;
         } else {
-          if (f[9] <= 0.461807) {
-            return -0.140905;
+          if (f[36] <= 0.338542) {
+            return -0.023033;
           } else {
-            if (f[4] <= -0.000320) {
-              return -0.075109;
+            if (f[20] <= 0.002582) {
+              return -0.015034;
             } else {
-              return 0.016024;
+              return 0.032630;
             }
           }
         }
       } else {
-        if (f[0] <= 50.000822) {
-          if (f[20] <= 0.679207) {
-            return -0.042169;
-          } else {
-            return 0.095052;
-          }
-        } else {
-          if (f[2] <= 0.001876) {
-            if (f[8] <= 0.000088) {
-              return -0.073431;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.020600;
             } else {
-              return -0.101205;
+              return -0.020335;
             }
           } else {
-            return -0.016324;
+            if (f[40] <= 0.587517) {
+              return -0.071658;
+            } else {
+              return -0.021694;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.041872;
+          } else {
+            if (f[31] <= 0.623865) {
+              return 0.041321;
+            } else {
+              return 0.041200;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 26
     (function(f) {
-      if (f[0] <= 79.997706) {
-        if (f[8] <= -0.000554) {
-          if (f[8] <= -0.000636) {
-            if (f[19] <= 0.002583) {
-              return -0.046066;
-            } else {
-              return 0.044063;
-            }
-          } else {
-            if (f[14] <= -0.000175) {
-              return 0.062022;
-            } else {
-              return 0.104214;
-            }
-          }
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.056807;
         } else {
-          if (f[8] <= -0.000446) {
-            if (f[17] <= 0.490032) {
-              return -0.171060;
+          if (f[32] <= 0.000145) {
+            if (f[9] <= 0.000059) {
+              return 0.005439;
             } else {
-              return -0.000479;
+              return 0.038632;
             }
           } else {
-            if (f[1] <= -0.162632) {
-              return 0.047422;
+            if (f[38] <= 1.000000) {
+              return -0.029321;
             } else {
-              return -0.015600;
+              return 0.034596;
             }
           }
         }
       } else {
-        return 0.089060;
+        if (f[26] <= 0.016656) {
+          if (f[20] <= 0.002582) {
+            if (f[31] <= 3.256525) {
+              return -0.008707;
+            } else {
+              return -0.117119;
+            }
+          } else {
+            if (f[40] <= 0.452360) {
+              return 0.017606;
+            } else {
+              return -0.014266;
+            }
+          }
+        } else {
+          if (f[8] <= 0.000550) {
+            if (f[35] <= 0.554744) {
+              return -0.069769;
+            } else {
+              return -0.011576;
+            }
+          } else {
+            if (f[2] <= 0.311162) {
+              return -0.090251;
+            } else {
+              return 0.016233;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 27
     (function(f) {
-      if (f[20] <= 0.175675) {
-        if (f[5] <= -0.000588) {
-          if (f[2] <= 0.001474) {
-            if (f[4] <= -0.000300) {
-              return 0.077689;
-            } else {
-              return -0.036769;
-            }
-          } else {
-            if (f[8] <= 0.000026) {
-              return -0.111827;
-            } else {
-              return 0.020220;
-            }
-          }
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.051745;
         } else {
-          if (f[4] <= 0.001461) {
-            if (f[17] <= 0.619145) {
-              return 0.084563;
-            } else {
-              return 0.009312;
-            }
+          if (f[36] <= 0.338542) {
+            return -0.023476;
           } else {
-            return 0.001052;
+            if (f[26] <= 0.016653) {
+              return -0.012689;
+            } else {
+              return 0.031963;
+            }
           }
         }
       } else {
-        if (f[5] <= -0.000604) {
-          if (f[14] <= -0.000183) {
-            return -0.012891;
-          } else {
-            return 0.108910;
-          }
-        } else {
-          if (f[9] <= 0.533310) {
-            if (f[7] <= -0.977224) {
-              return 0.033290;
+        if (f[26] <= 0.016656) {
+          if (f[26] <= 0.016653) {
+            if (f[3] <= 0.001409) {
+              return -0.097672;
             } else {
-              return -0.036098;
+              return 0.001389;
             }
           } else {
-            if (f[20] <= 0.441622) {
-              return 0.094475;
+            if (f[40] <= 0.452360) {
+              return 0.016985;
             } else {
-              return 0.017928;
+              return -0.013986;
+            }
+          }
+        } else {
+          if (f[1] <= 3.882637) {
+            if (f[14] <= -0.000142) {
+              return -0.053001;
+            } else {
+              return -0.009619;
+            }
+          } else {
+            if (f[40] <= 0.510807) {
+              return 0.042688;
+            } else {
+              return 0.006889;
             }
           }
         }
@@ -6257,75 +6609,99 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 28
     (function(f) {
-      if (f[6] <= 0.000687) {
-        if (f[6] <= 0.000516) {
-          if (f[20] <= 0.501048) {
-            if (f[6] <= 0.000442) {
-              return 0.003833;
-            } else {
-              return 0.070260;
-            }
-          } else {
-            if (f[0] <= 50.000822) {
-              return 0.009805;
-            } else {
-              return -0.074310;
-            }
-          }
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.047367;
         } else {
-          if (f[1] <= 2.676041) {
-            return -0.177894;
-          } else {
-            if (f[18] <= 0.018333) {
-              return 0.030205;
+          if (f[32] <= 0.000145) {
+            if (f[9] <= 0.000059) {
+              return 0.011046;
             } else {
-              return -0.051254;
+              return 0.039812;
+            }
+          } else {
+            if (f[38] <= 1.000000) {
+              return -0.029388;
+            } else {
+              return 0.033932;
             }
           }
         }
       } else {
-        return 0.081732;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.020410;
+            } else {
+              return -0.018505;
+            }
+          } else {
+            if (f[40] <= 0.587517) {
+              return -0.067013;
+            } else {
+              return -0.018869;
+            }
+          }
+        } else {
+          if (f[31] <= 0.618593) {
+            if (f[3] <= 0.001886) {
+              return 0.041798;
+            } else {
+              return 0.041254;
+            }
+          } else {
+            if (f[18] <= 0.000000) {
+              return 0.041199;
+            } else {
+              return 0.041379;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 29
     (function(f) {
-      if (f[5] <= -0.000605) {
-        if (f[14] <= -0.000193) {
-          return -0.041719;
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.043544;
         } else {
-          if (f[9] <= 0.466730) {
-            return -0.008762;
-          } else {
-            if (f[6] <= 0.000077) {
-              return 0.010273;
+          if (f[35] <= 0.407049) {
+            if (f[34] <= 0.243693) {
+              return -0.040205;
             } else {
-              return 0.083837;
+              return 0.041893;
+            }
+          } else {
+            if (f[9] <= 0.000059) {
+              return 0.003895;
+            } else {
+              return 0.036829;
             }
           }
         }
       } else {
-        if (f[5] <= -0.000587) {
-          if (f[8] <= -0.000653) {
-            return 0.044489;
-          } else {
-            if (f[14] <= -0.000176) {
-              return -0.019678;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.019954;
             } else {
-              return -0.091079;
+              return -0.017511;
+            }
+          } else {
+            if (f[19] <= -0.028454) {
+              return -0.020237;
+            } else {
+              return -0.067452;
             }
           }
         } else {
-          if (f[5] <= -0.000579) {
-            if (f[9] <= 0.508676) {
-              return 0.095747;
-            } else {
-              return 0.063478;
-            }
+          if (f[34] <= 0.116847) {
+            return 0.041810;
           } else {
-            if (f[20] <= 0.179494) {
-              return 0.042038;
+            if (f[34] <= 0.251527) {
+              return 0.041288;
             } else {
-              return -0.018233;
+              return 0.041142;
             }
           }
         }
@@ -6333,195 +6709,315 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 30
     (function(f) {
-      if (f[1] <= 8.787768) {
-        if (f[5] <= 0.001857) {
-          if (f[17] <= 0.565302) {
-            if (f[14] <= -0.000176) {
-              return 0.007705;
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.040177;
+        } else {
+          if (f[36] <= 0.338542) {
+            return -0.025293;
+          } else {
+            if (f[24] <= 0.000000) {
+              return 0.005362;
             } else {
-              return -0.031011;
+              return 0.033040;
+            }
+          }
+        }
+      } else {
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[14] <= -0.000247) {
+              return -0.008612;
+            } else {
+              return 0.037231;
             }
           } else {
-            if (f[2] <= 0.001397) {
-              return 0.071664;
+            if (f[40] <= 0.587517) {
+              return -0.062819;
             } else {
-              return 0.003283;
+              return -0.016297;
             }
           }
         } else {
-          return -0.081493;
+          if (f[31] <= 0.618593) {
+            if (f[3] <= 0.001886) {
+              return 0.041655;
+            } else {
+              return 0.041155;
+            }
+          } else {
+            if (f[35] <= 1.779494) {
+              return 0.041095;
+            } else {
+              return 0.041248;
+            }
+          }
         }
-      } else {
-        return 0.081987;
       }
     })(f)
     // Meta Tree 31
     (function(f) {
-      if (f[6] <= 0.000687) {
-        if (f[6] <= 0.000530) {
-          if (f[20] <= 0.501048) {
-            if (f[14] <= -0.000167) {
-              return 0.000765;
-            } else {
-              return 0.050491;
-            }
+      if (f[18] <= 0.000000) {
+        if (f[34] <= 0.083718) {
+          if (f[20] <= 0.002584) {
+            return -0.083394;
           } else {
-            if (f[20] <= 0.679207) {
-              return -0.068808;
+            if (f[34] <= 0.059791) {
+              return 0.021556;
             } else {
-              return 0.019516;
+              return -0.068479;
             }
           }
         } else {
-          if (f[8] <= 0.000389) {
-            return -0.116679;
-          } else {
-            if (f[4] <= 0.001814) {
-              return 0.073105;
+          if (f[8] <= -0.001198) {
+            if (f[9] <= 0.000059) {
+              return -0.062709;
             } else {
-              return -0.056706;
+              return 0.029055;
+            }
+          } else {
+            if (f[15] <= 0.000288) {
+              return 0.030850;
+            } else {
+              return 0.000282;
             }
           }
         }
       } else {
-        return 0.077193;
+        if (f[13] <= -0.000049) {
+          if (f[9] <= 0.000063) {
+            if (f[39] <= 0.120207) {
+              return 0.010745;
+            } else {
+              return -0.179163;
+            }
+          } else {
+            if (f[1] <= 4.192991) {
+              return -0.038547;
+            } else {
+              return 0.034891;
+            }
+          }
+        } else {
+          if (f[20] <= 0.002612) {
+            if (f[13] <= 0.000909) {
+              return 0.042468;
+            } else {
+              return 0.044235;
+            }
+          } else {
+            return 0.004799;
+          }
+        }
       }
     })(f)
     // Meta Tree 32
     (function(f) {
-      if (f[16] <= 0.565065) {
-        if (f[18] <= 0.115000) {
-          if (f[1] <= -4.679488) {
-            return -0.105598;
-          } else {
-            if (f[6] <= 0.000093) {
-              return 0.087744;
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.037755;
+        } else {
+          if (f[32] <= 0.000145) {
+            if (f[9] <= 0.000059) {
+              return 0.009480;
             } else {
-              return -0.002403;
+              return 0.039437;
+            }
+          } else {
+            if (f[34] <= 0.243693) {
+              return -0.029892;
+            } else {
+              return 0.032004;
+            }
+          }
+        }
+      } else {
+        if (f[26] <= 0.016656) {
+          if (f[20] <= 0.002582) {
+            if (f[31] <= 3.256525) {
+              return -0.005909;
+            } else {
+              return -0.097415;
+            }
+          } else {
+            if (f[40] <= 0.452360) {
+              return 0.016234;
+            } else {
+              return -0.012358;
             }
           }
         } else {
-          return 0.085122;
+          if (f[1] <= 3.882637) {
+            if (f[35] <= 0.936587) {
+              return -0.059011;
+            } else {
+              return -0.010575;
+            }
+          } else {
+            if (f[40] <= 0.510807) {
+              return 0.042581;
+            } else {
+              return 0.005604;
+            }
+          }
         }
-      } else {
-        return -0.073563;
       }
     })(f)
     // Meta Tree 33
     (function(f) {
-      if (f[5] <= -0.000605) {
-        if (f[14] <= -0.000188) {
-          if (f[2] <= 0.001431) {
-            return 0.088150;
+      if (f[18] <= 0.000000) {
+        if (f[34] <= 0.083718) {
+          if (f[20] <= 0.002584) {
+            return -0.076583;
           } else {
-            return -0.075802;
+            if (f[34] <= 0.059791) {
+              return 0.021352;
+            } else {
+              return -0.062479;
+            }
           }
         } else {
-          if (f[9] <= 0.496921) {
-            if (f[5] <= -0.000612) {
-              return 0.072501;
+          if (f[8] <= -0.001179) {
+            if (f[9] <= 0.000059) {
+              return -0.051839;
             } else {
-              return -0.009322;
+              return 0.025522;
             }
           } else {
-            return 0.098050;
+            if (f[10] <= -0.000054) {
+              return 0.030651;
+            } else {
+              return -0.000585;
+            }
           }
         }
       } else {
-        if (f[9] <= 0.529715) {
-          if (f[5] <= -0.000604) {
-            return -0.104558;
-          } else {
-            if (f[20] <= 0.174908) {
-              return 0.023609;
+        if (f[13] <= -0.000049) {
+          if (f[10] <= -0.000055) {
+            if (f[24] <= 0.191667) {
+              return -0.017337;
             } else {
-              return -0.020574;
+              return 0.019196;
+            }
+          } else {
+            if (f[31] <= 3.232060) {
+              return -0.039790;
+            } else {
+              return -0.140087;
             }
           }
         } else {
-          if (f[9] <= 0.546651) {
-            if (f[9] <= 0.541373) {
-              return 0.098306;
-            } else {
-              return 0.064626;
-            }
+          if (f[10] <= -0.000063) {
+            return 0.000642;
           } else {
-            return -0.026594;
+            if (f[35] <= 2.362866) {
+              return 0.042626;
+            } else {
+              return 0.044791;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 34
     (function(f) {
-      if (f[1] <= 8.266207) {
-        if (f[3] <= 0.000059) {
-          if (f[16] <= 0.372621) {
-            return -0.038199;
-          } else {
-            if (f[16] <= 0.469499) {
-              return 0.097842;
-            } else {
-              return 0.036104;
-            }
-          }
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.035969;
         } else {
-          if (f[5] <= -0.000605) {
-            if (f[14] <= -0.000188) {
-              return -0.021804;
+          if (f[32] <= 0.000145) {
+            if (f[9] <= 0.000059) {
+              return 0.009409;
             } else {
-              return 0.051804;
+              return 0.039282;
             }
           } else {
-            if (f[1] <= -4.788132) {
-              return -0.093443;
+            if (f[38] <= 1.000000) {
+              return -0.028141;
             } else {
-              return -0.009693;
+              return 0.033370;
             }
           }
         }
       } else {
-        return 0.071337;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.019259;
+            } else {
+              return -0.014996;
+            }
+          } else {
+            if (f[38] <= 0.972856) {
+              return -0.059172;
+            } else {
+              return -0.013181;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.041738;
+          } else {
+            if (f[34] <= 0.251527) {
+              return 0.041161;
+            } else {
+              return 0.041027;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 35
     (function(f) {
-      if (f[17] <= 0.554421) {
-        if (f[17] <= 0.548387) {
-          if (f[1] <= -4.679488) {
-            return -0.082263;
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[20] <= 0.002582) {
+            return -0.015577;
           } else {
-            if (f[6] <= 0.000093) {
-              return 0.100158;
+            if (f[36] <= 0.330214) {
+              return -0.020809;
             } else {
-              return -0.005243;
+              return 0.038759;
             }
           }
         } else {
-          return -0.103339;
+          if (f[34] <= 0.276306) {
+            if (f[26] <= 0.016658) {
+              return -0.045030;
+            } else {
+              return 0.045486;
+            }
+          } else {
+            if (f[38] <= 0.748590) {
+              return -0.014409;
+            } else {
+              return 0.041794;
+            }
+          }
         }
       } else {
-        if (f[16] <= 0.340522) {
-          if (f[16] <= 0.293093) {
-            if (f[14] <= -0.000176) {
-              return -0.048321;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[14] <= -0.000247) {
+              return -0.007555;
             } else {
-              return 0.043545;
+              return 0.036851;
             }
           } else {
-            return -0.102446;
+            if (f[40] <= 0.587517) {
+              return -0.058572;
+            } else {
+              return -0.013298;
+            }
           }
         } else {
-          if (f[20] <= 0.295977) {
-            if (f[16] <= 0.511193) {
-              return 0.086758;
-            } else {
-              return 0.012016;
-            }
+          if (f[34] <= 0.119124) {
+            return 0.041667;
           } else {
-            if (f[17] <= 0.610286) {
-              return 0.057496;
+            if (f[34] <= 0.251527) {
+              return 0.041115;
             } else {
-              return -0.043572;
+              return 0.040986;
             }
           }
         }
@@ -6529,147 +7025,211 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 36
     (function(f) {
-      if (f[6] <= 0.000687) {
-        if (f[6] <= 0.000526) {
-          if (f[20] <= 0.501048) {
-            if (f[6] <= 0.000442) {
-              return 0.002335;
-            } else {
-              return 0.062327;
-            }
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[20] <= 0.002582) {
+            return -0.014746;
           } else {
-            if (f[0] <= 50.000822) {
-              return 0.013240;
+            if (f[36] <= 0.330214) {
+              return -0.019584;
             } else {
-              return -0.069565;
+              return 0.038631;
             }
           }
         } else {
-          if (f[0] <= 56.516886) {
-            return -0.120858;
-          } else {
-            if (f[17] <= 0.502942) {
-              return -0.051014;
+          if (f[34] <= 0.276306) {
+            if (f[26] <= 0.016658) {
+              return -0.041838;
             } else {
-              return 0.059638;
+              return 0.045270;
+            }
+          } else {
+            if (f[35] <= 1.038700) {
+              return 0.041884;
+            } else {
+              return -0.015034;
             }
           }
         }
       } else {
-        return 0.072713;
+        if (f[26] <= 0.016656) {
+          if (f[20] <= 0.002582) {
+            if (f[31] <= 3.256525) {
+              return -0.004911;
+            } else {
+              return -0.085197;
+            }
+          } else {
+            if (f[40] <= 0.680952) {
+              return 0.002828;
+            } else {
+              return 0.044341;
+            }
+          }
+        } else {
+          if (f[1] <= 3.882637) {
+            if (f[35] <= 0.936587) {
+              return -0.053404;
+            } else {
+              return -0.009454;
+            }
+          } else {
+            if (f[40] <= 0.510807) {
+              return 0.042530;
+            } else {
+              return 0.004393;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 37
     (function(f) {
-      if (f[1] <= 8.266207) {
-        if (f[5] <= 0.001857) {
-          if (f[15] <= 0.000001) {
-            if (f[20] <= 0.501048) {
-              return 0.000399;
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.036255;
+        } else {
+          if (f[32] <= 0.000145) {
+            if (f[9] <= 0.000059) {
+              return 0.007566;
             } else {
-              return -0.056791;
+              return 0.039005;
             }
           } else {
-            if (f[4] <= 0.000000) {
-              return 0.116792;
+            if (f[3] <= 0.002476) {
+              return -0.017232;
             } else {
-              return 0.004535;
+              return 0.044318;
+            }
+          }
+        }
+      } else {
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.019103;
+            } else {
+              return -0.013710;
+            }
+          } else {
+            if (f[38] <= 0.972856) {
+              return -0.055767;
+            } else {
+              return -0.011560;
             }
           }
         } else {
-          return -0.072607;
+          if (f[31] <= 0.618593) {
+            if (f[3] <= 0.001886) {
+              return 0.041574;
+            } else {
+              return 0.041001;
+            }
+          } else {
+            if (f[35] <= 1.779494) {
+              return 0.040925;
+            } else {
+              return 0.041095;
+            }
+          }
         }
-      } else {
-        return 0.068095;
       }
     })(f)
     // Meta Tree 38
     (function(f) {
-      if (f[17] <= 0.554421) {
-        if (f[8] <= -0.000402) {
-          if (f[8] <= -0.000554) {
-            if (f[1] <= -4.679488) {
-              return -0.070640;
-            } else {
-              return 0.049821;
-            }
-          } else {
-            if (f[14] <= -0.000180) {
-              return 0.015650;
-            } else {
-              return -0.143266;
-            }
-          }
+      if (f[24] <= 0.075000) {
+        if (f[1] <= -4.792797) {
+          return -0.117871;
         } else {
-          if (f[1] <= 0.000000) {
-            return 0.071178;
-          } else {
-            if (f[9] <= 0.486487) {
-              return -0.050090;
+          if (f[31] <= 0.616380) {
+            if (f[26] <= 0.016659) {
+              return -0.067768;
             } else {
-              return 0.024184;
+              return -0.012091;
+            }
+          } else {
+            if (f[35] <= 0.376872) {
+              return -0.035099;
+            } else {
+              return 0.014944;
             }
           }
         }
       } else {
-        if (f[16] <= 0.340522) {
-          if (f[2] <= 0.002073) {
-            if (f[0] <= 59.682372) {
-              return 0.058337;
+        if (f[29] <= 0.120538) {
+          if (f[24] <= 0.658333) {
+            if (f[13] <= -0.000192) {
+              return -0.011676;
             } else {
-              return -0.035624;
+              return 0.021066;
             }
           } else {
-            if (f[4] <= -0.000293) {
-              return -0.012900;
+            if (f[9] <= 0.000059) {
+              return -0.061634;
             } else {
-              return -0.135577;
+              return 0.014394;
             }
           }
         } else {
-          if (f[20] <= 0.295977) {
-            if (f[16] <= 0.516435) {
-              return 0.084978;
-            } else {
-              return 0.003699;
-            }
+          if (f[38] <= 1.000000) {
+            return 0.006082;
           } else {
-            if (f[19] <= 0.002584) {
-              return -0.040427;
-            } else {
-              return 0.061532;
-            }
+            return -0.070034;
           }
         }
       }
     })(f)
     // Meta Tree 39
     (function(f) {
-      if (f[14] <= -0.000191) {
-        if (f[2] <= 0.001435) {
-          return 0.043323;
-        } else {
-          if (f[4] <= -0.000313) {
-            return -0.099132;
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[20] <= 0.002582) {
+            return -0.014664;
           } else {
-            return -0.038217;
+            if (f[36] <= 0.330214) {
+              return -0.020190;
+            } else {
+              return 0.038407;
+            }
+          }
+        } else {
+          if (f[30] <= 0.006488) {
+            if (f[36] <= 0.569784) {
+              return -0.090942;
+            } else {
+              return 0.041787;
+            }
+          } else {
+            if (f[32] <= 0.000145) {
+              return 0.035013;
+            } else {
+              return -0.001955;
+            }
           }
         }
       } else {
-        if (f[8] <= -0.000656) {
-          if (f[20] <= 0.219584) {
-            return 0.060347;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[14] <= -0.000247) {
+              return -0.006731;
+            } else {
+              return 0.036577;
+            }
           } else {
-            return 0.100050;
+            if (f[40] <= 0.587517) {
+              return -0.055322;
+            } else {
+              return -0.011618;
+            }
           }
         } else {
-          if (f[5] <= -0.000614) {
-            return 0.093600;
+          if (f[34] <= 0.119124) {
+            return 0.041541;
           } else {
-            if (f[1] <= -1.600448) {
-              return -0.028139;
+            if (f[34] <= 0.251527) {
+              return 0.041036;
             } else {
-              return 0.010294;
+              return 0.040895;
             }
           }
         }
@@ -6677,31 +7237,47 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 40
     (function(f) {
-      if (f[3] <= 0.000059) {
-        if (f[16] <= 0.373568) {
-          return -0.027171;
-        } else {
-          if (f[16] <= 0.469499) {
-            return 0.095642;
+      if (f[18] <= 0.000000) {
+        if (f[34] <= 0.083718) {
+          if (f[3] <= 0.001487) {
+            if (f[20] <= 0.002584) {
+              return -0.072144;
+            } else {
+              return 0.008064;
+            }
           } else {
-            return 0.030825;
+            return -0.090662;
+          }
+        } else {
+          if (f[25] <= 0.500000) {
+            if (f[9] <= 0.000059) {
+              return -0.040404;
+            } else {
+              return 0.016341;
+            }
+          } else {
+            if (f[29] <= 0.126210) {
+              return 0.033940;
+            } else {
+              return -0.021863;
+            }
           }
         }
       } else {
-        if (f[3] <= 0.000059) {
-          return -0.065461;
+        if (f[19] <= -1.923827) {
+          return -0.078820;
         } else {
-          if (f[2] <= 0.001435) {
-            if (f[14] <= -0.000171) {
-              return 0.041708;
+          if (f[8] <= 0.001032) {
+            if (f[9] <= 0.000138) {
+              return -0.001043;
             } else {
-              return -0.030846;
+              return -0.036205;
             }
           } else {
-            if (f[8] <= 0.000239) {
-              return -0.035766;
+            if (f[3] <= 0.001784) {
+              return 0.043403;
             } else {
-              return 0.017316;
+              return 0.041860;
             }
           }
         }
@@ -6709,59 +7285,103 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 41
     (function(f) {
-      if (f[20] <= 0.803360) {
-        if (f[20] <= 0.501048) {
-          if (f[20] <= 0.454945) {
-            if (f[16] <= 0.283556) {
-              return 0.023317;
-            } else {
-              return -0.010826;
-            }
-          } else {
-            return 0.072762;
-          }
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.035311;
         } else {
-          if (f[6] <= 0.000346) {
-            if (f[15] <= -0.000000) {
-              return -0.049408;
-            } else {
-              return -0.113710;
-            }
+          if (f[36] <= 0.338542) {
+            return -0.027145;
           } else {
-            return 0.012654;
+            if (f[36] <= 0.518476) {
+              return 0.041603;
+            } else {
+              return 0.019143;
+            }
           }
         }
       } else {
-        return 0.065625;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.018589;
+            } else {
+              return -0.012670;
+            }
+          } else {
+            if (f[19] <= -0.028454) {
+              return -0.013284;
+            } else {
+              return -0.057536;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.041497;
+          } else {
+            if (f[31] <= 0.613625) {
+              return 0.040980;
+            } else {
+              return 0.040836;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 42
     (function(f) {
-      if (f[14] <= -0.000192) {
-        if (f[2] <= 0.001435) {
-          return 0.051705;
-        } else {
-          return -0.081730;
-        }
-      } else {
-        if (f[8] <= -0.000655) {
-          if (f[14] <= -0.000183) {
-            return 0.013736;
-          } else {
-            return 0.099003;
-          }
-        } else {
-          if (f[19] <= 0.002585) {
-            if (f[15] <= -0.000004) {
-              return -0.115953;
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[9] <= 0.000059) {
+            if (f[28] <= 0.991217) {
+              return 0.041250;
             } else {
-              return -0.005691;
+              return -0.024934;
             }
           } else {
-            if (f[2] <= 0.001435) {
-              return 0.062170;
+            if (f[38] <= 0.690359) {
+              return 0.041224;
             } else {
-              return -0.001613;
+              return 0.040806;
+            }
+          }
+        } else {
+          if (f[34] <= 0.276306) {
+            if (f[26] <= 0.016658) {
+              return -0.040315;
+            } else {
+              return 0.045121;
+            }
+          } else {
+            if (f[35] <= 1.038700) {
+              return 0.041770;
+            } else {
+              return -0.017024;
+            }
+          }
+        }
+      } else {
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[14] <= -0.000247) {
+              return -0.006329;
+            } else {
+              return 0.036302;
+            }
+          } else {
+            if (f[40] <= 0.587517) {
+              return -0.052803;
+            } else {
+              return -0.009955;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.041437;
+          } else {
+            if (f[31] <= 0.613625) {
+              return 0.040940;
+            } else {
+              return 0.040802;
             }
           }
         }
@@ -6769,91 +7389,95 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 43
     (function(f) {
-      if (f[6] <= 0.000687) {
-        if (f[6] <= 0.000516) {
-          if (f[6] <= 0.000445) {
-            if (f[2] <= 0.002073) {
-              return 0.003907;
-            } else {
-              return -0.059706;
-            }
-          } else {
-            if (f[6] <= 0.000468) {
-              return 0.084428;
-            } else {
-              return 0.015839;
-            }
-          }
+      if (f[40] <= 0.138959) {
+        if (f[3] <= 0.000818) {
+          return -0.034384;
         } else {
-          if (f[1] <= 2.676041) {
-            return -0.132334;
-          } else {
-            if (f[18] <= 0.018333) {
-              return 0.024295;
+          if (f[32] <= 0.000145) {
+            if (f[9] <= 0.000060) {
+              return 0.011192;
             } else {
-              return -0.043226;
+              return 0.041244;
+            }
+          } else {
+            if (f[38] <= 1.000000) {
+              return -0.026693;
+            } else {
+              return 0.031826;
             }
           }
         }
       } else {
-        return 0.067464;
+        if (f[26] <= 0.016656) {
+          if (f[40] <= 0.680952) {
+            if (f[40] <= 0.452360) {
+              return 0.008182;
+            } else {
+              return -0.029906;
+            }
+          } else {
+            if (f[40] <= 0.752476) {
+              return 0.046425;
+            } else {
+              return 0.040811;
+            }
+          }
+        } else {
+          if (f[1] <= 4.288024) {
+            if (f[35] <= 1.779494) {
+              return -0.045052;
+            } else {
+              return -0.002644;
+            }
+          } else {
+            if (f[30] <= 0.024177) {
+              return 0.011954;
+            } else {
+              return 0.042283;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 44
     (function(f) {
-      if (f[17] <= 0.565302) {
-        if (f[8] <= -0.000402) {
-          if (f[8] <= -0.000554) {
-            if (f[8] <= -0.000636) {
-              return -0.021501;
+      if (f[18] <= 0.000000) {
+        if (f[34] <= 0.083718) {
+          if (f[3] <= 0.001493) {
+            if (f[20] <= 0.002584) {
+              return -0.067317;
             } else {
-              return 0.079335;
+              return 0.008684;
             }
           } else {
-            if (f[14] <= -0.000180) {
-              return 0.019921;
-            } else {
-              return -0.110696;
-            }
+            return -0.090946;
           }
         } else {
-          if (f[1] <= 0.000000) {
-            if (f[19] <= 0.002585) {
-              return 0.014817;
+          if (f[25] <= 0.500000) {
+            if (f[9] <= 0.000059) {
+              return -0.039531;
             } else {
-              return 0.085308;
+              return 0.015783;
             }
           } else {
-            if (f[9] <= 0.524324) {
-              return -0.020819;
+            if (f[13] <= -0.000171) {
+              return 0.040319;
             } else {
-              return 0.076841;
+              return 0.008971;
             }
           }
         }
       } else {
-        if (f[16] <= 0.342525) {
-          if (f[16] <= 0.293093) {
-            if (f[1] <= 0.658058) {
-              return -0.046803;
-            } else {
-              return 0.044884;
-            }
-          } else {
-            return -0.084056;
-          }
+        if (f[19] <= -1.923827) {
+          return -0.072506;
         } else {
-          if (f[20] <= 0.261221) {
-            if (f[16] <= 0.507200) {
-              return 0.090120;
-            } else {
-              return 0.033315;
-            }
+          if (f[1] <= -5.489305) {
+            return -0.077533;
           } else {
-            if (f[17] <= 0.616186) {
-              return 0.062183;
+            if (f[24] <= 0.125000) {
+              return -0.014263;
             } else {
-              return -0.040878;
+              return 0.019224;
             }
           }
         }
@@ -6861,39 +7485,59 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 45
     (function(f) {
-      if (f[3] <= 0.000059) {
-        if (f[16] <= 0.372621) {
-          return -0.025566;
-        } else {
-          if (f[16] <= 0.471661) {
-            return 0.094138;
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[9] <= 0.000059) {
+            if (f[28] <= 0.991217) {
+              return 0.041190;
+            } else {
+              return -0.022909;
+            }
           } else {
-            return 0.024257;
+            if (f[30] <= 0.000080) {
+              return 0.041083;
+            } else {
+              return 0.040726;
+            }
+          }
+        } else {
+          if (f[3] <= 0.001085) {
+            return -0.063994;
+          } else {
+            if (f[32] <= 0.000145) {
+              return 0.035211;
+            } else {
+              return -0.006694;
+            }
           }
         }
       } else {
-        if (f[3] <= 0.000060) {
-          if (f[16] <= 0.405068) {
-            return 0.037315;
-          } else {
-            if (f[5] <= -0.000596) {
-              return -0.147294;
+        if (f[31] <= 0.615674) {
+          if (f[31] <= 0.607992) {
+            if (f[40] <= 0.510807) {
+              return 0.042638;
             } else {
-              return -0.026602;
+              return -0.021329;
+            }
+          } else {
+            if (f[9] <= 0.000139) {
+              return -0.000035;
+            } else {
+              return -0.066062;
             }
           }
         } else {
-          if (f[20] <= 0.528337) {
-            if (f[2] <= 0.001439) {
-              return 0.035571;
+          if (f[7] <= -0.000539) {
+            if (f[21] <= -0.000648) {
+              return 0.000098;
             } else {
-              return -0.005563;
+              return -0.055086;
             }
           } else {
-            if (f[15] <= 0.000001) {
-              return -0.078802;
+            if (f[6] <= -0.000205) {
+              return 0.036727;
             } else {
-              return 0.005454;
+              return 0.001115;
             }
           }
         }
@@ -6901,87 +7545,171 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 46
     (function(f) {
-      if (f[20] <= 0.803360) {
-        if (f[20] <= 0.501048) {
-          if (f[16] <= 0.168347) {
-            if (f[10] <= 0.502686) {
-              return 0.090210;
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[9] <= 0.000059) {
+            if (f[30] <= 0.001669) {
+              return -0.021934;
             } else {
-              return -0.032463;
+              return 0.041185;
             }
           } else {
-            if (f[9] <= 0.457461) {
-              return 0.049466;
+            if (f[30] <= 0.000080) {
+              return 0.041040;
             } else {
-              return -0.005499;
+              return 0.040697;
             }
           }
         } else {
-          if (f[7] <= -0.976528) {
-            return 0.029177;
-          } else {
-            if (f[6] <= 0.000346) {
-              return -0.095851;
+          if (f[30] <= 0.006488) {
+            if (f[0] <= 48.557049) {
+              return 0.009241;
             } else {
-              return -0.015435;
+              return -0.099879;
+            }
+          } else {
+            if (f[34] <= 0.341392) {
+              return 0.003379;
+            } else {
+              return 0.041652;
             }
           }
         }
       } else {
-        return 0.064439;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[14] <= -0.000247) {
+              return -0.005637;
+            } else {
+              return 0.036134;
+            }
+          } else {
+            if (f[19] <= 0.518116) {
+              return -0.014012;
+            } else {
+              return -0.059563;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.041435;
+          } else {
+            if (f[31] <= 0.613625) {
+              return 0.040911;
+            } else {
+              return 0.040739;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 47
     (function(f) {
-      if (f[1] <= 8.266207) {
-        if (f[5] <= 0.001867) {
-          if (f[15] <= 0.000001) {
-            if (f[8] <= 0.000239) {
-              return -0.010333;
+      if (f[40] <= 0.138959) {
+        if (f[18] <= 0.000000) {
+          if (f[9] <= 0.000059) {
+            if (f[31] <= 3.139990) {
+              return 0.022498;
             } else {
-              return 0.043958;
+              return -0.063178;
             }
           } else {
-            if (f[4] <= 0.000000) {
-              return 0.116841;
+            if (f[3] <= 0.000818) {
+              return 0.041270;
             } else {
-              return 0.003232;
+              return 0.040705;
             }
           }
         } else {
-          return -0.077515;
+          if (f[3] <= 0.001057) {
+            return -0.069749;
+          } else {
+            if (f[24] <= 0.108333) {
+              return 0.000933;
+            } else {
+              return 0.041298;
+            }
+          }
         }
       } else {
-        return 0.063680;
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.018225;
+            } else {
+              return -0.011254;
+            }
+          } else {
+            if (f[38] <= 0.972856) {
+              return -0.048705;
+            } else {
+              return -0.007172;
+            }
+          }
+        } else {
+          if (f[34] <= 0.119124) {
+            return 0.041377;
+          } else {
+            if (f[31] <= 0.613625) {
+              return 0.040875;
+            } else {
+              return 0.040710;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 48
     (function(f) {
-      if (f[14] <= -0.000189) {
-        if (f[2] <= 0.001427) {
-          return 0.044143;
-        } else {
-          if (f[1] <= 2.396854) {
-            return -0.078328;
+      if (f[18] <= 0.000000) {
+        if (f[34] <= 0.083718) {
+          if (f[3] <= 0.001507) {
+            if (f[20] <= 0.002584) {
+              return -0.064190;
+            } else {
+              return 0.008117;
+            }
           } else {
-            return -0.001166;
+            return -0.088545;
+          }
+        } else {
+          if (f[8] <= -0.001179) {
+            if (f[7] <= -0.000584) {
+              return 0.029122;
+            } else {
+              return -0.041676;
+            }
+          } else {
+            if (f[10] <= -0.000054) {
+              return 0.029741;
+            } else {
+              return -0.004410;
+            }
           }
         }
       } else {
-        if (f[8] <= -0.000655) {
-          if (f[20] <= 0.248423) {
-            return 0.057108;
+        if (f[13] <= -0.000049) {
+          if (f[10] <= -0.000055) {
+            if (f[9] <= 0.000062) {
+              return 0.012770;
+            } else {
+              return -0.014818;
+            }
           } else {
-            return 0.099611;
+            if (f[10] <= -0.000054) {
+              return -0.109744;
+            } else {
+              return -0.032839;
+            }
           }
         } else {
-          if (f[5] <= -0.000612) {
-            return 0.072907;
+          if (f[10] <= -0.000065) {
+            return -0.002053;
           } else {
-            if (f[5] <= -0.000587) {
-              return -0.030004;
+            if (f[8] <= 0.000409) {
+              return 0.044606;
             } else {
-              return 0.009477;
+              return 0.042243;
             }
           }
         }
@@ -6989,29 +7717,45 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
     })(f)
     // Meta Tree 49
     (function(f) {
-      if (f[8] <= 0.001007) {
-        if (f[4] <= 0.001461) {
-          if (f[15] <= 0.000006) {
-            if (f[14] <= -0.000173) {
-              return 0.006593;
+      if (f[40] <= 0.106920) {
+        if (f[34] <= 0.022409) {
+          return -0.037980;
+        } else {
+          if (f[24] <= 0.000000) {
+            return -0.002260;
+          } else {
+            if (f[36] <= 0.704833) {
+              return 0.038209;
             } else {
-              return -0.026023;
+              return -0.009102;
+            }
+          }
+        }
+      } else {
+        if (f[40] <= 0.752476) {
+          if (f[40] <= 0.496058) {
+            if (f[18] <= 0.000000) {
+              return 0.017947;
+            } else {
+              return -0.009691;
             }
           } else {
-            if (f[15] <= 0.000016) {
-              return 0.092835;
+            if (f[40] <= 0.587517) {
+              return -0.048927;
             } else {
-              return 0.010208;
+              return -0.007014;
             }
           }
         } else {
-          return -0.058860;
-        }
-      } else {
-        if (f[15] <= 0.000037) {
-          return 0.101840;
-        } else {
-          return -0.013789;
+          if (f[34] <= 0.119124) {
+            return 0.041346;
+          } else {
+            if (f[31] <= 0.613625) {
+              return 0.040832;
+            } else {
+              return 0.040674;
+            }
+          }
         }
       }
     })(f)
@@ -7029,7 +7773,7 @@ function predict_BOOMk(features: Record<string,number>): {action:string, confide
 
 // ── ML Model: CRASH1000 ──
 // Trained on 4976 candles, tested on unseen future data
-// Main model trees: 120, Meta trees: 50
+// Main model trees: 120, Meta trees: 300
 function predict_CRASHk(features: Record<string,number>): {action:string, confidence:number, reason:string} {
   const f = [features["rsi"] ?? 0, features["macd_hist"] ?? 0, features["bb_pos"] ?? 0, features["bb_width"] ?? 0, features["ema_bull"] ?? 0, features["ema_bear"] ?? 0, features["price_ema8_dist"] ?? 0, features["price_ema21_dist"] ?? 0, features["price_ema50_dist"] ?? 0, features["atr_pct"] ?? 0, features["candle_body"] ?? 0, features["candle_dir"] ?? 0, features["high_low_range"] ?? 0, features["momentum_1"] ?? 0, features["momentum_3"] ?? 0, features["momentum_5"] ?? 0, features["momentum_10"] ?? 0, features["rsi_oversold"] ?? 0, features["rsi_overbought"] ?? 0, features["rsi_neutral"] ?? 0, features["trend5m"] ?? 0];
   
@@ -11521,47 +12265,55 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
   const metaScores = [
     // Meta Tree 0
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[5] <= 0.000587) {
-          if (f[16] <= 0.343921) {
-            if (f[3] <= 0.000094) {
-              return 0.743535;
-            } else {
-              return 0.890186;
-            }
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.242278) {
+          if (f[40] <= 0.061499) {
+            return 2.826814;
           } else {
-            if (f[17] <= 0.515300) {
-              return 1.016516;
+            if (f[35] <= 0.428854) {
+              return 2.583468;
             } else {
-              return 0.930146;
+              return 2.818612;
             }
           }
         } else {
-          if (f[18] <= 0.145000) {
-            if (f[18] <= 0.055000) {
-              return 0.960805;
+          if (f[32] <= 0.000112) {
+            if (f[9] <= 0.000088) {
+              return 2.773135;
             } else {
-              return 1.007004;
+              return 2.649621;
             }
           } else {
-            return 0.812244;
+            if (f[40] <= 0.522564) {
+              return 2.361100;
+            } else {
+              return 2.680807;
+            }
           }
         }
       } else {
-        if (f[15] <= -0.000002) {
-          if (f[4] <= 0.000280) {
-            return 0.821529;
+        if (f[18] <= 0.000000) {
+          if (f[36] <= 0.783120) {
+            if (f[32] <= 0.000216) {
+              return 2.797910;
+            } else {
+              return 2.674723;
+            }
           } else {
-            return 1.016516;
+            if (f[1] <= 1.372146) {
+              return 2.826814;
+            } else {
+              return 2.612097;
+            }
           }
         } else {
-          if (f[17] <= 0.544899) {
-            return 0.775104;
+          if (f[1] <= -1.090115) {
+            return 2.753811;
           } else {
-            if (f[14] <= 0.000186) {
-              return 0.634667;
+            if (f[9] <= 0.000057) {
+              return 2.763333;
             } else {
-              return 0.686538;
+              return 2.824998;
             }
           }
         }
@@ -11569,43 +12321,43 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 1
     (function(f) {
-      if (f[20] <= 0.461060) {
-        if (f[5] <= 0.000587) {
-          if (f[16] <= 0.343921) {
-            if (f[3] <= 0.000094) {
-              return -0.138378;
-            } else {
-              return -0.003753;
-            }
-          } else {
-            if (f[17] <= 0.515300) {
-              return 0.108948;
-            } else {
-              return 0.027828;
-            }
-          }
+      if (f[24] <= 0.000000) {
+        if (f[33] <= 0.842105) {
+          return -0.333772;
         } else {
-          if (f[18] <= 0.145000) {
-            if (f[18] <= 0.055000) {
-              return 0.056101;
-            } else {
-              return 0.102126;
-            }
+          if (f[26] <= 0.018572) {
+            return -0.238196;
           } else {
-            return -0.091151;
+            if (f[3] <= 0.001422) {
+              return -0.053056;
+            } else {
+              return 0.042440;
+            }
           }
         }
       } else {
-        if (f[15] <= -0.000010) {
-          return 0.083765;
-        } else {
-          if (f[17] <= 0.517941) {
-            return -0.047916;
-          } else {
-            if (f[20] <= 0.496759) {
-              return -0.067602;
+        if (f[21] <= 0.000331) {
+          if (f[8] <= 0.000874) {
+            if (f[9] <= 0.000163) {
+              return -0.016919;
             } else {
-              return -0.193922;
+              return 0.042368;
+            }
+          } else {
+            return -0.212963;
+          }
+        } else {
+          if (f[36] <= 0.783120) {
+            if (f[25] <= 0.500000) {
+              return 0.009603;
+            } else {
+              return 0.031343;
+            }
+          } else {
+            if (f[24] <= 0.375000) {
+              return 0.042396;
+            } else {
+              return -0.066377;
             }
           }
         }
@@ -11613,87 +12365,103 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 2
     (function(f) {
-      if (f[20] <= 0.461060) {
-        if (f[5] <= 0.000587) {
-          if (f[0] <= 18.662042) {
-            if (f[17] <= 0.605814) {
-              return 0.089690;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.242278) {
+          if (f[40] <= 0.061499) {
+            if (f[28] <= 0.795725) {
+              return 0.042486;
             } else {
-              return 0.110694;
+              return 0.042295;
             }
           } else {
-            if (f[17] <= 0.448095) {
-              return 0.109659;
+            if (f[35] <= 0.428854) {
+              return -0.155300;
             } else {
-              return -0.009076;
+              return 0.034051;
             }
           }
         } else {
-          if (f[19] <= 0.002582) {
-            return -0.063575;
-          } else {
-            if (f[18] <= 0.055000) {
-              return 0.053013;
+          if (f[32] <= 0.000112) {
+            if (f[9] <= 0.000088) {
+              return -0.010889;
             } else {
-              return 0.106663;
+              return -0.108079;
+            }
+          } else {
+            if (f[38] <= 0.885677) {
+              return -0.360364;
+            } else {
+              return -0.158917;
             }
           }
         }
       } else {
-        if (f[15] <= -0.000010) {
-          return 0.080196;
-        } else {
-          if (f[17] <= 0.517941) {
-            return -0.043245;
+        if (f[24] <= 0.000000) {
+          if (f[26] <= 0.018572) {
+            return -0.191274;
           } else {
-            if (f[4] <= 0.000305) {
-              return -0.187493;
+            if (f[6] <= 0.000208) {
+              return 0.031175;
             } else {
-              return -0.104522;
+              return -0.064975;
             }
+          }
+        } else {
+          if (f[3] <= 0.002863) {
+            if (f[29] <= 0.000005) {
+              return -0.047606;
+            } else {
+              return 0.026640;
+            }
+          } else {
+            return -0.092387;
           }
         }
       }
     })(f)
     // Meta Tree 3
     (function(f) {
-      if (f[20] <= 0.461060) {
-        if (f[5] <= 0.000587) {
-          if (f[16] <= 0.343921) {
-            if (f[3] <= 0.000094) {
-              return -0.120416;
-            } else {
-              return -0.004051;
-            }
-          } else {
-            if (f[17] <= 0.515300) {
-              return 0.104781;
-            } else {
-              return 0.025189;
-            }
-          }
+      if (f[24] <= 0.000000) {
+        if (f[33] <= 0.842105) {
+          return -0.217848;
         } else {
-          if (f[18] <= 0.148333) {
-            if (f[18] <= 0.055000) {
-              return 0.050081;
-            } else {
-              return 0.096580;
-            }
+          if (f[26] <= 0.018572) {
+            return -0.133733;
           } else {
-            return -0.086494;
+            if (f[20] <= 0.002582) {
+              return -0.097458;
+            } else {
+              return 0.027034;
+            }
           }
         }
       } else {
-        if (f[15] <= -0.000010) {
-          return 0.076852;
-        } else {
-          if (f[15] <= -0.000000) {
-            return -0.063302;
-          } else {
-            if (f[20] <= 0.521118) {
-              return -0.080230;
+        if (f[39] <= 0.306924) {
+          if (f[31] <= 0.634565) {
+            if (f[31] <= 0.633421) {
+              return -0.000529;
             } else {
-              return -0.161504;
+              return -0.170805;
+            }
+          } else {
+            if (f[36] <= 0.719377) {
+              return 0.026833;
+            } else {
+              return -0.015444;
+            }
+          }
+        } else {
+          if (f[8] <= 0.000828) {
+            if (f[39] <= 0.370286) {
+              return -0.101748;
+            } else {
+              return 0.033984;
+            }
+          } else {
+            if (f[39] <= 0.382728) {
+              return -0.039277;
+            } else {
+              return -0.246250;
             }
           }
         }
@@ -11701,91 +12469,115 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 4
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[5] <= 0.000587) {
-          if (f[0] <= 18.662042) {
-            if (f[14] <= -0.001015) {
-              return 0.084704;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.232221) {
+          if (f[19] <= -0.218027) {
+            if (f[1] <= -0.562103) {
+              return 0.042367;
             } else {
-              return 0.107051;
+              return 0.004200;
             }
           } else {
-            if (f[17] <= 0.448095) {
-              return 0.106178;
+            if (f[32] <= 0.000142) {
+              return 0.042301;
             } else {
-              return -0.014124;
+              return -0.169192;
             }
           }
         } else {
-          if (f[18] <= 0.151667) {
-            if (f[18] <= 0.055000) {
-              return 0.045040;
+          if (f[31] <= 0.624994) {
+            if (f[31] <= 0.619315) {
+              return -0.106173;
             } else {
-              return 0.093136;
+              return -0.274300;
             }
           } else {
-            return -0.100296;
+            if (f[38] <= 0.656111) {
+              return -0.126902;
+            } else {
+              return -0.022822;
+            }
           }
         }
       } else {
-        if (f[15] <= -0.000002) {
-          if (f[4] <= 0.000280) {
-            return -0.062236;
+        if (f[18] <= 0.000000) {
+          if (f[32] <= 0.000216) {
+            if (f[32] <= 0.000099) {
+              return -0.002536;
+            } else {
+              return 0.036351;
+            }
           } else {
-            return 0.107502;
+            return -0.077965;
           }
         } else {
-          if (f[0] <= 33.980923) {
-            return -0.070259;
-          } else {
-            if (f[3] <= 0.000061) {
-              return -0.106496;
+          if (f[3] <= 0.002170) {
+            if (f[9] <= 0.000057) {
+              return -0.024480;
             } else {
-              return -0.174605;
+              return 0.040279;
             }
+          } else {
+            return -0.029774;
           }
         }
       }
     })(f)
     // Meta Tree 5
     (function(f) {
-      if (f[20] <= 0.459593) {
-        if (f[5] <= 0.000596) {
-          if (f[16] <= 0.343921) {
-            if (f[6] <= 0.000497) {
-              return -0.000189;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.224817) {
+          if (f[38] <= 1.000000) {
+            if (f[4] <= 0.000000) {
+              return 0.042309;
             } else {
-              return -0.108156;
+              return 0.006403;
             }
           } else {
-            if (f[17] <= 0.515300) {
-              return 0.101383;
+            if (f[8] <= -0.000605) {
+              return 0.042333;
             } else {
-              return 0.022373;
+              return -0.168975;
             }
           }
         } else {
-          if (f[19] <= 0.002582) {
-            return -0.046107;
-          } else {
-            if (f[0] <= 100.000000) {
-              return 0.092619;
+          if (f[32] <= 0.000112) {
+            if (f[36] <= 0.685345) {
+              return -0.016123;
             } else {
-              return 0.018117;
+              return -0.102072;
+            }
+          } else {
+            if (f[8] <= -0.000128) {
+              return -0.102111;
+            } else {
+              return -0.216863;
             }
           }
         }
       } else {
-        if (f[15] <= -0.000010) {
-          return 0.073693;
-        } else {
-          if (f[17] <= 0.517941) {
-            return -0.021922;
-          } else {
-            if (f[3] <= 0.000061) {
-              return -0.035385;
+        if (f[24] <= 0.000000) {
+          if (f[35] <= 1.017447) {
+            if (f[38] <= 1.000000) {
+              return -0.083276;
             } else {
-              return -0.129472;
+              return 0.032701;
+            }
+          } else {
+            return -0.164322;
+          }
+        } else {
+          if (f[1] <= -1.450988) {
+            if (f[36] <= 0.598958) {
+              return -0.136742;
+            } else {
+              return 0.042753;
+            }
+          } else {
+            if (f[29] <= 0.000005) {
+              return -0.044303;
+            } else {
+              return 0.026288;
             }
           }
         }
@@ -11793,123 +12585,159 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 6
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[5] <= 0.000593) {
-          if (f[16] <= 0.343921) {
-            if (f[19] <= 0.002588) {
-              return -0.092197;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.242278) {
+          if (f[40] <= 0.061499) {
+            if (f[24] <= 0.000000) {
+              return 0.042512;
             } else {
-              return -0.004137;
+              return 0.042085;
             }
           } else {
-            if (f[17] <= 0.515300) {
-              return 0.099312;
+            if (f[35] <= 0.428854) {
+              return -0.111418;
             } else {
-              return 0.019752;
+              return 0.033357;
             }
           }
         } else {
-          if (f[18] <= 0.148333) {
-            if (f[18] <= 0.055000) {
-              return 0.042384;
+          if (f[34] <= 0.435908) {
+            if (f[40] <= 0.515395) {
+              return -0.151526;
             } else {
-              return 0.087405;
+              return -0.015972;
             }
           } else {
-            return -0.040868;
+            if (f[32] <= 0.000059) {
+              return 0.042578;
+            } else {
+              return -0.031906;
+            }
           }
         }
       } else {
-        if (f[15] <= -0.000002) {
-          if (f[4] <= 0.000280) {
-            return -0.053730;
+        if (f[24] <= 0.000000) {
+          if (f[35] <= 1.019457) {
+            if (f[38] <= 1.000000) {
+              return -0.070524;
+            } else {
+              return 0.032605;
+            }
           } else {
-            return 0.104761;
+            return -0.152409;
           }
         } else {
-          if (f[0] <= 33.980923) {
-            return -0.054998;
-          } else {
-            if (f[3] <= 0.000061) {
-              return -0.091898;
+          if (f[3] <= 0.003054) {
+            if (f[36] <= 0.783120) {
+              return 0.026146;
             } else {
-              return -0.149893;
+              return -0.019906;
             }
+          } else {
+            return -0.088249;
           }
         }
       }
     })(f)
     // Meta Tree 7
     (function(f) {
-      if (f[20] <= 0.459593) {
-        if (f[6] <= 0.000595) {
-          if (f[6] <= 0.000433) {
-            if (f[6] <= 0.000007) {
-              return -0.065468;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.224817) {
+          if (f[38] <= 1.000000) {
+            if (f[28] <= 0.980888) {
+              return 0.042177;
             } else {
-              return 0.036721;
+              return 0.006312;
             }
           } else {
-            if (f[16] <= 0.373522) {
-              return -0.101412;
+            if (f[3] <= 0.003054) {
+              return -0.142491;
             } else {
-              return 0.060538;
+              return 0.042200;
             }
           }
         } else {
-          return 0.108558;
-        }
-      } else {
-        if (f[15] <= -0.000010) {
-          return 0.069518;
-        } else {
-          if (f[9] <= 0.487934) {
-            if (f[5] <= 0.000595) {
-              return -0.143585;
+          if (f[32] <= 0.000112) {
+            if (f[40] <= 0.385026) {
+              return 0.017954;
             } else {
-              return -0.076758;
+              return -0.048443;
             }
           } else {
-            if (f[1] <= -1.108953) {
-              return 0.028415;
+            if (f[31] <= 0.624994) {
+              return -0.151264;
             } else {
-              return -0.096274;
+              return -0.059464;
             }
+          }
+        }
+      } else {
+        if (f[18] <= 0.000000) {
+          if (f[36] <= 0.783120) {
+            if (f[28] <= 0.995395) {
+              return 0.011922;
+            } else {
+              return -0.062099;
+            }
+          } else {
+            if (f[26] <= 0.018571) {
+              return -0.109057;
+            } else {
+              return 0.042672;
+            }
+          }
+        } else {
+          if (f[3] <= 0.002239) {
+            if (f[20] <= 0.002582) {
+              return -0.019519;
+            } else {
+              return 0.039926;
+            }
+          } else {
+            return -0.033342;
           }
         }
       }
     })(f)
     // Meta Tree 8
     (function(f) {
-      if (f[20] <= 0.459593) {
-        if (f[6] <= 0.000595) {
-          if (f[6] <= 0.000433) {
-            if (f[20] <= 0.254482) {
-              return 0.049811;
+      if (f[24] <= 0.000000) {
+        if (f[33] <= 0.842105) {
+          return -0.121614;
+        } else {
+          if (f[15] <= 0.000608) {
+            if (f[26] <= 0.018572) {
+              return -0.080666;
             } else {
-              return 0.007830;
+              return 0.028586;
             }
           } else {
-            if (f[16] <= 0.373522) {
-              return -0.089628;
-            } else {
-              return 0.057599;
-            }
+            return -0.122125;
           }
-        } else {
-          return 0.105718;
         }
       } else {
-        if (f[15] <= -0.000010) {
-          return 0.066711;
-        } else {
-          if (f[17] <= 0.517941) {
-            return -0.010051;
-          } else {
-            if (f[4] <= 0.000305) {
-              return -0.121156;
+        if (f[21] <= 0.000331) {
+          if (f[8] <= 0.000874) {
+            if (f[18] <= 0.000000) {
+              return -0.019262;
             } else {
-              return -0.053073;
+              return 0.019915;
+            }
+          } else {
+            return -0.115621;
+          }
+        } else {
+          if (f[18] <= 0.000000) {
+            if (f[8] <= 0.000399) {
+              return 0.036282;
+            } else {
+              return -0.006408;
+            }
+          } else {
+            if (f[30] <= 0.005050) {
+              return 0.011914;
+            } else {
+              return 0.037084;
             }
           }
         }
@@ -11917,235 +12745,279 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 9
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[9] <= 0.473244) {
-          if (f[14] <= 0.000174) {
-            return 0.036459;
-          } else {
-            if (f[19] <= 0.002583) {
-              return 0.111932;
+      if (f[40] <= 0.626287) {
+        if (f[40] <= 0.232221) {
+          if (f[2] <= 0.468151) {
+            if (f[1] <= -0.531952) {
+              return 0.042138;
             } else {
-              return 0.085700;
+              return 0.000414;
+            }
+          } else {
+            if (f[32] <= 0.000146) {
+              return 0.042069;
+            } else {
+              return -0.120932;
             }
           }
         } else {
-          if (f[20] <= 0.339504) {
-            if (f[4] <= 0.000304) {
-              return 0.012533;
+          if (f[32] <= 0.000106) {
+            if (f[36] <= 0.685345) {
+              return -0.009525;
             } else {
-              return 0.071085;
+              return -0.083750;
             }
           } else {
-            if (f[5] <= -0.000494) {
-              return -0.084292;
+            if (f[31] <= 0.624994) {
+              return -0.130513;
             } else {
-              return -0.002049;
+              return -0.058629;
             }
           }
         }
       } else {
-        if (f[15] <= -0.000002) {
-          if (f[4] <= 0.000280) {
-            return -0.044487;
-          } else {
-            return 0.102583;
-          }
-        } else {
-          if (f[0] <= 33.980923) {
-            return -0.037328;
-          } else {
-            if (f[7] <= -0.976273) {
-              return -0.073606;
+        if (f[3] <= 0.003054) {
+          if (f[24] <= 0.000000) {
+            if (f[26] <= 0.018572) {
+              return -0.111648;
             } else {
-              return -0.128744;
+              return 0.012622;
+            }
+          } else {
+            if (f[29] <= 0.000005) {
+              return -0.038768;
+            } else {
+              return 0.023579;
             }
           }
+        } else {
+          return -0.077843;
         }
       }
     })(f)
     // Meta Tree 10
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[9] <= 0.473244) {
-          if (f[14] <= 0.000174) {
-            return 0.034141;
-          } else {
-            if (f[6] <= 0.000165) {
-              return 0.106065;
+      if (f[40] <= 0.590378) {
+        if (f[40] <= 0.242278) {
+          if (f[40] <= 0.061499) {
+            if (f[24] <= 0.000000) {
+              return 0.042403;
             } else {
-              return 0.078131;
+              return 0.041894;
+            }
+          } else {
+            if (f[35] <= 0.428854) {
+              return -0.084099;
+            } else {
+              return 0.032568;
             }
           }
         } else {
-          if (f[17] <= 0.498773) {
-            if (f[15] <= 0.000007) {
-              return 0.091774;
+          if (f[9] <= 0.000064) {
+            if (f[40] <= 0.487871) {
+              return 0.043239;
             } else {
-              return -0.000377;
+              return -0.073841;
             }
           } else {
-            if (f[17] <= 0.584517) {
-              return -0.028465;
+            if (f[40] <= 0.500922) {
+              return -0.117643;
             } else {
-              return 0.023409;
+              return 0.008241;
             }
           }
         }
       } else {
-        if (f[15] <= -0.000002) {
-          if (f[4] <= 0.000280) {
-            return -0.040573;
+        if (f[18] <= 0.000000) {
+          if (f[3] <= 0.000832) {
+            if (f[38] <= 1.000000) {
+              return -0.180645;
+            } else {
+              return 0.043077;
+            }
           } else {
-            return 0.100530;
+            if (f[0] <= 100.000000) {
+              return 0.020658;
+            } else {
+              return -0.008902;
+            }
           }
         } else {
-          if (f[17] <= 0.544899) {
-            return -0.034852;
-          } else {
-            if (f[5] <= -0.000469) {
-              return -0.079056;
+          if (f[3] <= 0.002339) {
+            if (f[8] <= 0.001254) {
+              return 0.040830;
             } else {
-              return -0.117445;
+              return 0.000770;
             }
+          } else {
+            return -0.069839;
           }
         }
       }
     })(f)
     // Meta Tree 11
     (function(f) {
-      if (f[20] <= 0.375192) {
-        if (f[4] <= 0.000301) {
-          if (f[3] <= 0.000221) {
-            if (f[0] <= 27.568112) {
-              return -0.168780;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.161125) {
+          if (f[15] <= 0.000609) {
+            if (f[1] <= -0.450523) {
+              return 0.042016;
             } else {
-              return 0.012463;
+              return -0.003233;
             }
           } else {
-            if (f[2] <= 0.004386) {
-              return 0.089928;
-            } else {
-              return 0.008057;
-            }
+            return -0.049095;
           }
         } else {
-          if (f[0] <= 100.000000) {
-            if (f[3] <= 0.000060) {
-              return 0.014398;
+          if (f[34] <= 0.435908) {
+            if (f[40] <= 0.515395) {
+              return -0.087082;
             } else {
-              return 0.093045;
+              return -0.009658;
             }
           } else {
-            if (f[15] <= 0.000000) {
-              return 0.047722;
+            if (f[29] <= 0.000009) {
+              return -0.063834;
             } else {
-              return -0.041409;
+              return 0.007121;
             }
           }
         }
       } else {
-        if (f[15] <= -0.000000) {
-          if (f[0] <= 29.301040) {
-            return -0.094732;
-          } else {
-            if (f[15] <= -0.000007) {
-              return 0.092182;
+        if (f[24] <= 0.000000) {
+          if (f[35] <= 1.019457) {
+            if (f[38] <= 1.000000) {
+              return -0.060490;
             } else {
-              return -0.008053;
+              return 0.032814;
             }
+          } else {
+            return -0.113879;
           }
         } else {
-          if (f[9] <= 0.522477) {
-            if (f[2] <= 0.001437) {
-              return -0.044875;
+          if (f[3] <= 0.003054) {
+            if (f[14] <= -0.000636) {
+              return -0.029263;
             } else {
-              return -0.112275;
+              return 0.024255;
             }
           } else {
-            return 0.002444;
+            return -0.069629;
           }
         }
       }
     })(f)
     // Meta Tree 12
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[5] <= 0.000593) {
-          if (f[17] <= 0.448095) {
-            return 0.099596;
-          } else {
-            if (f[16] <= 0.343921) {
-              return -0.035075;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.161125) {
+          if (f[14] <= 0.000316) {
+            if (f[3] <= 0.001497) {
+              return -0.000971;
             } else {
-              return 0.020745;
+              return 0.041950;
             }
+          } else {
+            return -0.043234;
           }
         } else {
-          if (f[18] <= 0.151667) {
-            if (f[18] <= 0.055000) {
-              return 0.033354;
+          if (f[32] <= 0.000112) {
+            if (f[40] <= 0.385026) {
+              return 0.023274;
             } else {
-              return 0.082164;
+              return -0.037910;
             }
           } else {
-            return -0.076970;
+            if (f[32] <= 0.000148) {
+              return -0.106787;
+            } else {
+              return -0.047867;
+            }
           }
         }
       } else {
-        if (f[15] <= -0.000002) {
-          if (f[20] <= 0.773793) {
-            return -0.047495;
+        if (f[18] <= 0.000000) {
+          if (f[36] <= 0.783120) {
+            if (f[24] <= 0.991667) {
+              return 0.009937;
+            } else {
+              return -0.082655;
+            }
           } else {
-            return 0.087394;
+            if (f[1] <= 1.372146) {
+              return 0.042447;
+            } else {
+              return -0.101924;
+            }
           }
         } else {
-          if (f[0] <= 33.980923) {
-            return -0.022618;
-          } else {
-            if (f[7] <= -0.976273) {
-              return -0.058362;
+          if (f[3] <= 0.002339) {
+            if (f[26] <= 0.018571) {
+              return -0.023656;
             } else {
-              return -0.114982;
+              return 0.039349;
             }
+          } else {
+            return -0.035127;
           }
         }
       }
     })(f)
     // Meta Tree 13
     (function(f) {
-      if (f[20] <= 0.375192) {
-        if (f[6] <= 0.000007) {
-          return -0.077144;
-        } else {
-          if (f[4] <= 0.000304) {
-            if (f[15] <= 0.000010) {
-              return 0.024160;
+      if (f[40] <= 0.590378) {
+        if (f[40] <= 0.242278) {
+          if (f[40] <= 0.061499) {
+            if (f[6] <= 0.000129) {
+              return 0.041683;
             } else {
-              return -0.039209;
+              return 0.042217;
             }
           } else {
-            if (f[0] <= 100.000000) {
-              return 0.101078;
+            if (f[35] <= 0.428854) {
+              return -0.070395;
             } else {
-              return 0.014259;
+              return 0.032603;
+            }
+          }
+        } else {
+          if (f[9] <= 0.000060) {
+            if (f[32] <= 0.000059) {
+              return 0.042607;
+            } else {
+              return 0.044638;
+            }
+          } else {
+            if (f[6] <= 0.000210) {
+              return -0.068491;
+            } else {
+              return 0.029596;
             }
           }
         }
       } else {
-        if (f[16] <= 0.096485) {
-          return 0.069400;
-        } else {
-          if (f[7] <= -0.976366) {
-            if (f[15] <= -0.000000) {
-              return 0.064447;
+        if (f[24] <= 0.000000) {
+          if (f[38] <= 1.000000) {
+            return -0.074921;
+          } else {
+            if (f[35] <= 1.019457) {
+              return 0.034179;
             } else {
-              return -0.017560;
+              return -0.096049;
+            }
+          }
+        } else {
+          if (f[1] <= -1.450988) {
+            if (f[0] <= 45.978906) {
+              return 0.043265;
+            } else {
+              return -0.101560;
             }
           } else {
-            if (f[9] <= 0.525970) {
-              return -0.073307;
+            if (f[25] <= 0.500000) {
+              return 0.008362;
             } else {
-              return 0.025267;
+              return 0.029572;
             }
           }
         }
@@ -12153,79 +13025,103 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 14
     (function(f) {
-      if (f[20] <= 0.375192) {
-        if (f[6] <= 0.000592) {
-          if (f[6] <= 0.000435) {
-            if (f[19] <= 0.002582) {
-              return -0.054075;
+      if (f[40] <= 0.590378) {
+        if (f[40] <= 0.349285) {
+          if (f[40] <= 0.061499) {
+            if (f[6] <= 0.000129) {
+              return 0.041615;
             } else {
-              return 0.034518;
+              return 0.042126;
             }
           } else {
-            if (f[3] <= 0.000288) {
-              return -0.059168;
+            if (f[31] <= 0.622133) {
+              return -0.056512;
             } else {
-              return 0.080455;
+              return 0.016672;
             }
           }
         } else {
-          return 0.101272;
+          if (f[40] <= 0.500922) {
+            if (f[9] <= 0.000064) {
+              return 0.032334;
+            } else {
+              return -0.128590;
+            }
+          } else {
+            if (f[31] <= 3.080704) {
+              return 0.017074;
+            } else {
+              return -0.106670;
+            }
+          }
         }
       } else {
-        if (f[15] <= -0.000000) {
-          if (f[8] <= -0.000758) {
-            return -0.082842;
-          } else {
-            if (f[17] <= 0.689559) {
-              return 0.054601;
+        if (f[18] <= 0.000000) {
+          if (f[3] <= 0.000832) {
+            if (f[38] <= 1.000000) {
+              return -0.152060;
             } else {
-              return -0.039174;
+              return 0.042939;
+            }
+          } else {
+            if (f[0] <= 100.000000) {
+              return 0.019861;
+            } else {
+              return -0.008985;
             }
           }
         } else {
-          if (f[9] <= 0.522477) {
-            if (f[2] <= 0.001437) {
-              return -0.034723;
+          if (f[3] <= 0.002339) {
+            if (f[37] <= 0.241987) {
+              return 0.039316;
             } else {
-              return -0.098255;
+              return -0.026624;
             }
           } else {
-            return 0.002312;
+            return -0.058571;
           }
         }
       }
     })(f)
     // Meta Tree 15
     (function(f) {
-      if (f[20] <= 0.459593) {
-        if (f[6] <= 0.000595) {
-          if (f[6] <= 0.000445) {
-            if (f[20] <= 0.254482) {
-              return 0.040732;
+      if (f[18] <= 0.000000) {
+        if (f[22] <= -0.116290) {
+          if (f[25] <= 0.250000) {
+            if (f[36] <= 0.487517) {
+              return 0.003977;
             } else {
-              return -0.002875;
+              return 0.042836;
             }
           } else {
-            if (f[16] <= 0.374106) {
-              return -0.081194;
+            if (f[31] <= 0.667124) {
+              return -0.032976;
             } else {
-              return 0.055875;
+              return -0.000874;
             }
           }
         } else {
-          return 0.099199;
+          return -0.144239;
         }
       } else {
-        if (f[15] <= -0.000010) {
-          return 0.061795;
-        } else {
-          if (f[12] <= 9.716299) {
-            return -0.111084;
-          } else {
-            if (f[1] <= -1.108953) {
-              return 0.010838;
+        if (f[27] <= 0.667128) {
+          if (f[36] <= 0.707084) {
+            if (f[38] <= 0.757545) {
+              return -0.029246;
             } else {
-              return -0.061580;
+              return 0.036255;
+            }
+          } else {
+            return -0.078560;
+          }
+        } else {
+          if (f[35] <= 0.337700) {
+            return -0.045991;
+          } else {
+            if (f[0] <= 36.023606) {
+              return -0.007644;
+            } else {
+              return 0.037174;
             }
           }
         }
@@ -12233,51 +13129,51 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 16
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[9] <= 0.473244) {
-          if (f[14] <= 0.000174) {
-            return 0.030008;
+      if (f[24] <= 0.000000) {
+        if (f[15] <= 0.000608) {
+          if (f[33] <= 0.842105) {
+            return -0.075024;
           } else {
-            if (f[6] <= 0.000165) {
-              return 0.102769;
+            if (f[26] <= 0.018572) {
+              return -0.073123;
             } else {
-              return 0.074707;
+              return 0.024553;
             }
           }
         } else {
-          if (f[17] <= 0.498773) {
-            if (f[15] <= 0.000007) {
-              return 0.087195;
-            } else {
-              return -0.008312;
-            }
+          if (f[26] <= 0.018576) {
+            return -0.123187;
           } else {
-            if (f[6] <= 0.000595) {
-              return -0.008226;
-            } else {
-              return 0.098045;
-            }
+            return -0.055507;
           }
         }
       } else {
-        if (f[9] <= 0.481462) {
-          if (f[16] <= 0.530381) {
-            if (f[6] <= 0.000428) {
-              return -0.117237;
+        if (f[25] <= 0.900000) {
+          if (f[15] <= 0.000600) {
+            if (f[0] <= 100.000000) {
+              return -0.005135;
             } else {
-              return -0.072249;
+              return -0.094944;
             }
           } else {
-            return -0.036942;
+            if (f[8] <= 0.001335) {
+              return 0.024519;
+            } else {
+              return -0.074379;
+            }
           }
         } else {
-          if (f[1] <= -0.776520) {
-            return 0.077326;
-          } else {
-            if (f[1] <= 0.457132) {
-              return -0.095989;
+          if (f[36] <= 0.683325) {
+            if (f[35] <= 1.494496) {
+              return 0.042225;
             } else {
-              return 0.002226;
+              return 0.046108;
+            }
+          } else {
+            if (f[36] <= 0.694257) {
+              return -0.017011;
+            } else {
+              return 0.043066;
             }
           }
         }
@@ -12285,443 +13181,587 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 17
     (function(f) {
-      if (f[20] <= 0.375192) {
-        if (f[2] <= 0.001035) {
-          return -0.065119;
-        } else {
-          if (f[19] <= 0.002582) {
-            return -0.053293;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.061499) {
+          if (f[24] <= 0.000000) {
+            return 0.042164;
           } else {
-            if (f[16] <= 0.482242) {
-              return 0.016747;
+            if (f[6] <= 0.000126) {
+              return 0.041502;
             } else {
-              return 0.083888;
+              return 0.042066;
+            }
+          }
+        } else {
+          if (f[32] <= 0.000112) {
+            if (f[40] <= 0.385026) {
+              return 0.024861;
+            } else {
+              return -0.030835;
+            }
+          } else {
+            if (f[8] <= -0.001215) {
+              return 0.020896;
+            } else {
+              return -0.067610;
             }
           }
         }
       } else {
-        if (f[17] <= 0.515300) {
-          if (f[14] <= 0.000176) {
-            return 0.084690;
+        if (f[18] <= 0.000000) {
+          if (f[35] <= 2.182156) {
+            if (f[8] <= 0.000215) {
+              return 0.025908;
+            } else {
+              return -0.006411;
+            }
           } else {
-            return -0.024074;
+            return -0.080973;
           }
         } else {
-          if (f[5] <= -0.001270) {
-            return -0.118214;
-          } else {
-            if (f[15] <= -0.000007) {
-              return 0.071047;
+          if (f[3] <= 0.002339) {
+            if (f[8] <= 0.001254) {
+              return 0.040103;
             } else {
-              return -0.041184;
+              return -0.004104;
             }
+          } else {
+            return -0.030597;
           }
         }
       }
     })(f)
     // Meta Tree 18
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[9] <= 0.473244) {
-          if (f[14] <= 0.000174) {
-            return 0.027639;
-          } else {
-            if (f[6] <= 0.000165) {
-              return 0.100775;
+      if (f[40] <= 0.590378) {
+        if (f[40] <= 0.242278) {
+          if (f[40] <= 0.061499) {
+            if (f[35] <= 0.337700) {
+              return 0.041782;
             } else {
-              return 0.071731;
+              return 0.041474;
+            }
+          } else {
+            if (f[35] <= 0.428854) {
+              return -0.056107;
+            } else {
+              return 0.032561;
             }
           }
         } else {
-          if (f[6] <= 0.000008) {
-            return -0.109589;
-          } else {
-            if (f[5] <= 0.000587) {
-              return -0.009753;
+          if (f[9] <= 0.000060) {
+            if (f[32] <= 0.000059) {
+              return 0.042525;
             } else {
-              return 0.043255;
+              return 0.044549;
+            }
+          } else {
+            if (f[40] <= 0.500922) {
+              return -0.059180;
+            } else {
+              return -0.018113;
             }
           }
         }
       } else {
-        if (f[9] <= 0.481462) {
-          if (f[16] <= 0.530381) {
-            if (f[6] <= 0.000428) {
-              return -0.111901;
-            } else {
-              return -0.067321;
-            }
+        if (f[18] <= 0.000000) {
+          if (f[31] <= 0.604355) {
+            return -0.094465;
           } else {
-            return -0.032370;
+            if (f[8] <= 0.000417) {
+              return 0.019874;
+            } else {
+              return -0.012131;
+            }
           }
         } else {
-          if (f[1] <= -0.776520) {
-            return 0.074947;
-          } else {
-            if (f[15] <= -0.000001) {
-              return 0.012641;
+          if (f[32] <= 0.000174) {
+            if (f[8] <= 0.001254) {
+              return 0.040180;
             } else {
-              return -0.081735;
+              return -0.003925;
             }
+          } else {
+            return -0.040997;
           }
         }
       }
     })(f)
     // Meta Tree 19
     (function(f) {
-      if (f[20] <= 0.254482) {
-        if (f[17] <= 0.501687) {
-          if (f[16] <= 0.376562) {
-            return 0.100375;
-          } else {
-            return 0.089911;
-          }
-        } else {
-          if (f[3] <= 0.000224) {
-            if (f[1] <= -2.057534) {
-              return -0.129375;
+      if (f[40] <= 0.590378) {
+        if (f[40] <= 0.349285) {
+          if (f[40] <= 0.061499) {
+            if (f[24] <= 0.000000) {
+              return 0.041993;
             } else {
-              return 0.018261;
+              return 0.041441;
             }
           } else {
-            if (f[2] <= 0.004386) {
-              return 0.107967;
+            if (f[32] <= 0.000112) {
+              return 0.026124;
             } else {
-              return 0.018402;
+              return -0.033412;
+            }
+          }
+        } else {
+          if (f[40] <= 0.500922) {
+            if (f[9] <= 0.000064) {
+              return 0.032416;
+            } else {
+              return -0.103098;
+            }
+          } else {
+            if (f[0] <= 100.000000) {
+              return 0.017869;
+            } else {
+              return -0.087822;
             }
           }
         }
       } else {
-        if (f[15] <= -0.000000) {
-          if (f[5] <= -0.001484) {
-            return -0.071909;
-          } else {
-            if (f[2] <= 0.001573) {
-              return 0.015075;
+        if (f[18] <= 0.000000) {
+          if (f[22] <= -0.116290) {
+            if (f[3] <= 0.000789) {
+              return -0.090566;
             } else {
-              return 0.089069;
+              return 0.005443;
             }
+          } else {
+            return -0.105303;
           }
         } else {
-          if (f[0] <= 100.000000) {
-            if (f[5] <= 0.000591) {
-              return -0.048897;
+          if (f[3] <= 0.002339) {
+            if (f[37] <= 0.241987) {
+              return 0.038750;
             } else {
-              return 0.028973;
+              return -0.028777;
             }
           } else {
-            return -0.135943;
+            return -0.050779;
           }
         }
       }
     })(f)
     // Meta Tree 20
     (function(f) {
-      if (f[20] <= 0.496759) {
-        if (f[9] <= 0.473244) {
-          if (f[14] <= 0.000174) {
-            return 0.024962;
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.061499) {
+          if (f[24] <= 0.000000) {
+            return 0.041912;
           } else {
-            if (f[6] <= 0.000165) {
-              return 0.098565;
+            if (f[6] <= 0.000128) {
+              return 0.041328;
             } else {
-              return 0.069321;
+              return 0.041840;
             }
           }
         } else {
-          if (f[17] <= 0.438445) {
-            return 0.095327;
-          } else {
-            if (f[20] <= 0.254482) {
-              return 0.018353;
+          if (f[34] <= 0.435908) {
+            if (f[40] <= 0.515395) {
+              return -0.050435;
             } else {
-              return -0.023651;
+              return -0.003576;
+            }
+          } else {
+            if (f[32] <= 0.000059) {
+              return 0.042644;
+            } else {
+              return -0.010941;
             }
           }
         }
       } else {
-        if (f[9] <= 0.481462) {
-          if (f[16] <= 0.530381) {
-            if (f[6] <= 0.000428) {
-              return -0.108311;
+        if (f[36] <= 0.783120) {
+          if (f[32] <= 0.000216) {
+            if (f[1] <= 2.048423) {
+              return 0.022442;
             } else {
-              return -0.062013;
+              return -0.006900;
             }
           } else {
-            return -0.029125;
+            return -0.055365;
           }
         } else {
-          if (f[20] <= 0.647475) {
-            return -0.048736;
+          if (f[1] <= 1.372146) {
+            if (f[3] <= 0.001478) {
+              return 0.041799;
+            } else {
+              return 0.043116;
+            }
           } else {
-            return 0.058438;
+            if (f[8] <= 0.000821) {
+              return -0.180866;
+            } else {
+              return 0.004906;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 21
     (function(f) {
-      if (f[6] <= 0.000595) {
-        if (f[17] <= 0.498773) {
-          if (f[1] <= -0.831988) {
-            if (f[2] <= 0.002640) {
-              return 0.097922;
-            } else {
-              return 0.055074;
-            }
+      if (f[18] <= 0.000000) {
+        if (f[25] <= 0.250000) {
+          if (f[10] <= 0.000053) {
+            return -0.031345;
           } else {
-            if (f[4] <= 0.000294) {
-              return -0.075426;
+            if (f[14] <= 0.000313) {
+              return 0.042930;
             } else {
-              return 0.063315;
+              return -0.013200;
             }
           }
         } else {
-          if (f[6] <= 0.000445) {
-            if (f[20] <= 0.289248) {
-              return 0.024445;
+          if (f[9] <= 0.000088) {
+            if (f[20] <= 0.002594) {
+              return 0.000294;
             } else {
-              return -0.020481;
+              return -0.114647;
             }
           } else {
-            if (f[1] <= -4.609604) {
-              return 0.043655;
+            if (f[8] <= -0.000157) {
+              return -0.009373;
             } else {
-              return -0.070047;
+              return -0.054913;
             }
           }
         }
       } else {
-        return 0.095979;
+        if (f[27] <= 0.667128) {
+          if (f[36] <= 0.707084) {
+            if (f[27] <= 0.514129) {
+              return 0.024666;
+            } else {
+              return -0.061478;
+            }
+          } else {
+            return -0.066620;
+          }
+        } else {
+          if (f[35] <= 0.337700) {
+            return -0.040009;
+          } else {
+            if (f[0] <= 36.023606) {
+              return -0.007650;
+            } else {
+              return 0.036558;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 22
     (function(f) {
-      if (f[6] <= 0.000595) {
-        if (f[17] <= 0.498773) {
-          if (f[8] <= -0.000030) {
-            if (f[2] <= 0.002640) {
-              return 0.096456;
+      if (f[18] <= 0.000000) {
+        if (f[22] <= -0.116290) {
+          if (f[25] <= 0.250000) {
+            if (f[36] <= 0.487517) {
+              return 0.001395;
             } else {
-              return 0.052037;
+              return 0.042777;
             }
           } else {
-            if (f[4] <= 0.000296) {
-              return -0.071564;
+            if (f[31] <= 0.667124) {
+              return -0.026539;
             } else {
-              return 0.060883;
+              return -0.000420;
             }
           }
         } else {
-          if (f[6] <= 0.000435) {
-            if (f[17] <= 0.525170) {
-              return -0.059569;
+          return -0.107271;
+        }
+      } else {
+        if (f[27] <= 0.667128) {
+          if (f[36] <= 0.707084) {
+            if (f[38] <= 0.757545) {
+              return -0.025610;
             } else {
-              return 0.008018;
+              return 0.035465;
             }
           } else {
-            if (f[3] <= 0.000224) {
-              return -0.074740;
+            return -0.061087;
+          }
+        } else {
+          if (f[1] <= -0.649562) {
+            if (f[21] <= -0.000171) {
+              return 0.026408;
             } else {
-              return 0.004988;
+              return -0.050498;
+            }
+          } else {
+            if (f[0] <= 100.000000) {
+              return 0.042224;
+            } else {
+              return 0.019745;
             }
           }
         }
-      } else {
-        return 0.094595;
       }
     })(f)
     // Meta Tree 23
     (function(f) {
-      if (f[20] <= 0.504458) {
-        if (f[9] <= 0.473244) {
-          if (f[20] <= 0.384046) {
-            if (f[14] <= 0.000174) {
-              return -0.000864;
-            } else {
-              return 0.080602;
-            }
+      if (f[40] <= 0.635913) {
+        if (f[40] <= 0.061499) {
+          if (f[24] <= 0.000000) {
+            return 0.041906;
           } else {
-            return 0.111500;
+            if (f[6] <= 0.000126) {
+              return 0.041274;
+            } else {
+              return 0.041799;
+            }
           }
         } else {
-          if (f[0] <= 18.662042) {
-            return 0.080191;
-          } else {
-            if (f[0] <= 20.428634) {
-              return -0.127644;
+          if (f[34] <= 0.435908) {
+            if (f[29] <= 0.011673) {
+              return -0.059172;
             } else {
-              return 0.003409;
+              return -0.015111;
+            }
+          } else {
+            if (f[29] <= 0.000009) {
+              return -0.043356;
+            } else {
+              return 0.010333;
             }
           }
         }
       } else {
-        if (f[9] <= 0.481462) {
-          if (f[16] <= 0.530381) {
-            if (f[6] <= 0.000428) {
-              return -0.104854;
+        if (f[18] <= 0.000000) {
+          if (f[36] <= 0.783120) {
+            if (f[36] <= 0.632587) {
+              return -0.002628;
             } else {
-              return -0.072951;
+              return 0.029681;
             }
           } else {
-            return -0.026133;
+            if (f[20] <= 0.002583) {
+              return -0.080629;
+            } else {
+              return 0.042991;
+            }
           }
         } else {
-          if (f[1] <= -0.776520) {
-            return 0.080308;
-          } else {
-            if (f[19] <= 0.002585) {
-              return 0.016619;
+          if (f[37] <= 0.241987) {
+            if (f[7] <= -0.000120) {
+              return -0.004496;
             } else {
-              return -0.083144;
+              return 0.039584;
             }
+          } else {
+            return -0.029332;
           }
         }
       }
     })(f)
     // Meta Tree 24
     (function(f) {
-      if (f[6] <= 0.000595) {
-        if (f[17] <= 0.510222) {
-          if (f[1] <= -0.831988) {
-            if (f[14] <= 0.000178) {
-              return 0.100590;
+      if (f[40] <= 0.590378) {
+        if (f[40] <= 0.349285) {
+          if (f[40] <= 0.061499) {
+            if (f[6] <= 0.000129) {
+              return 0.041295;
             } else {
-              return 0.011534;
+              return 0.041756;
             }
           } else {
-            if (f[18] <= 0.041667) {
-              return -0.096471;
+            if (f[31] <= 0.622133) {
+              return -0.039440;
             } else {
-              return 0.043938;
+              return 0.019684;
             }
           }
         } else {
-          if (f[6] <= 0.000435) {
-            if (f[17] <= 0.525170) {
-              return -0.070400;
+          if (f[40] <= 0.500922) {
+            if (f[9] <= 0.000064) {
+              return 0.031861;
             } else {
-              return 0.007595;
+              return -0.085780;
             }
           } else {
-            if (f[16] <= 0.373522) {
-              return -0.074662;
+            if (f[31] <= 3.080704) {
+              return 0.018814;
             } else {
-              return 0.013406;
+              return -0.078961;
             }
           }
         }
       } else {
-        return 0.093284;
+        if (f[1] <= -1.307999) {
+          if (f[31] <= 0.612624) {
+            return -0.103174;
+          } else {
+            if (f[28] <= 0.964387) {
+              return 0.044067;
+            } else {
+              return 0.009504;
+            }
+          }
+        } else {
+          if (f[7] <= 0.000570) {
+            if (f[29] <= 0.126801) {
+              return 0.020410;
+            } else {
+              return -0.034873;
+            }
+          } else {
+            if (f[7] <= 0.000578) {
+              return -0.070057;
+            } else {
+              return 0.014070;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 25
     (function(f) {
-      if (f[20] <= 0.504458) {
-        if (f[9] <= 0.473244) {
-          if (f[20] <= 0.384046) {
-            if (f[14] <= 0.000174) {
-              return -0.002885;
-            } else {
-              return 0.078794;
-            }
+      if (f[40] <= 0.686527) {
+        if (f[40] <= 0.061499) {
+          if (f[24] <= 0.000000) {
+            return 0.041756;
           } else {
-            return 0.108576;
+            if (f[6] <= 0.000126) {
+              return 0.041173;
+            } else {
+              return 0.041656;
+            }
           }
         } else {
-          if (f[17] <= 0.438445) {
-            return 0.091589;
-          } else {
-            if (f[20] <= 0.254482) {
-              return 0.016101;
+          if (f[9] <= 0.000156) {
+            if (f[34] <= 0.963099) {
+              return -0.021418;
             } else {
-              return -0.021410;
+              return 0.019910;
             }
+          } else {
+            return -0.102812;
           }
         }
       } else {
-        if (f[15] <= -0.000002) {
-          if (f[20] <= 0.773793) {
-            return -0.023064;
+        if (f[18] <= 0.000000) {
+          if (f[29] <= 0.000005) {
+            return -0.062601;
           } else {
-            return 0.083913;
+            if (f[31] <= 0.604355) {
+              return -0.073660;
+            } else {
+              return 0.008977;
+            }
           }
         } else {
-          if (f[0] <= 34.119238) {
-            return 0.008313;
-          } else {
-            if (f[7] <= -0.976273) {
-              return -0.031661;
+          if (f[3] <= 0.002339) {
+            if (f[37] <= 0.241987) {
+              return 0.039398;
             } else {
-              return -0.102318;
+              return -0.029701;
             }
+          } else {
+            return -0.036071;
           }
         }
       }
     })(f)
     // Meta Tree 26
     (function(f) {
-      if (f[6] <= 0.000595) {
-        if (f[17] <= 0.518612) {
-          if (f[1] <= -0.831988) {
-            if (f[18] <= 0.011667) {
-              return 0.034148;
+      if (f[40] <= 0.590378) {
+        if (f[40] <= 0.349285) {
+          if (f[40] <= 0.061499) {
+            if (f[24] <= 0.000000) {
+              return 0.041685;
             } else {
-              return 0.106891;
+              return 0.041178;
             }
           } else {
-            if (f[16] <= 0.342241) {
-              return -0.102371;
+            if (f[31] <= 0.622133) {
+              return -0.035222;
             } else {
-              return 0.039217;
+              return 0.019740;
             }
           }
         } else {
-          if (f[17] <= 0.524921) {
-            return -0.142692;
-          } else {
-            if (f[6] <= 0.000435) {
-              return 0.007044;
+          if (f[40] <= 0.500922) {
+            if (f[9] <= 0.000064) {
+              return 0.031476;
             } else {
-              return -0.047688;
+              return -0.078358;
+            }
+          } else {
+            if (f[31] <= 3.080704) {
+              return 0.018858;
+            } else {
+              return -0.071174;
             }
           }
         }
       } else {
-        return 0.092245;
+        if (f[18] <= 0.000000) {
+          if (f[32] <= 0.000229) {
+            if (f[8] <= 0.000215) {
+              return 0.023828;
+            } else {
+              return -0.009067;
+            }
+          } else {
+            return -0.095492;
+          }
+        } else {
+          if (f[35] <= 0.359517) {
+            return -0.059088;
+          } else {
+            if (f[9] <= 0.000057) {
+              return -0.056649;
+            } else {
+              return 0.038110;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 27
     (function(f) {
-      if (f[20] <= 0.375192) {
-        if (f[6] <= 0.000007) {
-          return -0.077601;
-        } else {
-          if (f[4] <= 0.000304) {
-            if (f[2] <= 0.001035) {
-              return -0.097124;
+      if (f[40] <= 0.686527) {
+        if (f[40] <= 0.061499) {
+          if (f[6] <= 0.000129) {
+            if (f[33] <= 0.736842) {
+              return 0.041328;
             } else {
-              return 0.011840;
+              return 0.041086;
             }
           } else {
-            if (f[0] <= 100.000000) {
-              return 0.096095;
+            return 0.041552;
+          }
+        } else {
+          if (f[9] <= 0.000156) {
+            if (f[40] <= 0.242278) {
+              return 0.021074;
             } else {
-              return -0.004471;
+              return -0.019490;
             }
+          } else {
+            return -0.091556;
           }
         }
       } else {
-        if (f[16] <= 0.096485) {
-          return 0.068890;
-        } else {
-          if (f[17] <= 0.515300) {
-            return 0.029124;
+        if (f[18] <= 0.000000) {
+          if (f[3] <= 0.000832) {
+            return -0.057503;
           } else {
-            if (f[16] <= 0.203922) {
-              return -0.103705;
+            if (f[36] <= 0.783120) {
+              return 0.011288;
             } else {
-              return -0.024922;
+              return -0.038129;
+            }
+          }
+        } else {
+          if (f[1] <= -1.216891) {
+            return -0.040075;
+          } else {
+            if (f[37] <= 0.241987) {
+              return 0.039208;
+            } else {
+              return -0.028777;
             }
           }
         }
@@ -12729,295 +13769,535 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 28
     (function(f) {
-      if (f[6] <= 0.000595) {
-        if (f[17] <= 0.751570) {
-          if (f[17] <= 0.700652) {
-            if (f[6] <= 0.000532) {
-              return 0.000685;
-            } else {
-              return -0.059840;
-            }
+      if (f[40] <= 0.522564) {
+        if (f[40] <= 0.420354) {
+          if (f[24] <= 0.000000) {
+            return -0.054422;
           } else {
-            if (f[20] <= 0.481177) {
-              return 0.080666;
+            if (f[21] <= 0.000259) {
+              return -0.004950;
             } else {
-              return -0.033630;
+              return 0.038637;
             }
           }
         } else {
-          return -0.073823;
+          if (f[9] <= 0.000090) {
+            if (f[2] <= 0.900888) {
+              return -0.089629;
+            } else {
+              return 0.025806;
+            }
+          } else {
+            return -0.080541;
+          }
         }
       } else {
-        return 0.091007;
+        if (f[18] <= 0.000000) {
+          if (f[22] <= -0.116290) {
+            if (f[25] <= 0.250000) {
+              return 0.033849;
+            } else {
+              return -0.002293;
+            }
+          } else {
+            return -0.084668;
+          }
+        } else {
+          if (f[9] <= 0.000057) {
+            return -0.133742;
+          } else {
+            if (f[1] <= -1.450988) {
+              return -0.051278;
+            } else {
+              return 0.032370;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 29
     (function(f) {
-      if (f[4] <= -0.001884) {
-        return 0.096846;
-      } else {
-        if (f[11] <= -2.821200) {
-          if (f[4] <= -0.001627) {
-            return -0.097759;
+      if (f[40] <= 0.522564) {
+        if (f[40] <= 0.373275) {
+          if (f[24] <= 0.000000) {
+            return -0.046189;
           } else {
-            if (f[20] <= 0.060661) {
-              return 0.078405;
+            if (f[38] <= 1.000000) {
+              return 0.022221;
             } else {
-              return -0.000291;
+              return -0.024774;
             }
           }
         } else {
-          return -0.090602;
+          if (f[9] <= 0.000062) {
+            if (f[40] <= 0.460689) {
+              return 0.043564;
+            } else {
+              return -0.010089;
+            }
+          } else {
+            if (f[12] <= 0.000061) {
+              return -0.049188;
+            } else {
+              return -0.100336;
+            }
+          }
+        }
+      } else {
+        if (f[19] <= 2.257972) {
+          if (f[18] <= 0.000000) {
+            if (f[8] <= 0.000215) {
+              return 0.020094;
+            } else {
+              return -0.006959;
+            }
+          } else {
+            if (f[35] <= 0.337700) {
+              return -0.105530;
+            } else {
+              return 0.029303;
+            }
+          }
+        } else {
+          return -0.102565;
         }
       }
     })(f)
     // Meta Tree 30
     (function(f) {
-      if (f[4] <= -0.001884) {
-        return 0.095368;
-      } else {
-        if (f[11] <= -2.821200) {
-          if (f[7] <= -0.976366) {
-            if (f[10] <= 0.510270) {
-              return 0.037906;
-            } else {
-              return -0.074064;
-            }
+      if (f[40] <= 0.686527) {
+        if (f[40] <= 0.061499) {
+          if (f[24] <= 0.000000) {
+            return 0.041714;
           } else {
-            if (f[7] <= -0.961372) {
-              return -0.040374;
+            if (f[6] <= 0.000126) {
+              return 0.041030;
             } else {
-              return 0.006535;
+              return 0.041491;
             }
           }
         } else {
-          return -0.083410;
+          if (f[9] <= 0.000156) {
+            if (f[29] <= 0.010455) {
+              return -0.026559;
+            } else {
+              return -0.002046;
+            }
+          } else {
+            return -0.083509;
+          }
+        }
+      } else {
+        if (f[24] <= 0.025000) {
+          if (f[13] <= 0.000181) {
+            if (f[2] <= 0.903859) {
+              return 0.033218;
+            } else {
+              return -0.032513;
+            }
+          } else {
+            if (f[40] <= 0.864662) {
+              return -0.017031;
+            } else {
+              return -0.142293;
+            }
+          }
+        } else {
+          if (f[36] <= 0.783120) {
+            if (f[7] <= -0.000083) {
+              return -0.020733;
+            } else {
+              return 0.026259;
+            }
+          } else {
+            if (f[7] <= 0.000448) {
+              return 0.041869;
+            } else {
+              return -0.071250;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 31
     (function(f) {
-      if (f[20] <= 0.504458) {
-        if (f[9] <= 0.473244) {
-          if (f[2] <= 0.001363) {
-            return 0.107651;
-          } else {
-            if (f[9] <= 0.462096) {
-              return -0.012761;
+      if (f[18] <= 0.000000) {
+        if (f[25] <= 0.250000) {
+          if (f[36] <= 0.541732) {
+            if (f[28] <= 0.976950) {
+              return 0.029411;
             } else {
-              return 0.092061;
+              return -0.137380;
+            }
+          } else {
+            if (f[0] <= 100.000000) {
+              return 0.041906;
+            } else {
+              return 0.043670;
             }
           }
         } else {
-          if (f[17] <= 0.438445) {
-            return 0.089795;
-          } else {
-            if (f[5] <= 0.000593) {
-              return -0.013149;
+          if (f[28] <= 0.995395) {
+            if (f[27] <= 0.992819) {
+              return 0.020528;
             } else {
-              return 0.025687;
+              return -0.015908;
             }
+          } else {
+            return -0.091008;
           }
         }
       } else {
-        if (f[9] <= 0.468610) {
-          if (f[20] <= 0.699474) {
-            return -0.077766;
-          } else {
-            return -0.099742;
-          }
-        } else {
-          if (f[20] <= 0.762232) {
-            if (f[5] <= -0.000669) {
-              return 0.029282;
+        if (f[27] <= 0.667128) {
+          if (f[36] <= 0.707084) {
+            if (f[27] <= 0.514129) {
+              return 0.022855;
             } else {
-              return -0.055251;
+              return -0.049399;
             }
           } else {
-            return 0.077091;
+            return -0.050319;
+          }
+        } else {
+          if (f[35] <= 0.337700) {
+            return -0.031639;
+          } else {
+            if (f[0] <= 36.023606) {
+              return -0.005505;
+            } else {
+              return 0.035381;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 32
     (function(f) {
-      if (f[6] <= 0.000007) {
-        return -0.071381;
-      } else {
-        if (f[5] <= 0.000587) {
-          if (f[0] <= 45.610969) {
-            if (f[20] <= 0.339504) {
-              return 0.025967;
+      if (f[40] <= 0.522564) {
+        if (f[40] <= 0.373275) {
+          if (f[31] <= 0.673169) {
+            if (f[40] <= 0.232221) {
+              return 0.019625;
             } else {
-              return -0.022102;
+              return -0.032458;
             }
           } else {
-            if (f[17] <= 0.560022) {
-              return -0.096870;
+            if (f[21] <= 0.000312) {
+              return 0.049675;
             } else {
-              return -0.010665;
+              return 0.042305;
             }
           }
         } else {
-          if (f[0] <= 100.000000) {
-            if (f[17] <= 0.649852) {
-              return 0.062025;
+          if (f[9] <= 0.000062) {
+            if (f[32] <= 0.000060) {
+              return -0.013117;
             } else {
-              return -0.003453;
+              return 0.045493;
             }
           } else {
-            if (f[18] <= 0.065000) {
-              return -0.129185;
+            if (f[10] <= 0.000061) {
+              return -0.045132;
             } else {
-              return 0.028492;
+              return -0.092089;
             }
           }
+        }
+      } else {
+        if (f[19] <= 2.257972) {
+          if (f[32] <= 0.000229) {
+            if (f[0] <= 100.000000) {
+              return 0.020810;
+            } else {
+              return -0.000567;
+            }
+          } else {
+            return -0.065497;
+          }
+        } else {
+          return -0.091939;
         }
       }
     })(f)
     // Meta Tree 33
     (function(f) {
-      if (f[4] <= 0.000324) {
-        if (f[0] <= 100.000000) {
-          if (f[8] <= 0.000658) {
-            if (f[6] <= 0.000099) {
-              return -0.042431;
-            } else {
-              return 0.004460;
-            }
+      if (f[18] <= 0.000000) {
+        if (f[25] <= 0.250000) {
+          if (f[10] <= 0.000053) {
+            return -0.035487;
           } else {
-            if (f[3] <= 0.000060) {
-              return 0.054849;
+            if (f[14] <= 0.000313) {
+              return 0.042784;
             } else {
-              return 0.108751;
+              return -0.017222;
             }
           }
         } else {
-          if (f[15] <= -0.000000) {
-            return 0.041625;
+          if (f[37] <= 0.181633) {
+            if (f[36] <= 0.794760) {
+              return -0.010983;
+            } else {
+              return -0.061062;
+            }
           } else {
-            return -0.135969;
+            if (f[3] <= 0.001447) {
+              return 0.044957;
+            } else {
+              return 0.010124;
+            }
           }
         }
       } else {
-        return 0.077507;
+        if (f[28] <= 0.981422) {
+          if (f[1] <= -0.649562) {
+            if (f[21] <= -0.000171) {
+              return 0.026266;
+            } else {
+              return -0.040249;
+            }
+          } else {
+            if (f[0] <= 100.000000) {
+              return 0.042610;
+            } else {
+              return 0.018980;
+            }
+          }
+        } else {
+          if (f[29] <= 0.002114) {
+            if (f[26] <= 0.018572) {
+              return 0.026000;
+            } else {
+              return -0.021549;
+            }
+          } else {
+            if (f[28] <= 0.992661) {
+              return -0.001706;
+            } else {
+              return -0.134428;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 34
     (function(f) {
-      if (f[19] <= 0.002630) {
-        if (f[6] <= 0.000435) {
-          if (f[8] <= -0.000477) {
-            if (f[5] <= -0.001041) {
-              return -0.005005;
+      if (f[40] <= 0.686527) {
+        if (f[40] <= 0.061499) {
+          if (f[35] <= 0.337700) {
+            if (f[1] <= -2.565606) {
+              return 0.040993;
             } else {
-              return 0.093702;
+              return 0.041619;
             }
           } else {
-            if (f[0] <= 30.974396) {
-              return -0.120313;
+            if (f[18] <= 0.000000) {
+              return 0.041084;
             } else {
-              return 0.001226;
+              return 0.040904;
             }
           }
         } else {
-          if (f[15] <= 0.000013) {
-            if (f[17] <= 0.510222) {
-              return 0.045205;
+          if (f[34] <= 0.963099) {
+            if (f[0] <= 100.000000) {
+              return -0.012544;
             } else {
-              return -0.074128;
+              return -0.060337;
             }
           } else {
-            if (f[19] <= 0.002601) {
-              return 0.089838;
+            if (f[32] <= 0.000059) {
+              return 0.042690;
             } else {
-              return -0.071691;
+              return -0.018558;
             }
           }
         }
       } else {
-        return 0.064565;
+        if (f[18] <= 0.000000) {
+          if (f[29] <= 0.000005) {
+            return -0.054049;
+          } else {
+            if (f[15] <= 0.000595) {
+              return -0.007774;
+            } else {
+              return 0.020448;
+            }
+          }
+        } else {
+          if (f[9] <= 0.000057) {
+            return -0.144486;
+          } else {
+            if (f[1] <= -1.450988) {
+              return -0.055272;
+            } else {
+              return 0.038829;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 35
     (function(f) {
-      if (f[6] <= 0.000595) {
-        if (f[17] <= 0.751570) {
-          if (f[17] <= 0.700652) {
-            if (f[6] <= 0.000532) {
-              return 0.000448;
+      if (f[40] <= 0.522564) {
+        if (f[40] <= 0.385026) {
+          if (f[31] <= 0.673169) {
+            if (f[40] <= 0.180391) {
+              return 0.024864;
             } else {
-              return -0.056675;
+              return -0.025635;
             }
           } else {
-            if (f[20] <= 0.481177) {
-              return 0.077296;
+            if (f[21] <= 0.000312) {
+              return 0.049427;
             } else {
-              return -0.026029;
+              return 0.042400;
             }
           }
         } else {
-          return -0.065005;
+          if (f[9] <= 0.000064) {
+            if (f[19] <= 1.822725) {
+              return -0.036448;
+            } else {
+              return 0.043437;
+            }
+          } else {
+            if (f[10] <= 0.000061) {
+              return -0.038869;
+            } else {
+              return -0.089518;
+            }
+          }
         }
       } else {
-        return 0.089356;
+        if (f[19] <= 2.257972) {
+          if (f[7] <= 0.000570) {
+            if (f[7] <= 0.000523) {
+              return 0.008686;
+            } else {
+              return 0.042029;
+            }
+          } else {
+            if (f[8] <= 0.000924) {
+              return -0.123850;
+            } else {
+              return -0.002436;
+            }
+          }
+        } else {
+          return -0.080761;
+        }
       }
     })(f)
     // Meta Tree 36
     (function(f) {
-      if (f[3] <= 0.000312) {
-        if (f[5] <= -0.001273) {
-          if (f[3] <= 0.000206) {
-            return -0.096442;
-          } else {
-            if (f[20] <= 0.294455) {
-              return 0.055364;
+      if (f[18] <= 0.000000) {
+        if (f[25] <= 0.250000) {
+          if (f[36] <= 0.541732) {
+            if (f[28] <= 0.976950) {
+              return 0.028384;
             } else {
-              return -0.044386;
+              return -0.118650;
+            }
+          } else {
+            if (f[0] <= 100.000000) {
+              return 0.041783;
+            } else {
+              return 0.043529;
             }
           }
         } else {
-          if (f[14] <= -0.000937) {
-            return 0.087906;
-          } else {
-            if (f[12] <= 9.708744) {
-              return -0.042374;
+          if (f[40] <= 0.522564) {
+            if (f[40] <= 0.385026) {
+              return -0.009898;
             } else {
-              return 0.005010;
+              return -0.057614;
+            }
+          } else {
+            if (f[28] <= 0.995395) {
+              return -0.000313;
+            } else {
+              return -0.083066;
             }
           }
         }
       } else {
-        return 0.070198;
+        if (f[40] <= 0.675344) {
+          if (f[0] <= 64.088135) {
+            if (f[30] <= 0.047604) {
+              return 0.045498;
+            } else {
+              return -0.006406;
+            }
+          } else {
+            if (f[40] <= 0.420354) {
+              return 0.015883;
+            } else {
+              return -0.053153;
+            }
+          }
+        } else {
+          if (f[9] <= 0.000057) {
+            return -0.113113;
+          } else {
+            if (f[1] <= -1.450988) {
+              return -0.047388;
+            } else {
+              return 0.038750;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 37
     (function(f) {
-      if (f[19] <= 0.002582) {
-        return -0.045809;
-      } else {
-        if (f[5] <= 0.000587) {
-          if (f[3] <= 0.000094) {
-            if (f[15] <= 0.000000) {
-              return -0.013368;
-            } else {
-              return -0.103759;
-            }
+      if (f[18] <= 0.000000) {
+        if (f[25] <= 0.250000) {
+          if (f[12] <= 0.000053) {
+            return -0.033475;
           } else {
-            if (f[2] <= 0.001228) {
-              return 0.068604;
+            if (f[13] <= 0.000189) {
+              return 0.042769;
             } else {
-              return -0.004930;
+              return -0.013969;
             }
           }
         } else {
-          if (f[12] <= 9.708744) {
-            return -0.100811;
-          } else {
-            if (f[20] <= 0.262426) {
-              return 0.071413;
+          if (f[40] <= 0.522564) {
+            if (f[40] <= 0.385026) {
+              return -0.009453;
             } else {
-              return 0.011385;
+              return -0.054548;
+            }
+          } else {
+            if (f[7] <= 0.000570) {
+              return 0.001824;
+            } else {
+              return -0.044590;
+            }
+          }
+        }
+      } else {
+        if (f[40] <= 0.675344) {
+          if (f[40] <= 0.266636) {
+            if (f[35] <= 0.337700) {
+              return 0.045150;
+            } else {
+              return 0.041994;
+            }
+          } else {
+            if (f[3] <= 0.001414) {
+              return 0.004854;
+            } else {
+              return -0.051627;
+            }
+          }
+        } else {
+          if (f[9] <= 0.000057) {
+            return -0.098127;
+          } else {
+            if (f[1] <= -1.450988) {
+              return -0.043841;
+            } else {
+              return 0.038627;
             }
           }
         }
@@ -13025,35 +14305,51 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 38
     (function(f) {
-      if (f[17] <= 0.498773) {
-        if (f[5] <= -0.000013) {
-          if (f[17] <= 0.457346) {
-            return 0.063656;
+      if (f[24] <= 0.000000) {
+        if (f[30] <= 0.061839) {
+          if (f[35] <= 0.385135) {
+            return -0.056784;
           } else {
-            return 0.097568;
+            if (f[6] <= 0.000209) {
+              return 0.036737;
+            } else {
+              return -0.028718;
+            }
           }
         } else {
-          if (f[4] <= 0.000293) {
-            return -0.076422;
-          } else {
-            if (f[18] <= 0.048333) {
-              return 0.027881;
+          if (f[8] <= 0.000097) {
+            if (f[32] <= 0.000155) {
+              return 0.010043;
             } else {
-              return 0.096343;
+              return -0.046117;
             }
+          } else {
+            return -0.096761;
           }
         }
       } else {
-        if (f[4] <= -0.001884) {
-          return 0.094382;
-        } else {
-          if (f[4] <= -0.001757) {
-            return -0.119339;
-          } else {
-            if (f[20] <= 0.071270) {
-              return 0.058662;
+        if (f[25] <= 0.900000) {
+          if (f[15] <= 0.000600) {
+            if (f[0] <= 100.000000) {
+              return -0.004472;
             } else {
-              return -0.006846;
+              return -0.083284;
+            }
+          } else {
+            if (f[8] <= 0.001335) {
+              return 0.021669;
+            } else {
+              return -0.062744;
+            }
+          }
+        } else {
+          if (f[15] <= -0.000839) {
+            return 0.001117;
+          } else {
+            if (f[34] <= 0.967989) {
+              return 0.043815;
+            } else {
+              return 0.016493;
             }
           }
         }
@@ -13061,63 +14357,111 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 39
     (function(f) {
-      if (f[20] <= 0.840145) {
-        if (f[20] <= 0.504458) {
-          if (f[9] <= 0.473244) {
-            if (f[2] <= 0.001363) {
-              return 0.105413;
+      if (f[18] <= 0.000000) {
+        if (f[37] <= 0.181633) {
+          if (f[22] <= -0.116290) {
+            if (f[25] <= 0.250000) {
+              return 0.028331;
             } else {
-              return 0.031838;
+              return -0.011556;
             }
           } else {
-            if (f[9] <= 0.475409) {
-              return -0.079289;
-            } else {
-              return 0.003675;
-            }
+            return -0.074556;
           }
         } else {
-          if (f[9] <= 0.500894) {
-            if (f[8] <= 0.000655) {
-              return -0.079879;
+          if (f[3] <= 0.001447) {
+            if (f[26] <= 0.018572) {
+              return 0.042319;
             } else {
-              return -0.014508;
+              return 0.050618;
             }
           } else {
-            return 0.020228;
+            if (f[30] <= 0.029970) {
+              return 0.042774;
+            } else {
+              return -0.031321;
+            }
           }
         }
       } else {
-        return 0.071530;
+        if (f[40] <= 0.675344) {
+          if (f[0] <= 64.088135) {
+            if (f[30] <= 0.047604) {
+              return 0.045324;
+            } else {
+              return -0.006289;
+            }
+          } else {
+            if (f[26] <= 0.018572) {
+              return -0.002677;
+            } else {
+              return -0.074671;
+            }
+          }
+        } else {
+          if (f[9] <= 0.000057) {
+            return -0.087469;
+          } else {
+            if (f[35] <= 0.350936) {
+              return -0.044338;
+            } else {
+              return 0.038539;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 40
     (function(f) {
-      if (f[6] <= 0.000007) {
-        return -0.061100;
-      } else {
-        if (f[4] <= 0.000305) {
-          if (f[4] <= 0.000303) {
-            if (f[5] <= 0.000587) {
-              return -0.009915;
+      if (f[18] <= 0.000000) {
+        if (f[37] <= 0.181633) {
+          if (f[38] <= 0.656111) {
+            if (f[39] <= 0.361984) {
+              return -0.100041;
             } else {
-              return 0.030883;
+              return -0.002521;
             }
           } else {
-            return -0.078858;
+            if (f[8] <= 0.000097) {
+              return 0.008978;
+            } else {
+              return -0.013766;
+            }
           }
         } else {
-          if (f[0] <= 100.000000) {
-            if (f[20] <= 0.403859) {
-              return 0.093776;
+          if (f[3] <= 0.001447) {
+            if (f[26] <= 0.018572) {
+              return 0.042225;
             } else {
-              return 0.019136;
+              return 0.050308;
             }
           } else {
-            if (f[18] <= 0.065000) {
-              return -0.136197;
+            if (f[29] <= 0.013473) {
+              return 0.042682;
             } else {
-              return 0.050689;
+              return -0.026591;
+            }
+          }
+        }
+      } else {
+        if (f[36] <= 0.683325) {
+          if (f[35] <= 0.337700) {
+            return -0.036676;
+          } else {
+            if (f[9] <= 0.000057) {
+              return -0.068753;
+            } else {
+              return 0.027109;
+            }
+          }
+        } else {
+          if (f[10] <= -0.000510) {
+            return -0.153589;
+          } else {
+            if (f[8] <= 0.000848) {
+              return 0.033147;
+            } else {
+              return -0.031168;
             }
           }
         }
@@ -13125,199 +14469,291 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 41
     (function(f) {
-      if (f[4] <= -0.001884) {
-        return 0.092168;
-      } else {
-        if (f[6] <= 0.000435) {
-          if (f[8] <= -0.000477) {
-            if (f[9] <= 0.477457) {
-              return -0.058918;
-            } else {
-              return 0.071030;
-            }
+      if (f[40] <= 0.686527) {
+        if (f[40] <= 0.061499) {
+          if (f[24] <= 0.000000) {
+            return 0.041650;
           } else {
-            if (f[0] <= 30.974396) {
-              return -0.101534;
+            if (f[6] <= 0.000128) {
+              return 0.040902;
             } else {
-              return 0.000518;
+              return 0.041296;
             }
           }
         } else {
-          if (f[4] <= 0.000299) {
-            if (f[17] <= 0.510222) {
-              return 0.035298;
+          if (f[30] <= 0.062930) {
+            if (f[35] <= 0.512659) {
+              return -0.032270;
             } else {
-              return -0.054648;
+              return 0.001579;
             }
           } else {
-            return 0.044429;
+            if (f[29] <= 0.011291) {
+              return -0.055249;
+            } else {
+              return -0.016028;
+            }
+          }
+        }
+      } else {
+        if (f[18] <= 0.000000) {
+          if (f[31] <= 0.604355) {
+            return -0.067799;
+          } else {
+            if (f[35] <= 0.609218) {
+              return 0.033309;
+            } else {
+              return -0.002324;
+            }
+          }
+        } else {
+          if (f[26] <= 0.018571) {
+            return -0.051348;
+          } else {
+            if (f[8] <= -0.000706) {
+              return -0.041738;
+            } else {
+              return 0.038186;
+            }
           }
         }
       }
     })(f)
     // Meta Tree 42
     (function(f) {
-      if (f[19] <= 0.002582) {
-        return -0.042765;
-      } else {
-        if (f[5] <= 0.000587) {
-          if (f[0] <= 45.610969) {
-            if (f[7] <= -0.944464) {
-              return 0.065115;
+      if (f[40] <= 0.522564) {
+        if (f[40] <= 0.373275) {
+          if (f[31] <= 0.673169) {
+            if (f[9] <= 0.000103) {
+              return -0.041475;
             } else {
-              return -0.002571;
+              return 0.011010;
             }
           } else {
-            if (f[20] <= 0.183978) {
-              return -0.118357;
+            if (f[19] <= 1.331831) {
+              return 0.049173;
             } else {
-              return -0.023881;
+              return 0.042270;
             }
           }
         } else {
-          if (f[12] <= 9.708744) {
-            return -0.088094;
-          } else {
-            if (f[20] <= 0.262426) {
-              return 0.068554;
+          if (f[9] <= 0.000062) {
+            if (f[40] <= 0.473880) {
+              return 0.043350;
             } else {
-              return 0.010438;
+              return -0.011132;
+            }
+          } else {
+            if (f[10] <= 0.000061) {
+              return -0.035675;
+            } else {
+              return -0.075789;
             }
           }
+        }
+      } else {
+        if (f[19] <= 2.257972) {
+          if (f[0] <= 100.000000) {
+            if (f[1] <= 2.075627) {
+              return 0.020033;
+            } else {
+              return -0.067669;
+            }
+          } else {
+            if (f[15] <= 0.000595) {
+              return -0.038940;
+            } else {
+              return 0.010008;
+            }
+          }
+        } else {
+          return -0.072353;
         }
       }
     })(f)
     // Meta Tree 43
     (function(f) {
-      if (f[3] <= 0.000312) {
-        if (f[5] <= -0.001474) {
-          if (f[4] <= -0.001011) {
-            return -0.107080;
+      if (f[40] <= 0.686527) {
+        if (f[40] <= 0.061499) {
+          if (f[24] <= 0.000000) {
+            return 0.041566;
           } else {
-            return 0.009131;
+            if (f[38] <= 1.000000) {
+              return 0.040834;
+            } else {
+              return 0.041100;
+            }
           }
         } else {
-          if (f[14] <= -0.000937) {
-            return 0.086582;
-          } else {
-            if (f[1] <= -3.582524) {
-              return -0.079554;
+          if (f[9] <= 0.000156) {
+            if (f[25] <= 0.500000) {
+              return -0.022418;
             } else {
-              return 0.000947;
+              return 0.000639;
             }
+          } else {
+            return -0.074188;
           }
         }
       } else {
-        return 0.066685;
+        if (f[32] <= 0.000229) {
+          if (f[36] <= 0.783120) {
+            if (f[31] <= 0.603507) {
+              return -0.044530;
+            } else {
+              return 0.016385;
+            }
+          } else {
+            if (f[1] <= 1.372146) {
+              return 0.042032;
+            } else {
+              return -0.058654;
+            }
+          }
+        } else {
+          return -0.087260;
+        }
       }
     })(f)
     // Meta Tree 44
     (function(f) {
-      if (f[20] <= 0.840145) {
-        if (f[20] <= 0.521118) {
-          if (f[9] <= 0.473244) {
-            if (f[2] <= 0.001363) {
-              return 0.103406;
+      if (f[18] <= 0.000000) {
+        if (f[37] <= 0.181633) {
+          if (f[22] <= -0.116290) {
+            if (f[25] <= 0.250000) {
+              return 0.027743;
             } else {
-              return 0.026443;
+              return -0.010446;
             }
           } else {
-            if (f[18] <= 0.165000) {
-              return 0.002689;
-            } else {
-              return -0.079820;
-            }
+            return -0.065762;
           }
         } else {
-          if (f[19] <= 0.002602) {
-            if (f[15] <= 0.000000) {
-              return -0.016973;
+          if (f[3] <= 0.001447) {
+            if (f[26] <= 0.018572) {
+              return 0.042206;
             } else {
-              return -0.089836;
+              return 0.049997;
             }
           } else {
-            return 0.038708;
+            if (f[0] <= 100.000000) {
+              return -0.023848;
+            } else {
+              return 0.042270;
+            }
           }
         }
       } else {
-        return 0.068631;
+        if (f[9] <= 0.000057) {
+          return -0.155416;
+        } else {
+          if (f[36] <= 0.683325) {
+            if (f[35] <= 0.337700) {
+              return -0.035014;
+            } else {
+              return 0.026814;
+            }
+          } else {
+            if (f[27] <= 0.664725) {
+              return -0.037866;
+            } else {
+              return 0.014967;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 45
     (function(f) {
-      if (f[19] <= 0.002630) {
-        if (f[6] <= 0.000435) {
-          if (f[8] <= -0.000477) {
-            if (f[16] <= 0.444348) {
-              return 0.071388;
-            } else {
-              return -0.056482;
-            }
+      if (f[9] <= 0.000060) {
+        if (f[21] <= 0.000701) {
+          if (f[34] <= 0.037345) {
+            return -0.082241;
           } else {
-            if (f[0] <= 30.974396) {
-              return -0.091718;
+            if (f[34] <= 0.969545) {
+              return 0.035000;
             } else {
-              return 0.000423;
+              return -0.014774;
             }
           }
         } else {
-          if (f[5] <= -0.000637) {
-            if (f[15] <= -0.000010) {
-              return 0.025561;
+          return -0.052771;
+        }
+      } else {
+        if (f[40] <= 0.061499) {
+          if (f[35] <= 0.337700) {
+            if (f[35] <= 0.314139) {
+              return 0.040944;
             } else {
-              return -0.081750;
+              return 0.041554;
             }
           } else {
-            if (f[15] <= 0.000013) {
-              return -0.048592;
+            if (f[18] <= -0.000000) {
+              return 0.040957;
             } else {
-              return 0.075970;
+              return 0.040668;
+            }
+          }
+        } else {
+          if (f[40] <= 0.500922) {
+            if (f[40] <= 0.420354) {
+              return -0.007731;
+            } else {
+              return -0.058234;
+            }
+          } else {
+            if (f[31] <= 3.109317) {
+              return 0.010588;
+            } else {
+              return -0.017032;
             }
           }
         }
-      } else {
-        return 0.060962;
       }
     })(f)
     // Meta Tree 46
     (function(f) {
-      if (f[17] <= 0.498773) {
-        if (f[8] <= -0.000030) {
-          if (f[16] <= 0.279147) {
-            return 0.036649;
+      if (f[18] <= 0.000000) {
+        if (f[37] <= 0.181633) {
+          if (f[38] <= 0.656111) {
+            if (f[39] <= 0.361984) {
+              return -0.091309;
+            } else {
+              return -0.002023;
+            }
           } else {
-            return 0.093480;
+            if (f[8] <= 0.000097) {
+              return 0.009111;
+            } else {
+              return -0.012642;
+            }
           }
         } else {
-          if (f[4] <= 0.000293) {
-            return -0.085106;
+          if (f[21] <= 0.000662) {
+            if (f[37] <= 0.355558) {
+              return 0.043833;
+            } else {
+              return 0.017646;
+            }
           } else {
-            return 0.058722;
+            return -0.004701;
           }
         }
       } else {
-        if (f[17] <= 0.584517) {
-          if (f[4] <= -0.000821) {
-            if (f[20] <= 0.102179) {
-              return -0.026649;
-            } else {
-              return 0.083529;
-            }
-          } else {
-            if (f[15] <= -0.000001) {
-              return -0.113520;
-            } else {
-              return -0.014600;
-            }
-          }
+        if (f[9] <= 0.000057) {
+          return -0.132778;
         } else {
-          if (f[17] <= 0.597460) {
-            return 0.074741;
-          } else {
-            if (f[20] <= 0.104778) {
-              return 0.071028;
+          if (f[40] <= 0.675344) {
+            if (f[0] <= 64.088135) {
+              return 0.025668;
             } else {
-              return -0.008743;
+              return -0.022736;
+            }
+          } else {
+            if (f[7] <= -0.000120) {
+              return -0.018555;
+            } else {
+              return 0.040878;
             }
           }
         }
@@ -13325,83 +14761,159 @@ function predict_CRASHk(features: Record<string,number>): {action:string, confid
     })(f)
     // Meta Tree 47
     (function(f) {
-      if (f[17] <= 0.747756) {
-        if (f[17] <= 0.701627) {
-          if (f[10] <= 0.509565) {
-            if (f[10] <= 0.502433) {
-              return -0.003057;
+      if (f[18] <= 0.000000) {
+        if (f[25] <= 0.250000) {
+          if (f[36] <= 0.541732) {
+            if (f[28] <= 0.976950) {
+              return 0.025897;
             } else {
-              return 0.090148;
+              return -0.107114;
             }
           } else {
-            if (f[9] <= 0.549580) {
-              return -0.095495;
+            if (f[0] <= 100.000000) {
+              return 0.041549;
             } else {
-              return 0.004914;
+              return 0.043231;
             }
           }
         } else {
-          if (f[20] <= 0.481177) {
-            if (f[7] <= -0.934890) {
-              return 0.098305;
+          if (f[31] <= 0.667124) {
+            if (f[39] <= 0.346584) {
+              return -0.012008;
             } else {
-              return 0.017044;
+              return -0.062129;
             }
           } else {
-            return -0.013808;
+            if (f[36] <= 0.783120) {
+              return 0.008192;
+            } else {
+              return -0.051254;
+            }
           }
         }
       } else {
-        if (f[20] <= 0.299431) {
-          return 0.011372;
+        if (f[40] <= 0.675344) {
+          if (f[0] <= 64.088135) {
+            if (f[0] <= 36.023606) {
+              return -0.010014;
+            } else {
+              return 0.040589;
+            }
+          } else {
+            if (f[0] <= 64.295414) {
+              return -0.088696;
+            } else {
+              return -0.007523;
+            }
+          }
         } else {
-          return -0.101833;
+          if (f[9] <= 0.000057) {
+            return -0.141688;
+          } else {
+            if (f[35] <= 0.337700) {
+              return -0.064695;
+            } else {
+              return 0.038123;
+            }
+          }
         }
       }
     })(f)
     // Meta Tree 48
     (function(f) {
-      if (f[20] <= 0.840145) {
-        if (f[20] <= 0.521118) {
-          if (f[2] <= 0.000784) {
-            return 0.117866;
-          } else {
-            if (f[2] <= 0.000957) {
-              return -0.069954;
+      if (f[9] <= 0.000060) {
+        if (f[21] <= 0.000701) {
+          if (f[34] <= 0.969545) {
+            if (f[34] <= 0.037345) {
+              return -0.072450;
             } else {
-              return 0.005142;
+              return 0.034619;
+            }
+          } else {
+            if (f[35] <= 1.027499) {
+              return 0.016711;
+            } else {
+              return -0.104310;
             }
           }
         } else {
-          if (f[19] <= 0.002602) {
-            if (f[15] <= 0.000000) {
-              return -0.015505;
-            } else {
-              return -0.088002;
-            }
-          } else {
-            return 0.039717;
-          }
+          return -0.048141;
         }
       } else {
-        return 0.067954;
+        if (f[34] <= 0.963099) {
+          if (f[32] <= 0.000059) {
+            return -0.095911;
+          } else {
+            if (f[22] <= -0.116290) {
+              return -0.003264;
+            } else {
+              return -0.088059;
+            }
+          }
+        } else {
+          if (f[13] <= -0.001283) {
+            return -0.134843;
+          } else {
+            if (f[36] <= 0.807879) {
+              return 0.032303;
+            } else {
+              return -0.028615;
+            }
+          }
+        }
       }
     })(f)
     // Meta Tree 49
     (function(f) {
-      if (f[4] <= -0.001884) {
-        return 0.090227;
-      } else {
-        if (f[4] <= -0.001757) {
-          return -0.101693;
-        } else {
-          if (f[20] <= 0.060661) {
-            return 0.071709;
-          } else {
-            if (f[17] <= 0.758982) {
-              return 0.000509;
+      if (f[18] <= 0.000000) {
+        if (f[37] <= 0.181633) {
+          if (f[40] <= 0.061499) {
+            if (f[24] <= 0.000000) {
+              return 0.041500;
             } else {
-              return -0.062146;
+              return 0.040910;
+            }
+          } else {
+            if (f[40] <= 0.522564) {
+              return -0.026238;
+            } else {
+              return -0.001490;
+            }
+          }
+        } else {
+          if (f[29] <= 0.045451) {
+            if (f[3] <= 0.001481) {
+              return 0.043542;
+            } else {
+              return 0.009924;
+            }
+          } else {
+            return -0.011406;
+          }
+        }
+      } else {
+        if (f[30] <= 0.005111) {
+          if (f[28] <= 0.993385) {
+            if (f[24] <= 0.541667) {
+              return -0.005085;
+            } else {
+              return -0.102153;
+            }
+          } else {
+            if (f[14] <= -0.000038) {
+              return -0.012218;
+            } else {
+              return 0.043333;
+            }
+          }
+        } else {
+          if (f[35] <= 0.337700) {
+            return -0.030107;
+          } else {
+            if (f[40] <= 0.590378) {
+              return 0.011721;
+            } else {
+              return 0.041028;
             }
           }
         }

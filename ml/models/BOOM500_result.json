@@ -1,9 +1,9 @@
 {
-  "symbol": "cryBTCUSD",
-  "instrument_class": "crypto",
-  "cv_accuracy": 0.5158,
-  "meta_win_rate": 0.9563,
-  "meta_trades": 3751,
+  "symbol": "BOOM500",
+  "instrument_class": "boom_crash",
+  "cv_accuracy": 0.6417,
+  "meta_win_rate": 0.9956,
+  "meta_trades": 3852,
   "meta_threshold": 0.8,
   "features": [
     "rsi",
@@ -48,16 +48,16 @@
     "regime_vol"
   ],
   "barrier_config": {
-    "tp_mult": 2.5,
-    "sl_mult": 1.0,
-    "max_hold": 25
+    "tp_mult": 2.0,
+    "sl_mult": 1.5,
+    "max_hold": 5
   },
   "deploy": true,
-  "trained_at": "2026-05-16 11:01:35.452180",
-  "n_rows": 4756,
-  "discard_rate": 0.044,
+  "trained_at": "2026-05-16 11:00:30.551197",
+  "n_rows": 4491,
+  "discard_rate": 0.097,
   "labels": {
-    "buy": 1474,
-    "sell": 3282
+    "buy": 1024,
+    "sell": 3467
   }
 }

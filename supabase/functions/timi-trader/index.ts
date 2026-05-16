@@ -2346,6 +2346,16 @@ Deno.serve(async (req) => {
 
   for (const symbol of allSymbolsList) {
     try {
+      // ── Duplicate trade guard — skip if already traded this symbol in last 2 min ──
+      const recentDup = await supabase.from("trades")
+        .select("id").eq("symbol", symbol)
+        .gte("created_at", new Date(Date.now() - 2 * 60 * 1000).toISOString())
+        .limit(1);
+      if (recentDup.data && recentDup.data.length > 0) {
+        scanLog.push(`${symbol}: duplicate_blocked — already traded in last 2min`);
+        continue;
+      }
+
       // ── Cooldown check — skip if lost on this symbol in last 15 min ──
       if (cooldownSymbols.has(symbol)) {
         scanLog.push(`${symbol}: cooldown_active (15min after loss)`);
@@ -2402,14 +2412,19 @@ Deno.serve(async (req) => {
         const isBoom  = symbol.startsWith("BOOM");
 
         // CRASH: block if RSI > 72 (too overbought = uptrend too strong for crash spike)
-        if (isCrash && currentRsi > 72) {
+        // Skip filter if RSI = 0 (empty candle data — don't block on bad data)
+        if (isCrash && currentRsi > 72 && currentRsi > 0) {
           scanLog.push(`${symbol}: rsi_block_crash RSI=${currentRsi.toFixed(1)} > 72 (uptrend too strong)`);
           continue;
         }
         // BOOM: block if RSI < 28 (too oversold = downtrend too strong for boom spike)
-        if (isBoom && currentRsi < 28) {
+        // Skip filter if RSI = 0 (empty candle data — don't block on bad data)
+        if (isBoom && currentRsi < 28 && currentRsi > 0) {
           scanLog.push(`${symbol}: rsi_block_boom RSI=${currentRsi.toFixed(1)} < 28 (downtrend too strong)`);
           continue;
+        }
+        if (currentRsi === 0) {
+          console.log(`⚠️  ${symbol}: RSI=0 detected (empty candle data) — skipping RSI filter`);
         }
         console.log(`📈 ${symbol} RSI=${currentRsi.toFixed(1)} — passed RSI filter`);
       }
@@ -2450,7 +2465,7 @@ Deno.serve(async (req) => {
             }
 
             // Attach spike metadata to signal for confidence adjustment
-            (global as any)[`${symbol}_spike_meta`] = {
+            (globalThis as any)[`${symbol}_spike_meta`] = {
               ticksSinceSpike,
               poissonProb:      poissonResult.probability,
               overdueRatio:     poissonResult.overdueRatio,
@@ -2602,7 +2617,7 @@ Deno.serve(async (req) => {
         }
 
         // Apply Poisson/Topo confidence boost for BOOM/CRASH
-        const spikeMeta = (global as any)[`${symbol}_spike_meta`];
+        const spikeMeta = (globalThis as any)[`${symbol}_spike_meta`];
         if (spikeMeta && isSpikeSym) {
           sig.confidence = Math.min(95, sig.confidence + spikeMeta.confidenceBoost);
           sig.poisson_prob     = spikeMeta.poissonProb;
@@ -2707,7 +2722,7 @@ Deno.serve(async (req) => {
 
         // ── BOOM/CRASH fallback also needs Poisson/Topo gate ──
         if (isSpikeSym) {
-          const spikeMeta2 = (global as any)[`${symbol}_spike_meta`];
+          const spikeMeta2 = (globalThis as any)[`${symbol}_spike_meta`];
           if (!spikeMeta2) {
             // Gate not run yet (ML path skipped) — run it now
             try {
@@ -2922,9 +2937,9 @@ Deno.serve(async (req) => {
           expires_at:      new Date(Date.now() + 90 * 1000).toISOString(), // 90sec expiry
           // EA MUST check: WHERE expires_at > now() before executing
           // Prevents stale signals from executing after price has moved
-          poisson_prob:    isSpikeSym ? ((global as any)[`${best.symbol}_spike_meta`]?.poissonProb || null) : null,
-          topo_compress:   isSpikeSym ? ((global as any)[`${best.symbol}_spike_meta`]?.compressionScore || null) : null,
-          high_conviction: isSpikeSym ? ((global as any)[`${best.symbol}_spike_meta`]?.highConviction || false) : false,
+          poisson_prob:    isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.poissonProb || null) : null,
+          topo_compress:   isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.compressionScore || null) : null,
+          high_conviction: isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.highConviction || false) : false,
         });
         if (mt5Err) console.log(`⚠️  MT5 signal write error: ${mt5Err.message}`);
         else console.log(`📡 MT5 signal written: ${mt5Symbol} ${best.action} conf:${best.confidence}%`);
