@@ -2365,7 +2365,17 @@ Deno.serve(async (req) => {
 
   for (const symbol of allSymbolsList) {
     try {
-      // ── Cooldown check — skip if lost on this symbol in last 15 min ──
+      // ── Duplicate trade guard — 60 second window ──
+      const recentDup = await supabase.from("trades")
+        .select("id").eq("symbol", symbol)
+        .gte("created_at", new Date(Date.now() - 60 * 1000).toISOString())
+        .limit(1);
+      if (recentDup.data && recentDup.data.length > 0) {
+        scanLog.push(`${symbol}: duplicate_blocked — traded in last 60sec`);
+        continue;
+      }
+
+      // ── Cooldown check — skip if lost on this symbol in last 5 min ──
       if (cooldownSymbols.has(symbol)) {
         scanLog.push(`${symbol}: cooldown_active (15min after loss)`);
         console.log(`⏱️  ${symbol}: skipped — in cooldown`);
