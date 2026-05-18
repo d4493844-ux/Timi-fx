@@ -2276,14 +2276,12 @@ Deno.serve(async (req) => {
   // BUT: if a high-confidence signal appears (85%+) → allow it through
   // This prevents the bot from missing genuinely good setups during pause
   const consec = await getConsecutiveLosses(supabase);
-  // FIX: Circuit breaker at 5 losses not 3 — 3 was too sensitive
-  // Also reduced confidence boost from 85% to 75% — 85% almost never fires
-  if (consec >= 5) {
-    console.log(`⚠️ Circuit breaker active (${consec} losses) — raising confidence threshold`);
-    cfg.min_confidence = Math.max(cfg.min_confidence || 65, 75); // require 75%+ during losing streak
-  } else if (consec >= 3) {
-    console.log(`⚠️ Losing streak (${consec} losses) — slight confidence boost`);
-    cfg.min_confidence = Math.max(cfg.min_confidence || 65, 70);
+  if (consec >= 3) {
+    console.log(`⚠️ Circuit breaker active (${consec} losses) — only high confidence trades allowed`);
+    // Don't return here — let the pipeline run but boost minimum confidence
+    // The scan will naturally filter low confidence signals
+    // We just raise the bar during losing streaks
+    cfg.min_confidence = Math.max(cfg.min_confidence || 65, 85); // require 85%+ to trade
   }
 
   // Load TRUE HMM model from Supabase
@@ -2322,12 +2320,11 @@ Deno.serve(async (req) => {
 
   // ── Per-symbol cooldown map (15 min after any loss) ──────────────────
   // Prevents re-entering same symbol immediately after a loss
-  // FIX: Reduced cooldown from 15min to 5min — was blocking too aggressively
   const { data: recentLosses } = await supabase
     .from("trades")
     .select("symbol, created_at")
     .in("result", ["loss", "LOSS"])
-    .gte("created_at", new Date(Date.now() - 5 * 60 * 1000).toISOString())
+    .gte("created_at", new Date(Date.now() - 15 * 60 * 1000).toISOString())
     .order("created_at", { ascending: false });
 
   const cooldownSymbols = new Set<string>();
@@ -2461,18 +2458,15 @@ Deno.serve(async (req) => {
             // If Poisson says overdue AND topo says compressed → high conviction
             // If only one agrees → lower confidence (still trade but note it)
             const highConviction = poissonResult.overdue && topoResult.preSpikePattern;
-            // FIX: Only block if Poisson probability is very low < 6%
-            // Don't require BOTH overdue AND compressed — that's too strict
-            // Either condition alone is sufficient to allow the trade
-            const lowConviction = poissonResult.probability < 0.06;
+            const lowConviction  = !poissonResult.overdue && !topoResult.preSpikePattern;
 
             if (lowConviction) {
-              scanLog.push(`${symbol}: poisson_too_low — prob=${(poissonResult.probability*100).toFixed(1)}% < 6%`);
+              scanLog.push(`${symbol}: topo_poisson_both_weak — skipping low conviction`);
               continue;
             }
 
             // Attach spike metadata to signal for confidence adjustment
-            (globalThis as any)[`${symbol}_spike_meta`] = {
+            (global as any)[`${symbol}_spike_meta`] = {
               ticksSinceSpike,
               poissonProb:      poissonResult.probability,
               overdueRatio:     poissonResult.overdueRatio,
@@ -2584,9 +2578,7 @@ Deno.serve(async (req) => {
           mlWinRate, regime.name,
           features[40] || 0.5  // session_strength (last feature)
         );
-        // FIX: Lowered Bayesian threshold 0.55→0.52
-        // 0.55 was blocking too many valid signals — 0.52 still above break-even
-        if (bayesian.winProb < 0.52) {
+        if (bayesian.winProb < 0.55) {
           scanLog.push(`${symbol}: bayes_skip P(win)=${(bayesian.winProb*100).toFixed(1)}% prior→posterior (${bayesian.recommendation})`);
           continue;
         }
@@ -2626,7 +2618,7 @@ Deno.serve(async (req) => {
         }
 
         // Apply Poisson/Topo confidence boost for BOOM/CRASH
-        const spikeMeta = (globalThis as any)[`${symbol}_spike_meta`];
+        const spikeMeta = (global as any)[`${symbol}_spike_meta`];
         if (spikeMeta && isSpikeSym) {
           sig.confidence = Math.min(95, sig.confidence + spikeMeta.confidenceBoost);
           sig.poisson_prob     = spikeMeta.poissonProb;
@@ -2731,7 +2723,7 @@ Deno.serve(async (req) => {
 
         // ── BOOM/CRASH fallback also needs Poisson/Topo gate ──
         if (isSpikeSym) {
-          const spikeMeta2 = (globalThis as any)[`${symbol}_spike_meta`];
+          const spikeMeta2 = (global as any)[`${symbol}_spike_meta`];
           if (!spikeMeta2) {
             // Gate not run yet (ML path skipped) — run it now
             try {
@@ -2946,9 +2938,9 @@ Deno.serve(async (req) => {
           expires_at:      new Date(Date.now() + 90 * 1000).toISOString(), // 90sec expiry
           // EA MUST check: WHERE expires_at > now() before executing
           // Prevents stale signals from executing after price has moved
-          poisson_prob:    isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.poissonProb || null) : null,
-          topo_compress:   isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.compressionScore || null) : null,
-          high_conviction: isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.highConviction || false) : false,
+          poisson_prob:    isSpikeSym ? ((global as any)[`${best.symbol}_spike_meta`]?.poissonProb || null) : null,
+          topo_compress:   isSpikeSym ? ((global as any)[`${best.symbol}_spike_meta`]?.compressionScore || null) : null,
+          high_conviction: isSpikeSym ? ((global as any)[`${best.symbol}_spike_meta`]?.highConviction || false) : false,
         });
         if (mt5Err) console.log(`⚠️  MT5 signal write error: ${mt5Err.message}`);
         else console.log(`📡 MT5 signal written: ${mt5Symbol} ${best.action} conf:${best.confidence}%`);
