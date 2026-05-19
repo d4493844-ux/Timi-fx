@@ -1351,33 +1351,6 @@ async function fetchCandles(symbol: string, granularity: number, count: number):
 }
 
 // ─────────────────────────────────────────────
-// DIRECTION MEMORY — prevents signal flip-flopping
-// Stores last signal direction per symbol with timestamp
-// Blocks direction change within 10 minutes (reduces noise)
-// ─────────────────────────────────────────────
-const DIRECTION_MEMORY: Record<string, { action: string; timestamp: number }> = {};
-const DIRECTION_LOCK_MS = 10 * 60 * 1000; // 10 minutes
-
-function checkDirectionLock(symbol: string, action: string): { blocked: boolean; reason: string } {
-  const mem = DIRECTION_MEMORY[symbol];
-  if (!mem) {
-    DIRECTION_MEMORY[symbol] = { action, timestamp: Date.now() };
-    return { blocked: false, reason: "first_signal" };
-  }
-  const elapsed = Date.now() - mem.timestamp;
-  if (mem.action !== action && elapsed < DIRECTION_LOCK_MS) {
-    const minsLeft = Math.ceil((DIRECTION_LOCK_MS - elapsed) / 60000);
-    return { 
-      blocked: true, 
-      reason: `direction_lock — was ${mem.action}, now ${action}, locked for ${minsLeft}min more`
-    };
-  }
-  // Update memory
-  DIRECTION_MEMORY[symbol] = { action, timestamp: Date.now() };
-  return { blocked: false, reason: "direction_ok" };
-}
-
-// ─────────────────────────────────────────────
 // FETCH TICKS — for BOOM/CRASH spike counting
 // Returns last N raw ticks (price + time)
 // Used to count ticks since last spike event
@@ -1632,7 +1605,10 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         const sl = (ws as any)._sl;
         const adjStake = (ws as any)._adjStake;
         if (tp && sl) {
-          ws.send(JSON.stringify({ contract_update: 1, contract_id: contractId, limit_order: { take_profit: tp, stop_loss: sl } }));
+          ws.send(JSON.stringify({ contract_update: 1, contract_id: contractId, limit_order: { 
+              take_profit: Math.min(tp, parseFloat((adjStake * 1.90).toFixed(2))),
+              stop_loss:   Math.min(sl, parseFloat((adjStake * 0.95).toFixed(2)))
+            } }));
         } else {
           clearTimeout(timeout); ws.close(); resolve({ ...d.buy, stake_used: adjStake });
         }
@@ -2337,7 +2313,7 @@ Deno.serve(async (req) => {
   console.log(`🧠 ML models: ${Object.keys(ML_MODELS).join(", ")}`);
 
   const mlSymbols  = Object.keys(ML_MODELS);
-  const cfgSymbols = cfg.symbols || ["BOOM500", "CRASH500", "frxUSDJPY"];
+  const cfgSymbols = cfg.symbols || ["BOOM1000","BOOM500","CRASH1000","CRASH500","frxEURUSD"];
   // INTERSECTION only — must be in BOTH ml_models AND bot_config.symbols
   // This means user controls exactly which symbols trade via Settings
   const allSymbols = cfgSymbols.filter(s => mlSymbols.includes(s));
@@ -2378,10 +2354,13 @@ Deno.serve(async (req) => {
   // ── Daily hard loss limit ───────────────────────────────────────────
   // If today's total PnL < -dailyLossLimitPct% of balance → halt trading
   const dailyLossLimitPct = cfg.daily_loss_limit_pct || 5; // default 5%
+  // FIX: Filter by edge_function account only — ignore demo/frontend trades
   const { data: todayTrades } = await supabase
     .from("trades")
     .select("pnl")
+    .eq("account_name", "edge_function")
     .in("result", ["win", "loss", "WIN", "LOSS"])
+    .not("pnl", "is", null)
     .gte("created_at", new Date(new Date().setUTCHours(0,0,0,0)).toISOString());
 
   const todayPnl = (todayTrades || []).reduce((s: number, t: any) => s + (parseFloat(t.pnl) || 0), 0);
@@ -2463,7 +2442,7 @@ Deno.serve(async (req) => {
           continue;
         }
         // BOOM: block if RSI < 28 (too oversold = downtrend too strong for boom spike)
-        if (isBoom && currentRsi < 28) {
+        if (isBoom && currentRsi < 28 && currentRsi > 1) {
           scanLog.push(`${symbol}: rsi_block_boom RSI=${currentRsi.toFixed(1)} < 28 (downtrend too strong)`);
           continue;
         }
@@ -2676,13 +2655,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── Direction lock check ──────────────────────────────────────
-        const dirLock = checkDirectionLock(symbol, sig.action);
-        if (dirLock.blocked) {
-          scanLog.push(`${symbol}: ${dirLock.reason}`);
-          continue;
-        }
-
         const logLine = `${symbol}: ML→${sig.action} conf:${finalConf} HMM:${regime.name} (${sig.reason})`;
         scanLog.push(logLine);
         console.log(logLine);
@@ -2813,12 +2785,6 @@ Deno.serve(async (req) => {
         if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
             sig.action !== regime.allowedAction) {
           scanLog.push(`${symbol}: fallback HMM_direction_blocked`); continue;
-        }
-        // Direction lock for fallback path too
-        const dirLock2 = checkDirectionLock(symbol, sig.action);
-        if (dirLock2.blocked) {
-          scanLog.push(`${symbol}: ${dirLock2.reason}`);
-          continue;
         }
         scanLog.push(`${symbol}: Fallback4S→${sig.action} ${sig.confidence}% (${sig.reason}) HMM:${regime.name}`);
       }
@@ -3030,7 +2996,7 @@ Deno.serve(async (req) => {
           `Confidence: ${best.confidence}%\n` +
           `Bayesian WR: ${(best.bayesian_win_prob*100).toFixed(1)}%\n` +
           `Stake: $${stake}\n` +
-          `Payout: $${tradeResult?.payout || result?.payout || 0}\n` +
+          `Payout: $${result?.payout || 0}\n` +
           `Session: ${getTradingSession().name}`;
 
         const tgUrl = `https://api.telegram.org/bot${tgToken}/sendMessage`;
@@ -3047,9 +3013,9 @@ Deno.serve(async (req) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: tgChatId, text: humanMsg })
         });
-        console.log(`📱 Telegram sent: ${signalMsg} to chat ${tgChatId}`);
+        console.log(`📱 Telegram sent: ${signalMsg}`);
       } else {
-        console.log(`⚠️  Telegram not configured — token=${tgToken ? "present" : "MISSING"} chatId=${tgChatId ? "present" : "MISSING"}`);
+        console.log("⚠️  Telegram not configured — add telegram_token and telegram_chat_id to bot_config");
       }
     } catch(tgErr) {
       console.log(`⚠️  Telegram error: ${tgErr}`);
