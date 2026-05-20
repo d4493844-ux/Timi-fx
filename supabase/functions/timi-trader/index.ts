@@ -2353,6 +2353,7 @@ Deno.serve(async (req) => {
     console.log(`✅ ML models from cache: ${Object.keys(ML_MODELS_CACHE).length} models (${age}min old)`);
   }
   const ML_MODELS = ML_MODELS_CACHE;
+  const mlRows = Object.entries(ML_MODELS).map(([symbol, model]) => ({ symbol, model_json: model }));
   console.log(`🧠 ML models: ${Object.keys(ML_MODELS).join(", ")}`);
 
   const mlSymbols  = Object.keys(ML_MODELS);
@@ -2477,12 +2478,12 @@ Deno.serve(async (req) => {
         const isBoom  = symbol.startsWith("BOOM");
 
         // CRASH: block if RSI > 72 (too overbought = uptrend too strong for crash spike)
-        if (isCrash && currentRsi > 72) {
+        if (isCrash && currentRsi > 72 && currentRsi > 0) {
           scanLog.push(`${symbol}: rsi_block_crash RSI=${currentRsi.toFixed(1)} > 72 (uptrend too strong)`);
           continue;
         }
         // BOOM: block if RSI < 28 (too oversold = downtrend too strong for boom spike)
-        if (isBoom && currentRsi < 28) {
+        if (isBoom && currentRsi < 28 && currentRsi > 0) {
           scanLog.push(`${symbol}: rsi_block_boom RSI=${currentRsi.toFixed(1)} < 28 (downtrend too strong)`);
           continue;
         }
