@@ -2385,6 +2385,21 @@ Deno.serve(async (req) => {
     console.log(`⏱️  Cooldown active for: ${[...cooldownSymbols].join(", ")}`);
   }
 
+  // ── Weekend forex block ─────────────────────────────────────────────
+  const dayOfWeek = new Date().getUTCDay(); // 0=Sun, 6=Sat
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  if (isWeekend) {
+    // Filter out forex on weekends — only synthetics trade 24/7
+    const weekendSymbols = (cfg.symbols || []).filter((s: string) =>
+      s.startsWith("BOOM") || s.startsWith("CRASH") ||
+      s.startsWith("R_")   || s.startsWith("1HZ")
+    );
+    if (weekendSymbols.length > 0) {
+      cfg.symbols = weekendSymbols;
+      console.log(`📅 Weekend — forex blocked, trading synthetics only: ${weekendSymbols.join(", ")}`);
+    }
+  }
+
   // ── Manual stop — respect auto_trade=false from UI ─────────────────
   // If user turned off bot from RemoteControl in the app → halt
   if (cfg.auto_trade === false) {
