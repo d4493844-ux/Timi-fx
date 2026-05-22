@@ -890,11 +890,6 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
 // ─────────────────────────────────────────────
 let HMM_MODEL: any = null;
 let SPECIALIST_MODELS: Record<string, any> = {};
-// ── ML Model cache — loaded once per cold start, never re-fetched ──
-// This eliminates 6MB of Supabase egress per invocation
-let ML_MODELS_CACHE: Record<string, any> = {};
-let ML_MODELS_CACHE_TIME = 0;
-const ML_MODELS_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours — refresh if model updated
 
 async function loadSpecialistModels(supabase: any): Promise<void> {
   if (Object.keys(SPECIALIST_MODELS).length > 0) return;
@@ -1353,33 +1348,6 @@ async function fetchCandles(symbol: string, granularity: number, count: number):
     };
     ws.onerror = () => { clearTimeout(timeout); resolve([]); };
   });
-}
-
-// ─────────────────────────────────────────────
-// DIRECTION MEMORY — prevents signal flip-flopping
-// Stores last signal direction per symbol with timestamp
-// Blocks direction change within 10 minutes (reduces noise)
-// ─────────────────────────────────────────────
-const DIRECTION_MEMORY: Record<string, { action: string; timestamp: number }> = {};
-const DIRECTION_LOCK_MS = 10 * 60 * 1000; // 10 minutes
-
-function checkDirectionLock(symbol: string, action: string): { blocked: boolean; reason: string } {
-  const mem = DIRECTION_MEMORY[symbol];
-  if (!mem) {
-    DIRECTION_MEMORY[symbol] = { action, timestamp: Date.now() };
-    return { blocked: false, reason: "first_signal" };
-  }
-  const elapsed = Date.now() - mem.timestamp;
-  if (mem.action !== action && elapsed < DIRECTION_LOCK_MS) {
-    const minsLeft = Math.ceil((DIRECTION_LOCK_MS - elapsed) / 60000);
-    return { 
-      blocked: true, 
-      reason: `direction_lock — was ${mem.action}, now ${action}, locked for ${minsLeft}min more`
-    };
-  }
-  // Update memory
-  DIRECTION_MEMORY[symbol] = { action, timestamp: Date.now() };
-  return { blocked: false, reason: "direction_ok" };
 }
 
 // ─────────────────────────────────────────────
@@ -2327,41 +2295,19 @@ Deno.serve(async (req) => {
   // Fix 5: Update open trade results so AI Brain has real win/loss data
   await updateOpenTradeResults(supabase, token);
 
-  // ── ML Models — cached to eliminate 6MB egress per invocation ──
-  // Cache lives in module scope, reloads every 6 hours or on cold start
-  const now_ms = Date.now();
-  if (Object.keys(ML_MODELS_CACHE).length === 0 || now_ms - ML_MODELS_CACHE_TIME > ML_MODELS_CACHE_TTL) {
-    console.log("🔄 Loading ML models from Supabase (cache miss)...");
-    const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
-    const fresh: Record<string, any> = {};
-    for (const row of (mlRows || [])) {
-      try {
-        const mj = typeof row.model_json === "string" ? JSON.parse(row.model_json) : row.model_json;
-        if (mj?.main_trees && mj?.meta_trees) {
-          fresh[row.symbol] = mj;
-          console.log(`✅ ${row.symbol}: ${mj.main_trees.length} main + ${mj.meta_trees.length} meta trees`);
-        }
-      } catch(e) { console.log(`❌ ${row.symbol}: parse error ${e}`); }
-    }
-    if (Object.keys(fresh).length > 0) {
-      ML_MODELS_CACHE      = fresh;
-      ML_MODELS_CACHE_TIME = now_ms;
-      console.log(`✅ ML models cached: ${Object.keys(ML_MODELS_CACHE).length} models`);
-    }
-  } else {
-    const age = Math.round((now_ms - ML_MODELS_CACHE_TIME) / 60000);
-    console.log(`✅ ML models from cache: ${Object.keys(ML_MODELS_CACHE).length} models (${age}min old)`);
+  // Load ML models
+  const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
+  const ML_MODELS: Record<string, any> = {};
+  for (const row of (mlRows || [])) {
+    try {
+      const mj = typeof row.model_json === "string" ? JSON.parse(row.model_json) : row.model_json;
+      if (mj?.main_trees && mj?.meta_trees) {
+        ML_MODELS[row.symbol] = mj;
+        console.log(`✅ ${row.symbol}: ${mj.main_trees.length} main + ${mj.meta_trees.length} meta trees`);
+      }
+    } catch(e) { console.log(`❌ ${row.symbol}: parse error ${e}`); }
   }
-  const ML_MODELS = ML_MODELS_CACHE;
   console.log(`🧠 ML models: ${Object.keys(ML_MODELS).join(", ")}`);
-
-  // Weekend: only synthetics
-  const _dow = new Date().getUTCDay();
-  if (_dow === 0 || _dow === 6) {
-    cfg.symbols = (cfg.symbols||[]).filter((s:string)=>
-      s.startsWith("BOOM")||s.startsWith("CRASH")||s.startsWith("R_")||s.startsWith("1HZ"));
-    console.log(`📅 Weekend — synthetics only: ${cfg.symbols.join(", ")}`);
-  }
 
   const mlSymbols  = Object.keys(ML_MODELS);
   const cfgSymbols = cfg.symbols || ["BOOM500", "CRASH500", "frxUSDJPY"];
@@ -2392,16 +2338,6 @@ Deno.serve(async (req) => {
     console.log(`⏱️  Cooldown active for: ${[...cooldownSymbols].join(", ")}`);
   }
 
-  // ── Manual stop — respect auto_trade=false from UI ─────────────────
-  // If user turned off bot from RemoteControl in the app → halt
-  if (cfg.auto_trade === false) {
-    console.log("🛑 Bot manually stopped via UI (auto_trade=false)");
-    return new Response(JSON.stringify({
-      status:  "manually_stopped",
-      message: "Trading halted — re-enable in app Settings or RemoteControl",
-    }), { headers: CORS });
-  }
-
   // ── Daily hard loss limit ───────────────────────────────────────────
   // If today's total PnL < -dailyLossLimitPct% of balance → halt trading
   const dailyLossLimitPct = cfg.daily_loss_limit_pct || 5; // default 5%
@@ -2429,15 +2365,6 @@ Deno.serve(async (req) => {
 
   for (const symbol of allSymbolsList) {
     try {
-      // ── Duplicate guard — 5 min per symbol ──
-      const _dup = await supabase.from("trades").select("id")
-        .eq("symbol", symbol)
-        .gte("created_at", new Date(Date.now()-5*60*1000).toISOString())
-        .limit(1);
-      if (_dup.data && _dup.data.length > 0) {
-        scanLog.push(`${symbol}: duplicate_blocked`); continue;
-      }
-
       // ── Cooldown check — skip if lost on this symbol in last 15 min ──
       if (cooldownSymbols.has(symbol)) {
         scanLog.push(`${symbol}: cooldown_active (15min after loss)`);
@@ -2712,13 +2639,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── Direction lock check ──────────────────────────────────────
-        const dirLock = checkDirectionLock(symbol, sig.action);
-        if (dirLock.blocked) {
-          scanLog.push(`${symbol}: ${dirLock.reason}`);
-          continue;
-        }
-
         const logLine = `${symbol}: ML→${sig.action} conf:${finalConf} HMM:${regime.name} (${sig.reason})`;
         scanLog.push(logLine);
         console.log(logLine);
@@ -2849,12 +2769,6 @@ Deno.serve(async (req) => {
         if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
             sig.action !== regime.allowedAction) {
           scanLog.push(`${symbol}: fallback HMM_direction_blocked`); continue;
-        }
-        // Direction lock for fallback path too
-        const dirLock2 = checkDirectionLock(symbol, sig.action);
-        if (dirLock2.blocked) {
-          scanLog.push(`${symbol}: ${dirLock2.reason}`);
-          continue;
         }
         scanLog.push(`${symbol}: Fallback4S→${sig.action} ${sig.confidence}% (${sig.reason}) HMM:${regime.name}`);
       }
@@ -3041,54 +2955,6 @@ Deno.serve(async (req) => {
       } catch(mt5Ex) {
         console.log(`⚠️  MT5 signal exception: ${mt5Ex}`);
       }
-    }
-  }
-
-  // ── Telegram Signal Sender ─────────────────────────────────────────
-  // Sends signal in format EA expects: SIGNAL:SYMBOL:ACTION:CONFIDENCE
-  // EA (TIMI_Telegram.mq5) parses this format via ParseAndTrade()
-  if (success && best) {
-    try {
-      const tgCfg = await supabase.from("bot_config")
-        .select("telegram_token, telegram_chat_id")
-        .eq("active", true).single();
-      
-      const tgToken  = tgCfg.data?.telegram_token  || cfg.telegram_token;
-      const tgChatId = tgCfg.data?.telegram_chat_id || cfg.telegram_chat_id;
-
-      if (tgToken && tgChatId) {
-        // Format EA expects: SIGNAL:SYMBOL:ACTION:CONFIDENCE
-        const signalMsg = `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`;
-        // Also send human-readable summary
-        const humanMsg  = `🤖 TIMI Signal\n` +
-          `Symbol: ${best.symbol}\n` +
-          `Action: ${best.action}\n` +
-          `Confidence: ${best.confidence}%\n` +
-          `Bayesian WR: ${(best.bayesian_win_prob*100).toFixed(1)}%\n` +
-          `Stake: $${stake}\n` +
-          `Payout: $${result?.payout || 0}\n` +
-          `Session: ${getTradingSession().name}`;
-
-        const tgUrl = `https://api.telegram.org/bot${tgToken}/sendMessage`;
-        
-        // Send EA-compatible signal first
-        await fetch(tgUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: tgChatId, text: signalMsg })
-        });
-        // Send human-readable summary
-        await fetch(tgUrl, {
-          method: "POST", 
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: tgChatId, text: humanMsg })
-        });
-        console.log(`📱 Telegram sent: ${signalMsg} to chat ${tgChatId}`);
-      } else {
-        console.log(`⚠️  Telegram not configured — token=${tgToken ? "present" : "MISSING"} chatId=${tgChatId ? "present" : "MISSING"}`);
-      }
-    } catch(tgErr) {
-      console.log(`⚠️  Telegram error: ${tgErr}`);
     }
   }
 
