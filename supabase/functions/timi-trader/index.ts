@@ -2958,6 +2958,26 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Telegram
+  if (success && best) {
+    try {
+      const tgToken  = cfg.telegram_token;
+      const tgChatId = cfg.telegram_chat_id;
+      if (tgToken && tgChatId) {
+        const msg = `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`;
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId, text: msg})
+        });
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId, text: `🤖 TIMI\nSymbol: ${best.symbol}\nAction: ${best.action}\nConf: ${best.confidence}%\nStake: $${stake}\nPayout: $${result?.payout||0}`})
+        });
+        console.log(`📱 Telegram: ${msg}`);
+      }
+    } catch(e) { console.log(`Telegram error: ${e}`); }
+  }
+
   return new Response(JSON.stringify({
     status:          success ? "trade_placed" : "trade_failed",
     signal:          best,
