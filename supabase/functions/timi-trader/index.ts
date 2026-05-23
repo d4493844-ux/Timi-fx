@@ -1358,7 +1358,7 @@ async function fetchCandles(symbol: string, granularity: number, count: number):
 async function fetchTicks(symbol: string, count: number = 500): Promise<any[]> {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    const timeout = setTimeout(() => { ws.close(); resolve([]); }, 15000);
+    const timeout = setTimeout(() => { ws.close(); resolve([]); }, 25000);
     ws.onopen = () => ws.send(JSON.stringify({
       ticks_history: symbol,
       adjust_start_time: 1,
