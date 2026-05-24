@@ -2934,6 +2934,12 @@ Deno.serve(async (req) => {
       "frxGBPJPY": "GBPJPY",  "frxXAUUSD": "XAUUSD",
       "frxXAGUSD": "XAGUSD",  "frxNZDUSD": "NZDUSD",
       "cryBTCUSD": "BTCUSD",  "cryETHUSD": "ETHUSD",
+      "BOOM1000":  "Boom 1000 Index",
+      "BOOM500":   "Boom 500 Index",
+      "CRASH1000": "Crash 1000 Index",
+      "CRASH500":  "Crash 500 Index",
+      "R_75":      "Volatility 75 Index",
+      "R_50":      "Volatility 50 Index",
     };
     const mt5Symbol = DERIV_TO_MT5[best.symbol];
     if (mt5Symbol) {
