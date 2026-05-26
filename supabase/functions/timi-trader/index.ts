@@ -2945,25 +2945,10 @@ Deno.serve(async (req) => {
     if (mt5Symbol) {
       try {
         const { error: mt5Err } = await supabase.from("mt5_signals").insert({
-          symbol:          mt5Symbol,
-          deriv_symbol:    best.symbol,
-          action:          best.action,        // "BUY" | "SELL"
-          confidence:      best.confidence,
-          stake:           stake,
-          tp_pct:          fpt.tpPct,
-          sl_pct:          fpt.slPct,
-          win_prob:        fpt.winProb,
-          regime:          best.regime || "unknown",
-          session:         session.name,
-          status:          "pending",          // EA sets to "executed" after trade
-          source:          "timi_edge_fn",
-          created_at:      new Date().toISOString(),
-          expires_at:      new Date(Date.now() + 90 * 1000).toISOString(), // 90sec expiry
-          // EA MUST check: WHERE expires_at > now() before executing
-          // Prevents stale signals from executing after price has moved
-          poisson_prob:    isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.poissonProb || null) : null,
-          topo_compress:   isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.compressionScore || null) : null,
-          high_conviction: isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.highConviction || false) : false,
+          symbol:     mt5Symbol,
+          action:     best.action,
+          confidence: best.confidence,
+          status:     "pending",
         });
         if (mt5Err) console.log(`⚠️  MT5 signal write error: ${mt5Err.message}`);
         else console.log(`📡 MT5 signal written: ${mt5Symbol} ${best.action} conf:${best.confidence}%`);
