@@ -355,7 +355,8 @@ Deno.serve(async (req) => {
         log.push(`  ⬇️ ${symbol}: ML WR ${(mlWR*100).toFixed(1)}% < ${DEMOTION_RATE*100}% — DEMOTING`);
         // Remove from ml_models
         await supabase.from("ml_models").delete().eq("symbol", symbol);
-        // Remove from bot_config symbols
+        // FIX: Auto-removal disabled — user controls symbols via Settings
+        // Remove from bot_config symbols - DISABLED
         const { data: cfg } = await supabase.from("bot_config").select("symbols").eq("active", true).single();
         if (cfg?.symbols) {
           const newSymbols = (cfg.symbols as string[]).filter(s => s !== symbol);
