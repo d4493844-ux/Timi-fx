@@ -449,7 +449,7 @@ Deno.serve(async (req) => {
         const { data: cfg } = await supabase.from("bot_config").select("symbols").eq("active", true).single();
         if (cfg?.symbols && !(cfg.symbols as string[]).includes(symbol)) {
           await supabase.from("bot_config").update({
-            symbol]
+            symbols: [...(cfg.symbols as string[]), symbol]
           }).eq("active", true);
         }
 
