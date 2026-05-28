@@ -285,7 +285,7 @@ Deno.serve(async (req) => {
             .from("bot_config").select("symbols").eq("active", true).single();
           if (cfg?.symbols && !(cfg.symbols as string[]).includes(sym)) {
             await supabase.from("bot_config")
-              .update({, sym] })
+              .update({ symbols: [...(cfg.symbols as string[]), sym] })
               .eq("active", true);
           }
 
