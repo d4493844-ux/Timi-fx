@@ -2938,7 +2938,11 @@ Deno.serve(async (req) => {
       "BOOM500":   "Boom 500 Index",
       "CRASH1000": "Crash 1000 Index",
       "CRASH500":  "Crash 500 Index",
+      "R_10":      "Volatility 10 Index",
+      "R_25":      "Volatility 25 Index",
+      "R_50":      "Volatility 50 Index",
       "R_75":      "Volatility 75 Index",
+      "R_100":     "Volatility 100 Index",
       "R_50":      "Volatility 50 Index",
     };
     const mt5Symbol = DERIV_TO_MT5[best.symbol];
