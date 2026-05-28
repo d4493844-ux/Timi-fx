@@ -285,7 +285,7 @@ Deno.serve(async (req) => {
             .from("bot_config").select("symbols").eq("active", true).single();
           if (cfg?.symbols && !(cfg.symbols as string[]).includes(sym)) {
             await supabase.from("bot_config")
-              .update({ symbols: [...(cfg.symbols as string[]), sym] })
+              .update({, sym] })
               .eq("active", true);
           }
 
@@ -359,7 +359,7 @@ Deno.serve(async (req) => {
         const { data: cfg } = await supabase.from("bot_config").select("symbols").eq("active", true).single();
         if (cfg?.symbols) {
           const newSymbols = (cfg.symbols as string[]).filter(s => s !== symbol);
-          await supabase.from("bot_config").update({ symbols: newSymbols }).eq("active", true);
+          await supabase.from("bot_config").update({ }).eq("active", true);
         }
         actions.push({ symbol, action: "demoted", reason: `ML WR ${(mlWR*100).toFixed(1)}%` });
         continue;
@@ -448,7 +448,7 @@ Deno.serve(async (req) => {
         const { data: cfg } = await supabase.from("bot_config").select("symbols").eq("active", true).single();
         if (cfg?.symbols && !(cfg.symbols as string[]).includes(symbol)) {
           await supabase.from("bot_config").update({
-            symbols: [...(cfg.symbols as string[]), symbol]
+            symbol]
           }).eq("active", true);
         }
 

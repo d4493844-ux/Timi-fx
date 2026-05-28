@@ -1786,103 +1786,6 @@ function ictForexSignal(candles1m: any[], candles5m: any[], symbol: string): {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// ADVANCED MATHEMATICS ENGINE v2
-// ═══════════════════════════════════════════════════════════════
-
-// ── Order Flow Imbalance (OFI) ──
-// Proxy from candle direction ratio (no tick data needed)
-// OFI > 0.65 = strong buying pressure
-// OFI < 0.35 = strong selling pressure
-// Used as confirmation for ICT signals
-function calcOFI(candles: any[], window: number = 20): number {
-  const recent = candles.slice(-window);
-  let upCandles = 0;
-  for (const c of recent) {
-    if (parseFloat(c.close) > parseFloat(c.open)) upCandles++;
-  }
-  return upCandles / window; // 0-1
-}
-
-// ── Rough Volatility Regime (Hurst Exponent) ──
-// H < 0.45 = mean-reverting (rough) → use FVG/OB strategy
-// H > 0.55 = trending (smooth)     → use BOS/momentum strategy
-// H = 0.45-0.55 = random walk      → avoid trading
-function calcHurstFast(closes: number[], window: number = 40): number {
-  if (closes.length < window) return 0.5;
-  const prices = closes.slice(-window);
-  const returns = prices.slice(1).map((p, i) => Math.log(p / (prices[i] + 1e-10)));
-  
-  // R/S analysis (fast version with 2 scales)
-  const scale1 = Math.floor(window / 4);
-  const scale2 = Math.floor(window / 2);
-  
-  function rsAtScale(data: number[], s: number): number {
-    const chunks = Math.floor(data.length / s);
-    if (chunks < 1) return 1;
-    let rsSum = 0;
-    for (let i = 0; i < chunks; i++) {
-      const chunk = data.slice(i * s, (i + 1) * s);
-      const mean  = chunk.reduce((a, b) => a + b, 0) / chunk.length;
-      const dev   = chunk.map((_, j) => chunk.slice(0, j + 1).reduce((a, b) => a + b, 0) - mean * (j + 1));
-      const R     = Math.max(...dev) - Math.min(...dev);
-      const S     = Math.sqrt(chunk.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / chunk.length) + 1e-10;
-      rsSum += R / S;
-    }
-    return rsSum / chunks;
-  }
-  
-  const rs1 = rsAtScale(returns, scale1);
-  const rs2 = rsAtScale(returns, scale2);
-  if (rs1 <= 0 || rs2 <= 0) return 0.5;
-  
-  const H = Math.log(rs2 / rs1) / Math.log(scale2 / scale1);
-  return Math.max(0.1, Math.min(0.9, H));
-}
-
-// ── Regime-Adaptive Strategy Selector ──
-// Uses Hurst + HMM regime to choose the RIGHT strategy
-// This is the key upgrade — one strategy doesn't fit all regimes
-function getAdaptiveStrategy(hurst: number, hmm: string, ofi: number): {
-  strategy: string;
-  confidence_boost: number;
-  description: string;
-} {
-  // Trending + smooth (H > 0.55) → follow the trend
-  if (hurst > 0.55 && (hmm === "Uptrend" || hmm === "Downtrend")) {
-    return {
-      strategy: "trend_follow",
-      confidence_boost: 8,
-      description: `Trending regime H=${hurst.toFixed(2)} → momentum`
-    };
-  }
-  // Rough + ranging (H < 0.45) → mean reversion
-  if (hurst < 0.45 && hmm === "Ranging") {
-    return {
-      strategy: "mean_revert",
-      confidence_boost: 6,
-      description: `Rough regime H=${hurst.toFixed(2)} → mean reversion`
-    };
-  }
-  // High volatility → reduce confidence
-  if (hmm === "HighVolatility") {
-    return {
-      strategy: "reduce",
-      confidence_boost: -10,
-      description: `High vol regime → reduced confidence`
-    };
-  }
-  // Random walk zone (H = 0.45-0.55) → skip
-  if (hurst >= 0.45 && hurst <= 0.55 && hmm === "Ranging") {
-    return {
-      strategy: "skip",
-      confidence_boost: -20,
-      description: `Random walk H=${hurst.toFixed(2)} → skip`
-    };
-  }
-  return { strategy: "normal", confidence_boost: 0, description: "Standard regime" };
-}
-
 function getTradingSession(): { active: boolean; name: string } {
   const h = new Date().getUTCHours();
   if (h >= 7 && h < 21) return { active: true, name: h < 16 ? "London" : "NewYork" };
@@ -3000,38 +2903,6 @@ Deno.serve(async (req) => {
           sig.reason = sig.reason + " [direction_corrected]";
         }
 
-        // ── OFI + Rough Volatility + Regime Adaptive ──────────────────
-        const closes4ofi = c1m.map((x: any) => parseFloat(x.close));
-        const ofi         = calcOFI(c1m, 20);
-        const hurst       = calcHurstFast(closes4ofi, 40);
-        const adaptStrat  = getAdaptiveStrategy(hurst, regime.name, ofi);
-
-        // Apply regime-based confidence adjustment
-        sig.confidence = Math.max(10, Math.min(95, sig.confidence + adaptStrat.confidence_boost));
-        
-        // Block trades in random walk regime (no edge)
-        if (adaptStrat.strategy === "skip") {
-          scanLog.push(`${symbol}: regime_skip — ${adaptStrat.description}`);
-          continue;
-        }
-
-        // OFI confirmation — signal must align with order flow
-        const ofiBull = ofi > 0.60 && sig.action === "BUY";
-        const ofiBear = ofi < 0.40 && sig.action === "SELL";
-        const ofiNeutral = ofi >= 0.40 && ofi <= 0.60;
-        
-        if (!ofiNeutral && !ofiBull && !ofiBear) {
-          // OFI conflicts with signal — reduce confidence significantly
-          sig.confidence = Math.max(10, sig.confidence - 15);
-          scanLog.push(`${symbol}: OFI_conflict ofi=${ofi.toFixed(2)} signal=${sig.action}`);
-        } else if (ofiBull || ofiBear) {
-          // OFI confirms signal — boost confidence
-          sig.confidence = Math.min(95, sig.confidence + 5);
-          scanLog.push(`${symbol}: OFI_confirmed ofi=${ofi.toFixed(2)}`);
-        }
-
-        console.log(`📊 ${symbol}: H=${hurst.toFixed(2)} OFI=${ofi.toFixed(2)} regime=${adaptStrat.strategy} conf=${sig.confidence}%`);
-
         // Apply Poisson/Topo confidence boost for BOOM/CRASH
         const spikeMeta = (globalThis as any)[`${symbol}_spike_meta`];
         if (spikeMeta && isSpikeSym) {
@@ -3139,32 +3010,7 @@ Deno.serve(async (req) => {
             continue;
           }
           sig = ictSig;
-
-          // Enhance ICT signal with OFI + Hurst
-          const ictCloses  = c1m.map((x: any) => parseFloat(x.close));
-          const ictOFI     = calcOFI(c1m, 20);
-          const ictHurst   = calcHurstFast(ictCloses, 40);
-          const ictAdapt   = getAdaptiveStrategy(ictHurst, regime.name, ictOFI);
-
-          sig.confidence = Math.max(10, Math.min(95, sig.confidence + ictAdapt.confidence_boost));
-
-          // OFI must not strongly conflict with ICT signal
-          const ictOfiBull = ictOFI > 0.60 && sig.action === "BUY";
-          const ictOfiBear = ictOFI < 0.40 && sig.action === "SELL";
-          const ictOfiNeutral = ictOFI >= 0.40 && ictOFI <= 0.60;
-
-          if (!ictOfiNeutral && !ictOfiBull && !ictOfiBear) {
-            sig.confidence = Math.max(10, sig.confidence - 12);
-          } else if (ictOfiBull || ictOfiBear) {
-            sig.confidence = Math.min(95, sig.confidence + 6);
-          }
-
-          if (ictAdapt.strategy === "skip") {
-            scanLog.push(`${symbol}: ICT_regime_skip — ${ictAdapt.description}`);
-            continue;
-          }
-
-          scanLog.push(`${symbol}: ICT→${sig.action} conf:${sig.confidence}% H=${ictHurst.toFixed(2)} OFI=${ictOFI.toFixed(2)} ${sig.reason}`);
+          scanLog.push(`${symbol}: ICT→${sig.action} conf:${sig.confidence}% ${sig.reason}`);
         } else if (cryptoSymbols.includes(symbol) || ["R_50","R_25","R_100"].includes(symbol)) {
           scanLog.push(`${symbol}: ML_required (use ML models only)`);
           continue;
