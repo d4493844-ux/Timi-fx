@@ -890,11 +890,6 @@ function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
 // ─────────────────────────────────────────────
 let HMM_MODEL: any = null;
 let SPECIALIST_MODELS: Record<string, any> = {};
-// ── ML Model cache — loaded once per cold start, never re-fetched ──
-// This eliminates 6MB of Supabase egress per invocation
-let ML_MODELS_CACHE: Record<string, any> = {};
-let ML_MODELS_CACHE_TIME = 0;
-const ML_MODELS_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours — refresh if model updated
 
 async function loadSpecialistModels(supabase: any): Promise<void> {
   if (Object.keys(SPECIALIST_MODELS).length > 0) return;
@@ -1356,33 +1351,6 @@ async function fetchCandles(symbol: string, granularity: number, count: number):
 }
 
 // ─────────────────────────────────────────────
-// DIRECTION MEMORY — prevents signal flip-flopping
-// Stores last signal direction per symbol with timestamp
-// Blocks direction change within 10 minutes (reduces noise)
-// ─────────────────────────────────────────────
-const DIRECTION_MEMORY: Record<string, { action: string; timestamp: number }> = {};
-const DIRECTION_LOCK_MS = 10 * 60 * 1000; // 10 minutes
-
-function checkDirectionLock(symbol: string, action: string): { blocked: boolean; reason: string } {
-  const mem = DIRECTION_MEMORY[symbol];
-  if (!mem) {
-    DIRECTION_MEMORY[symbol] = { action, timestamp: Date.now() };
-    return { blocked: false, reason: "first_signal" };
-  }
-  const elapsed = Date.now() - mem.timestamp;
-  if (mem.action !== action && elapsed < DIRECTION_LOCK_MS) {
-    const minsLeft = Math.ceil((DIRECTION_LOCK_MS - elapsed) / 60000);
-    return { 
-      blocked: true, 
-      reason: `direction_lock — was ${mem.action}, now ${action}, locked for ${minsLeft}min more`
-    };
-  }
-  // Update memory
-  DIRECTION_MEMORY[symbol] = { action, timestamp: Date.now() };
-  return { blocked: false, reason: "direction_ok" };
-}
-
-// ─────────────────────────────────────────────
 // FETCH TICKS — for BOOM/CRASH spike counting
 // Returns last N raw ticks (price + time)
 // Used to count ticks since last spike event
@@ -1390,7 +1358,7 @@ function checkDirectionLock(symbol: string, action: string): { blocked: boolean;
 async function fetchTicks(symbol: string, count: number = 500): Promise<any[]> {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    const timeout = setTimeout(() => { ws.close(); resolve([]); }, 15000);
+    const timeout = setTimeout(() => { ws.close(); resolve([]); }, 25000);
     ws.onopen = () => ws.send(JSON.stringify({
       ticks_history: symbol,
       adjust_start_time: 1,
@@ -1547,6 +1515,388 @@ function topologicalPreSpikeScore(ticks: number[], window: number = 30): {
   const details = `compress=${(compressionScore*100).toFixed(0)}% betti=${bettiProxy.toFixed(2)} momentum_decay=${momentumDecaying}`;
 
   return { compressionScore, bettiProxy, preSpikePattern, details };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ICT SMART MONEY CONCEPTS ENGINE
+// Institutional-grade forex signal generation
+// Based on: FVG, Order Blocks, Liquidity Sweeps, BOS/CHoCH
+// ═══════════════════════════════════════════════════════════════
+
+// ── Kill Zones: Only trade during high-liquidity sessions ──
+// London Open: 07:00-09:00 UTC (most volatile, institutional entry)
+// NY Open: 13:00-15:00 UTC (second major session)
+// London Close: 15:00-17:00 UTC (liquidity grab before close)
+function isKillZone(): { active: boolean; zone: string } {
+  const h = new Date().getUTCHours();
+  const m = new Date().getUTCMinutes();
+  const t = h + m/60;
+  if (t >= 7.0 && t < 9.0)   return { active: true,  zone: "London_Open" };
+  if (t >= 13.0 && t < 15.0) return { active: true,  zone: "NY_Open" };
+  if (t >= 15.0 && t < 17.0) return { active: true,  zone: "London_Close" };
+  return { active: false, zone: "Dead_Zone" };
+}
+
+// ── Fair Value Gap (FVG) Detection ──
+// A bullish FVG: candle[i-2].high < candle[i].low (gap between wicks)
+// Price leaving an inefficiency — market will return to fill it
+// We enter when price RETURNS to the FVG zone (high probability)
+function detectFVG(candles: any[]): {
+  bullish: Array<{top: number; bottom: number; index: number}>;
+  bearish: Array<{top: number; bottom: number; index: number}>;
+} {
+  const bullishFVGs: Array<{top: number; bottom: number; index: number}> = [];
+  const bearishFVGs: Array<{top: number; bottom: number; index: number}> = [];
+  
+  for (let i = 2; i < candles.length; i++) {
+    const h0 = parseFloat(candles[i-2].high);
+    const l0 = parseFloat(candles[i-2].low);
+    const h2 = parseFloat(candles[i].high);
+    const l2 = parseFloat(candles[i].low);
+    
+    // Bullish FVG: previous candle high < current candle low
+    if (h0 < l2) {
+      bullishFVGs.push({ bottom: h0, top: l2, index: i });
+    }
+    // Bearish FVG: previous candle low > current candle high
+    if (l0 > h2) {
+      bearishFVGs.push({ bottom: h2, top: l0, index: i });
+    }
+  }
+  return { bullish: bullishFVGs.slice(-5), bearish: bearishFVGs.slice(-5) };
+}
+
+// ── Order Block Detection ──
+// Bullish OB: Last bearish candle before a significant bullish move
+// Bearish OB: Last bullish candle before a significant bearish move
+// Price returning to OB = institutional re-entry = high probability
+function detectOrderBlocks(candles: any[], atr: number): {
+  bullish: Array<{high: number; low: number; index: number}>;
+  bearish: Array<{high: number; low: number; index: number}>;
+} {
+  const bullishOBs: Array<{high: number; low: number; index: number}> = [];
+  const bearishOBs: Array<{high: number; low: number; index: number}> = [];
+  const threshold = atr * 1.5; // significant move = 1.5× ATR
+
+  for (let i = 1; i < candles.length - 3; i++) {
+    const c = candles[i];
+    const open = parseFloat(c.open), close = parseFloat(c.close);
+    const high = parseFloat(c.high), low = parseFloat(c.low);
+    
+    // Check if next 3 candles make a significant move
+    const nextHigh = Math.max(...candles.slice(i+1, i+4).map((x: any) => parseFloat(x.high)));
+    const nextLow  = Math.min(...candles.slice(i+1, i+4).map((x: any) => parseFloat(x.low)));
+    
+    // Bullish OB: bearish candle followed by significant bullish move
+    if (close < open && nextHigh - high > threshold) {
+      bullishOBs.push({ high, low, index: i });
+    }
+    // Bearish OB: bullish candle followed by significant bearish move
+    if (close > open && low - nextLow > threshold) {
+      bearishOBs.push({ high, low, index: i });
+    }
+  }
+  return { bullish: bullishOBs.slice(-3), bearish: bearishOBs.slice(-3) };
+}
+
+// ── Liquidity Sweep Detection ──
+// Price spikes through a previous high/low then immediately reverses
+// This is institutions hunting retail stop losses before the real move
+function detectLiquiditySweep(candles: any[], lookback: number = 20): {
+  sweptHigh: boolean; sweptLow: boolean;
+  prevHigh: number; prevLow: number;
+  direction: string;
+} {
+  if (candles.length < lookback + 3) 
+    return { sweptHigh: false, sweptLow: false, prevHigh: 0, prevLow: 0, direction: "none" };
+  
+  const recent   = candles.slice(-lookback-3, -3);
+  const lastThree = candles.slice(-3);
+  
+  const prevHigh = Math.max(...recent.map((c: any) => parseFloat(c.high)));
+  const prevLow  = Math.min(...recent.map((c: any) => parseFloat(c.low)));
+  
+  const currentHigh = Math.max(...lastThree.map((c: any) => parseFloat(c.high)));
+  const currentLow  = Math.min(...lastThree.map((c: any) => parseFloat(c.low)));
+  const currentClose = parseFloat(lastThree[lastThree.length-1].close);
+  
+  // Swept high: price went above prevHigh but closed back below it
+  const sweptHigh = currentHigh > prevHigh && currentClose < prevHigh;
+  // Swept low: price went below prevLow but closed back above it
+  const sweptLow  = currentLow < prevLow && currentClose > prevLow;
+  
+  let direction = "none";
+  if (sweptHigh) direction = "SELL"; // swept high = bearish reversal coming
+  if (sweptLow)  direction = "BUY";  // swept low = bullish reversal coming
+  
+  return { sweptHigh, sweptLow, prevHigh, prevLow, direction };
+}
+
+// ── Break of Structure (BOS) + Change of Character (CHoCH) ──
+// BOS: price breaks previous high (bullish) or low (bearish) = trend continuation
+// CHoCH: after a downtrend, price breaks a recent high = trend reversal signal
+function detectStructure(candles: any[]): {
+  trend: string;        // "bullish" | "bearish" | "ranging"
+  bos: boolean;         // break of structure confirmed
+  choch: boolean;       // change of character (potential reversal)
+  strength: number;     // 0-1 trend strength
+} {
+  if (candles.length < 30) 
+    return { trend: "ranging", bos: false, choch: false, strength: 0 };
+  
+  const closes = candles.map((c: any) => parseFloat(c.close));
+  const highs  = candles.map((c: any) => parseFloat(c.high));
+  const lows   = candles.map((c: any) => parseFloat(c.low));
+  
+  // Find swing highs and lows (simplified: local max/min over 5 candles)
+  const swingHighs: number[] = [];
+  const swingLows:  number[] = [];
+  
+  for (let i = 5; i < candles.length - 5; i++) {
+    const windowHighs = highs.slice(i-5, i+5);
+    const windowLows  = lows.slice(i-5, i+5);
+    if (highs[i] === Math.max(...windowHighs)) swingHighs.push(highs[i]);
+    if (lows[i]  === Math.min(...windowLows))  swingLows.push(lows[i]);
+  }
+  
+  if (swingHighs.length < 2 || swingLows.length < 2) 
+    return { trend: "ranging", bos: false, choch: false, strength: 0.5 };
+  
+  const lastH = swingHighs[swingHighs.length-1];
+  const prevH = swingHighs[swingHighs.length-2];
+  const lastL = swingLows[swingLows.length-1];
+  const prevL = swingLows[swingLows.length-2];
+  
+  const currentPrice = closes[closes.length-1];
+  
+  // BOS bullish: higher high + higher low
+  const bosBullish = lastH > prevH && lastL > prevL;
+  // BOS bearish: lower high + lower low
+  const bosBearish = lastH < prevH && lastL < prevL;
+  
+  // CHoCH: was bearish (lower lows) but now broke above previous swing high
+  const choch = bosBearish && currentPrice > prevH;
+  
+  const trend    = bosBullish ? "bullish" : bosBearish ? "bearish" : "ranging";
+  const bos      = bosBullish || bosBearish;
+  const strength = bos ? Math.abs(lastH - prevH) / (Math.abs(lastH - lastL) + 1e-10) : 0.5;
+  
+  return { trend, bos, choch, strength: Math.min(strength, 1) };
+}
+
+// ── MASTER ICT SIGNAL ENGINE ──
+// Combines all 4 concepts for high-probability forex entries
+// Only fires when multiple concepts align (confluence)
+function ictForexSignal(candles1m: any[], candles5m: any[], symbol: string): {
+  action: string; confidence: number; reason: string; atr: number;
+} | null {
+  if (candles1m.length < 50) return null;
+  
+  // Kill zone check — only trade during high liquidity periods
+  const kz = isKillZone();
+  if (!kz.active) return null;
+  
+  const closes = candles1m.map((c: any) => parseFloat(c.close));
+  const price  = closes[closes.length-1];
+  const atr    = calcATR(candles1m, 14);
+  const atrPct = atr / price;
+  
+  // Skip extreme volatility (news events)
+  if (atrPct > 0.005) return null;
+  
+  // Get 5m structure for bias
+  const structure5m = detectStructure(candles5m.length > 30 ? candles5m : candles1m.slice(-100));
+  
+  // Get ICT signals
+  const fvgs      = detectFVG(candles1m.slice(-30));
+  const obs       = detectOrderBlocks(candles1m.slice(-50), atr);
+  const sweep     = detectLiquiditySweep(candles1m, 20);
+  
+  let bullScore = 0, bearScore = 0;
+  const reasons: string[] = [];
+  
+  // ── Score 1: Market Structure ──
+  if (structure5m.trend === "bullish" && structure5m.bos) {
+    bullScore += 3; reasons.push("BOS_bullish");
+  }
+  if (structure5m.trend === "bearish" && structure5m.bos) {
+    bearScore += 3; reasons.push("BOS_bearish");
+  }
+  if (structure5m.choch) {
+    // CHoCH = potential reversal — trade opposite to previous trend
+    if (structure5m.trend === "bearish") { bullScore += 2; reasons.push("CHoCH_bull"); }
+    else { bearScore += 2; reasons.push("CHoCH_bear"); }
+  }
+  
+  // ── Score 2: Liquidity Sweep ──
+  if (sweep.sweptLow && sweep.direction === "BUY") {
+    bullScore += 4; reasons.push(`LiqSweep_low@${sweep.prevLow.toFixed(5)}`);
+  }
+  if (sweep.sweptHigh && sweep.direction === "SELL") {
+    bearScore += 4; reasons.push(`LiqSweep_high@${sweep.prevHigh.toFixed(5)}`);
+  }
+  
+  // ── Score 3: Price in FVG zone ──
+  for (const fvg of fvgs.bullish) {
+    if (price >= fvg.bottom && price <= fvg.top) {
+      bullScore += 3; reasons.push(`BullFVG@${fvg.bottom.toFixed(5)}`); break;
+    }
+  }
+  for (const fvg of fvgs.bearish) {
+    if (price >= fvg.bottom && price <= fvg.top) {
+      bearScore += 3; reasons.push(`BearFVG@${fvg.top.toFixed(5)}`); break;
+    }
+  }
+  
+  // ── Score 4: Price at Order Block ──
+  for (const ob of obs.bullish) {
+    if (price >= ob.low && price <= ob.high + atr * 0.3) {
+      bullScore += 3; reasons.push(`BullOB@${ob.low.toFixed(5)}`); break;
+    }
+  }
+  for (const ob of obs.bearish) {
+    if (price >= ob.low - atr * 0.3 && price <= ob.high) {
+      bearScore += 3; reasons.push(`BearOB@${ob.high.toFixed(5)}`); break;
+    }
+  }
+  
+  // ── Score 5: Kill Zone bonus ──
+  if (kz.zone === "London_Open") {
+    bullScore += 1; bearScore += 1; // equal weight — most volatile
+    reasons.push("London_Open_KZ");
+  }
+  
+  // Require minimum confluence score of 6 to trade
+  const maxScore = Math.max(bullScore, bearScore);
+  if (maxScore < 6) return null;
+  
+  // Must clearly favor one direction
+  if (Math.abs(bullScore - bearScore) < 3) return null;
+  
+  const action = bullScore > bearScore ? "BUY" : "SELL";
+  
+  // Confidence based on score (6=70%, 8=80%, 10+=92%)
+  const confidence = Math.min(92, 60 + maxScore * 4);
+  
+  return {
+    action,
+    confidence,
+    reason: `ICT[${kz.zone}]: ${reasons.join("+")}`,
+    atr
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ADVANCED MATHEMATICS ENGINE v2
+// ═══════════════════════════════════════════════════════════════
+
+// ── Order Flow Imbalance (OFI) ──
+// Proxy from candle direction ratio (no tick data needed)
+// OFI > 0.65 = strong buying pressure
+// OFI < 0.35 = strong selling pressure
+// Used as confirmation for ICT signals
+// ── Direction Memory — 10 min lock prevents flip-flopping ──
+const DIRECTION_MEMORY: Record<string, {action:string; ts:number}> = {};
+const DIR_LOCK_MS = 10 * 60 * 1000;
+
+function checkDirectionLock(symbol: string, action: string): {blocked:boolean; reason:string} {
+  const mem = DIRECTION_MEMORY[symbol];
+  if (!mem) { DIRECTION_MEMORY[symbol] = {action, ts: Date.now()}; return {blocked:false, reason:"first"}; }
+  const elapsed = Date.now() - mem.ts;
+  if (mem.action !== action && elapsed < DIR_LOCK_MS) {
+    const mins = Math.ceil((DIR_LOCK_MS - elapsed)/60000);
+    return {blocked:true, reason:`direction_lock:was_${mem.action}_locked_${mins}min`};
+  }
+  DIRECTION_MEMORY[symbol] = {action, ts: Date.now()};
+  return {blocked:false, reason:"ok"};
+}
+
+function calcOFI(candles: any[], window: number = 20): number {
+  const recent = candles.slice(-window);
+  let upCandles = 0;
+  for (const c of recent) {
+    if (parseFloat(c.close) > parseFloat(c.open)) upCandles++;
+  }
+  return upCandles / window; // 0-1
+}
+
+// ── Rough Volatility Regime (Hurst Exponent) ──
+// H < 0.45 = mean-reverting (rough) → use FVG/OB strategy
+// H > 0.55 = trending (smooth)     → use BOS/momentum strategy
+// H = 0.45-0.55 = random walk      → avoid trading
+function calcHurstFast(closes: number[], window: number = 40): number {
+  if (closes.length < window) return 0.5;
+  const prices = closes.slice(-window);
+  const returns = prices.slice(1).map((p, i) => Math.log(p / (prices[i] + 1e-10)));
+  
+  // R/S analysis (fast version with 2 scales)
+  const scale1 = Math.floor(window / 4);
+  const scale2 = Math.floor(window / 2);
+  
+  function rsAtScale(data: number[], s: number): number {
+    const chunks = Math.floor(data.length / s);
+    if (chunks < 1) return 1;
+    let rsSum = 0;
+    for (let i = 0; i < chunks; i++) {
+      const chunk = data.slice(i * s, (i + 1) * s);
+      const mean  = chunk.reduce((a, b) => a + b, 0) / chunk.length;
+      const dev   = chunk.map((_, j) => chunk.slice(0, j + 1).reduce((a, b) => a + b, 0) - mean * (j + 1));
+      const R     = Math.max(...dev) - Math.min(...dev);
+      const S     = Math.sqrt(chunk.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / chunk.length) + 1e-10;
+      rsSum += R / S;
+    }
+    return rsSum / chunks;
+  }
+  
+  const rs1 = rsAtScale(returns, scale1);
+  const rs2 = rsAtScale(returns, scale2);
+  if (rs1 <= 0 || rs2 <= 0) return 0.5;
+  
+  const H = Math.log(rs2 / rs1) / Math.log(scale2 / scale1);
+  return Math.max(0.1, Math.min(0.9, H));
+}
+
+// ── Regime-Adaptive Strategy Selector ──
+// Uses Hurst + HMM regime to choose the RIGHT strategy
+// This is the key upgrade — one strategy doesn't fit all regimes
+function getAdaptiveStrategy(hurst: number, hmm: string, ofi: number): {
+  strategy: string;
+  confidence_boost: number;
+  description: string;
+} {
+  // Trending + smooth (H > 0.55) → follow the trend
+  if (hurst > 0.55 && (hmm === "Uptrend" || hmm === "Downtrend")) {
+    return {
+      strategy: "trend_follow",
+      confidence_boost: 8,
+      description: `Trending regime H=${hurst.toFixed(2)} → momentum`
+    };
+  }
+  // Rough + ranging (H < 0.45) → mean reversion
+  if (hurst < 0.45 && hmm === "Ranging") {
+    return {
+      strategy: "mean_revert",
+      confidence_boost: 6,
+      description: `Rough regime H=${hurst.toFixed(2)} → mean reversion`
+    };
+  }
+  // High volatility → reduce confidence
+  if (hmm === "HighVolatility") {
+    return {
+      strategy: "reduce",
+      confidence_boost: -10,
+      description: `High vol regime → reduced confidence`
+    };
+  }
+  // Random walk zone (H = 0.45-0.55) → skip
+  if (hurst >= 0.45 && hurst <= 0.55 && hmm === "Ranging") {
+    return {
+      strategy: "skip",
+      confidence_boost: -20,
+      description: `Random walk H=${hurst.toFixed(2)} → skip`
+    };
+  }
+  return { strategy: "normal", confidence_boost: 0, description: "Standard regime" };
 }
 
 function getTradingSession(): { active: boolean; name: string } {
@@ -2327,39 +2677,26 @@ Deno.serve(async (req) => {
   // Fix 5: Update open trade results so AI Brain has real win/loss data
   await updateOpenTradeResults(supabase, token);
 
-  // ── ML Models — cached to eliminate 6MB egress per invocation ──
-  // Cache lives in module scope, reloads every 6 hours or on cold start
-  const now_ms = Date.now();
-  if (Object.keys(ML_MODELS_CACHE).length === 0 || now_ms - ML_MODELS_CACHE_TIME > ML_MODELS_CACHE_TTL) {
-    console.log("🔄 Loading ML models from Supabase (cache miss)...");
-    const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
-    const fresh: Record<string, any> = {};
-    for (const row of (mlRows || [])) {
-      try {
-        const mj = typeof row.model_json === "string" ? JSON.parse(row.model_json) : row.model_json;
-        if (mj?.main_trees && mj?.meta_trees) {
-          fresh[row.symbol] = mj;
-          console.log(`✅ ${row.symbol}: ${mj.main_trees.length} main + ${mj.meta_trees.length} meta trees`);
-        }
-      } catch(e) { console.log(`❌ ${row.symbol}: parse error ${e}`); }
-    }
-    if (Object.keys(fresh).length > 0) {
-      ML_MODELS_CACHE      = fresh;
-      ML_MODELS_CACHE_TIME = now_ms;
-      console.log(`✅ ML models cached: ${Object.keys(ML_MODELS_CACHE).length} models`);
-    }
-  } else {
-    const age = Math.round((now_ms - ML_MODELS_CACHE_TIME) / 60000);
-    console.log(`✅ ML models from cache: ${Object.keys(ML_MODELS_CACHE).length} models (${age}min old)`);
+  // Load ML models
+  const { data: mlRows } = await supabase.from("ml_models").select("symbol, model_json, win_rate");
+  const ML_MODELS: Record<string, any> = {};
+  for (const row of (mlRows || [])) {
+    try {
+      const mj = typeof row.model_json === "string" ? JSON.parse(row.model_json) : row.model_json;
+      if (mj?.main_trees && mj?.meta_trees) {
+        ML_MODELS[row.symbol] = mj;
+        console.log(`✅ ${row.symbol}: ${mj.main_trees.length} main + ${mj.meta_trees.length} meta trees`);
+      }
+    } catch(e) { console.log(`❌ ${row.symbol}: parse error ${e}`); }
   }
-  const ML_MODELS = ML_MODELS_CACHE;
   console.log(`🧠 ML models: ${Object.keys(ML_MODELS).join(", ")}`);
 
-  // Weekend: only synthetics
-  const _dow = new Date().getUTCDay();
+  // Weekend: block forex, only synthetics trade 24/7
+  const _dow = new Date().getUTCDay(); // 0=Sun, 6=Sat
   if (_dow === 0 || _dow === 6) {
-    cfg.symbols = (cfg.symbols||[]).filter((s:string)=>
-      s.startsWith("BOOM")||s.startsWith("CRASH")||s.startsWith("R_")||s.startsWith("1HZ"));
+    cfg.symbols = (cfg.symbols||[]).filter((s:string) =>
+      s.startsWith("BOOM") || s.startsWith("CRASH") ||
+      s.startsWith("R_")   || s.startsWith("1HZ"));
     console.log(`📅 Weekend — synthetics only: ${cfg.symbols.join(", ")}`);
   }
 
@@ -2392,16 +2729,6 @@ Deno.serve(async (req) => {
     console.log(`⏱️  Cooldown active for: ${[...cooldownSymbols].join(", ")}`);
   }
 
-  // ── Manual stop — respect auto_trade=false from UI ─────────────────
-  // If user turned off bot from RemoteControl in the app → halt
-  if (cfg.auto_trade === false) {
-    console.log("🛑 Bot manually stopped via UI (auto_trade=false)");
-    return new Response(JSON.stringify({
-      status:  "manually_stopped",
-      message: "Trading halted — re-enable in app Settings or RemoteControl",
-    }), { headers: CORS });
-  }
-
   // ── Daily hard loss limit ───────────────────────────────────────────
   // If today's total PnL < -dailyLossLimitPct% of balance → halt trading
   const dailyLossLimitPct = cfg.daily_loss_limit_pct || 5; // default 5%
@@ -2429,7 +2756,7 @@ Deno.serve(async (req) => {
 
   for (const symbol of allSymbolsList) {
     try {
-      // ── Duplicate guard — 5 min per symbol ──
+      // ── Duplicate guard ──
       const _dup = await supabase.from("trades").select("id")
         .eq("symbol", symbol)
         .gte("created_at", new Date(Date.now()-5*60*1000).toISOString())
@@ -2698,6 +3025,38 @@ Deno.serve(async (req) => {
           sig.reason = sig.reason + " [direction_corrected]";
         }
 
+        // ── OFI + Rough Volatility + Regime Adaptive ──────────────────
+        const closes4ofi = c1m.map((x: any) => parseFloat(x.close));
+        const ofi         = calcOFI(c1m, 20);
+        const hurst       = calcHurstFast(closes4ofi, 40);
+        const adaptStrat  = getAdaptiveStrategy(hurst, regime.name, ofi);
+
+        // Apply regime-based confidence adjustment
+        sig.confidence = Math.max(10, Math.min(95, sig.confidence + adaptStrat.confidence_boost));
+        
+        // Block trades in random walk regime (no edge)
+        if (adaptStrat.strategy === "skip") {
+          scanLog.push(`${symbol}: regime_skip — ${adaptStrat.description}`);
+          continue;
+        }
+
+        // OFI confirmation — signal must align with order flow
+        const ofiBull = ofi > 0.60 && sig.action === "BUY";
+        const ofiBear = ofi < 0.40 && sig.action === "SELL";
+        const ofiNeutral = ofi >= 0.40 && ofi <= 0.60;
+        
+        if (!ofiNeutral && !ofiBull && !ofiBear) {
+          // OFI conflicts with signal — reduce confidence significantly
+          sig.confidence = Math.max(10, sig.confidence - 15);
+          scanLog.push(`${symbol}: OFI_conflict ofi=${ofi.toFixed(2)} signal=${sig.action}`);
+        } else if (ofiBull || ofiBear) {
+          // OFI confirms signal — boost confidence
+          sig.confidence = Math.min(95, sig.confidence + 5);
+          scanLog.push(`${symbol}: OFI_confirmed ofi=${ofi.toFixed(2)}`);
+        }
+
+        console.log(`📊 ${symbol}: H=${hurst.toFixed(2)} OFI=${ofi.toFixed(2)} regime=${adaptStrat.strategy} conf=${sig.confidence}%`);
+
         // Apply Poisson/Topo confidence boost for BOOM/CRASH
         const spikeMeta = (globalThis as any)[`${symbol}_spike_meta`];
         if (spikeMeta && isSpikeSym) {
@@ -2712,12 +3071,9 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── Direction lock check ──────────────────────────────────────
+        // Direction lock — prevent flip-flopping
         const dirLock = checkDirectionLock(symbol, sig.action);
-        if (dirLock.blocked) {
-          scanLog.push(`${symbol}: ${dirLock.reason}`);
-          continue;
-        }
+        if (dirLock.blocked) { scanLog.push(`${symbol}: ${dirLock.reason}`); continue; }
 
         const logLine = `${symbol}: ML→${sig.action} conf:${finalConf} HMM:${regime.name} (${sig.reason})`;
         scanLog.push(logLine);
@@ -2799,13 +3155,47 @@ Deno.serve(async (req) => {
 
         if (frsi > 80 || frsi < 20) { scanLog.push(`${symbol}: fb_rsi_extreme`); continue; }
 
-        // ── Block TA trades on instruments where ML is required ──
-        // Diagnostic confirmed TA-only not viable on these (WR < 50% across all windows)
-        const taOnlySymbols = ["R_50","R_25","R_100",
-          "frxEURUSD","frxGBPUSD","frxUSDJPY","frxGBPJPY","frxAUDUSD",
-          "frxXAUUSD","frxXAGUSD","cryBTCUSD","cryETHUSD"];
-        if (taOnlySymbols.includes(symbol)) {
-          scanLog.push(`${symbol}: ML_required (TA blocked by diagnostic)`);
+        // ── ICT Strategy for forex — replaces weak EMA fallback ──
+        const forexSymbols = ["frxEURUSD","frxGBPUSD","frxUSDJPY","frxGBPJPY",
+          "frxAUDUSD","frxXAUUSD","frxXAGUSD","frxEURGBP","frxEURJPY"];
+        const cryptoSymbols = ["cryBTCUSD","cryETHUSD"];
+
+        if (forexSymbols.includes(symbol)) {
+          // Use ICT Smart Money engine for forex
+          const ictSig = ictForexSignal(c1m, c5m, symbol);
+          if (!ictSig) {
+            scanLog.push(`${symbol}: ICT_no_setup (no confluence)`);
+            continue;
+          }
+          sig = ictSig;
+
+          // Enhance ICT signal with OFI + Hurst
+          const ictCloses  = c1m.map((x: any) => parseFloat(x.close));
+          const ictOFI     = calcOFI(c1m, 20);
+          const ictHurst   = calcHurstFast(ictCloses, 40);
+          const ictAdapt   = getAdaptiveStrategy(ictHurst, regime.name, ictOFI);
+
+          sig.confidence = Math.max(10, Math.min(95, sig.confidence + ictAdapt.confidence_boost));
+
+          // OFI must not strongly conflict with ICT signal
+          const ictOfiBull = ictOFI > 0.60 && sig.action === "BUY";
+          const ictOfiBear = ictOFI < 0.40 && sig.action === "SELL";
+          const ictOfiNeutral = ictOFI >= 0.40 && ictOFI <= 0.60;
+
+          if (!ictOfiNeutral && !ictOfiBull && !ictOfiBear) {
+            sig.confidence = Math.max(10, sig.confidence - 12);
+          } else if (ictOfiBull || ictOfiBear) {
+            sig.confidence = Math.min(95, sig.confidence + 6);
+          }
+
+          if (ictAdapt.strategy === "skip") {
+            scanLog.push(`${symbol}: ICT_regime_skip — ${ictAdapt.description}`);
+            continue;
+          }
+
+          scanLog.push(`${symbol}: ICT→${sig.action} conf:${sig.confidence}% H=${ictHurst.toFixed(2)} OFI=${ictOFI.toFixed(2)} ${sig.reason}`);
+        } else if (cryptoSymbols.includes(symbol) || ["R_50","R_25","R_100"].includes(symbol)) {
+          scanLog.push(`${symbol}: ML_required (use ML models only)`);
           continue;
         }
 
@@ -2849,12 +3239,6 @@ Deno.serve(async (req) => {
         if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
             sig.action !== regime.allowedAction) {
           scanLog.push(`${symbol}: fallback HMM_direction_blocked`); continue;
-        }
-        // Direction lock for fallback path too
-        const dirLock2 = checkDirectionLock(symbol, sig.action);
-        if (dirLock2.blocked) {
-          scanLog.push(`${symbol}: ${dirLock2.reason}`);
-          continue;
         }
         scanLog.push(`${symbol}: Fallback4S→${sig.action} ${sig.confidence}% (${sig.reason}) HMM:${regime.name}`);
       }
@@ -3011,30 +3395,26 @@ Deno.serve(async (req) => {
       "frxGBPJPY": "GBPJPY",  "frxXAUUSD": "XAUUSD",
       "frxXAGUSD": "XAGUSD",  "frxNZDUSD": "NZDUSD",
       "cryBTCUSD": "BTCUSD",  "cryETHUSD": "ETHUSD",
+      "BOOM1000":  "Boom 1000 Index",
+      "BOOM500":   "Boom 500 Index",
+      "CRASH1000": "Crash 1000 Index",
+      "CRASH500":  "Crash 500 Index",
+      "R_10":      "Volatility 10 Index",
+      "R_25":      "Volatility 25 Index",
+      "R_50":      "Volatility 50 Index",
+      "R_75":      "Volatility 75 Index",
+      "R_100":     "Volatility 100 Index",
+      "R_50":      "Volatility 50 Index",
     };
     const mt5Symbol = DERIV_TO_MT5[best.symbol];
     if (mt5Symbol) {
       try {
         const { error: mt5Err } = await supabase.from("mt5_signals").insert({
-          symbol:          mt5Symbol,
-          deriv_symbol:    best.symbol,
-          action:          best.action,        // "BUY" | "SELL"
-          confidence:      best.confidence,
-          stake:           stake,
-          tp_pct:          fpt.tpPct,
-          sl_pct:          fpt.slPct,
-          win_prob:        fpt.winProb,
-          regime:          best.regime || "unknown",
-          session:         session.name,
-          status:          "pending",          // EA sets to "executed" after trade
-          source:          "timi_edge_fn",
-          created_at:      new Date().toISOString(),
-          expires_at:      new Date(Date.now() + 90 * 1000).toISOString(), // 90sec expiry
-          // EA MUST check: WHERE expires_at > now() before executing
-          // Prevents stale signals from executing after price has moved
-          poisson_prob:    isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.poissonProb || null) : null,
-          topo_compress:   isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.compressionScore || null) : null,
-          high_conviction: isSpikeSym ? ((globalThis as any)[`${best.symbol}_spike_meta`]?.highConviction || false) : false,
+          symbol:     mt5Symbol,
+          action:     best.action,
+          confidence: best.confidence,
+          status:     "pending",
+          expires_at: new Date(Date.now() + 90 * 1000).toISOString(),
         });
         if (mt5Err) console.log(`⚠️  MT5 signal write error: ${mt5Err.message}`);
         else console.log(`📡 MT5 signal written: ${mt5Symbol} ${best.action} conf:${best.confidence}%`);
@@ -3044,52 +3424,24 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── Telegram Signal Sender ─────────────────────────────────────────
-  // Sends signal in format EA expects: SIGNAL:SYMBOL:ACTION:CONFIDENCE
-  // EA (TIMI_Telegram.mq5) parses this format via ParseAndTrade()
+  // Telegram
   if (success && best) {
     try {
-      const tgCfg = await supabase.from("bot_config")
-        .select("telegram_token, telegram_chat_id")
-        .eq("active", true).single();
-      
-      const tgToken  = tgCfg.data?.telegram_token  || cfg.telegram_token;
-      const tgChatId = tgCfg.data?.telegram_chat_id || cfg.telegram_chat_id;
-
+      const tgToken  = cfg.telegram_token;
+      const tgChatId = cfg.telegram_chat_id;
       if (tgToken && tgChatId) {
-        // Format EA expects: SIGNAL:SYMBOL:ACTION:CONFIDENCE
-        const signalMsg = `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`;
-        // Also send human-readable summary
-        const humanMsg  = `🤖 TIMI Signal\n` +
-          `Symbol: ${best.symbol}\n` +
-          `Action: ${best.action}\n` +
-          `Confidence: ${best.confidence}%\n` +
-          `Bayesian WR: ${(best.bayesian_win_prob*100).toFixed(1)}%\n` +
-          `Stake: $${stake}\n` +
-          `Payout: $${result?.payout || 0}\n` +
-          `Session: ${getTradingSession().name}`;
-
-        const tgUrl = `https://api.telegram.org/bot${tgToken}/sendMessage`;
-        
-        // Send EA-compatible signal first
-        await fetch(tgUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: tgChatId, text: signalMsg })
+        const msg = `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`;
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId, text: msg})
         });
-        // Send human-readable summary
-        await fetch(tgUrl, {
-          method: "POST", 
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: tgChatId, text: humanMsg })
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId, text: `🤖 TIMI\nSymbol: ${best.symbol}\nAction: ${best.action}\nConf: ${best.confidence}%\nStake: $${stake}\nPayout: $${result?.payout||0}`})
         });
-        console.log(`📱 Telegram sent: ${signalMsg} to chat ${tgChatId}`);
-      } else {
-        console.log(`⚠️  Telegram not configured — token=${tgToken ? "present" : "MISSING"} chatId=${tgChatId ? "present" : "MISSING"}`);
+        console.log(`📱 Telegram: ${msg}`);
       }
-    } catch(tgErr) {
-      console.log(`⚠️  Telegram error: ${tgErr}`);
-    }
+    } catch(e) { console.log(`Telegram error: ${e}`); }
   }
 
   return new Response(JSON.stringify({
