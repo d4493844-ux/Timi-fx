@@ -136,7 +136,7 @@ export default function RemoteControl() {
     setSaving(true);
     try {
       const { error } = await supabase.from("bot_config")
-        .update({ [field]: value }).eq("id", config.id);
+        .update({ [field]: value }).eq("active", true);
       if (error) throw error;
       setConfig(prev => ({ ...prev, [field]: value }));
       setStatus(`✅ ${field} updated`);
