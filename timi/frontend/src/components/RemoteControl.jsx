@@ -132,6 +132,7 @@ export default function RemoteControl() {
 
   // ── Save single field to Supabase immediately ──
   const saveField = useCallback(async (field, value) => {
+    console.log("saveField called:", field, value, "config.id:", config?.id);
     if (!config?.id) return;
     setSaving(true);
     try {
