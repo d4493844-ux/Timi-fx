@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-05-29 15:20:52.939076",
+  "trained_at": "2026-05-29 22:20:30.673914",
   "trainer": "advanced_v2",
   "deploy_symbols": [
     "BOOM1000",
@@ -72,7 +72,7 @@
         "max_hold": 5
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:19:34.533214",
+      "trained_at": "2026-05-29 22:19:13.191056",
       "n_rows": 4389,
       "discard_rate": 0.118,
       "labels": {
@@ -135,7 +135,7 @@
         "max_hold": 5
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:19:43.594429",
+      "trained_at": "2026-05-29 22:19:22.107188",
       "n_rows": 4491,
       "discard_rate": 0.097,
       "labels": {
@@ -198,7 +198,7 @@
         "max_hold": 5
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:19:53.671300",
+      "trained_at": "2026-05-29 22:19:31.984094",
       "n_rows": 3873,
       "discard_rate": 0.222,
       "labels": {
@@ -261,7 +261,7 @@
         "max_hold": 5
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:00.156043",
+      "trained_at": "2026-05-29 22:19:38.528023",
       "n_rows": 4117,
       "discard_rate": 0.173,
       "labels": {
@@ -324,7 +324,7 @@
         "max_hold": 30
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:08.313948",
+      "trained_at": "2026-05-29 22:19:46.464321",
       "n_rows": 4870,
       "discard_rate": 0.021,
       "labels": {
@@ -387,7 +387,7 @@
         "max_hold": 30
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:15.817194",
+      "trained_at": "2026-05-29 22:19:53.773343",
       "n_rows": 4839,
       "discard_rate": 0.028,
       "labels": {
@@ -450,7 +450,7 @@
         "max_hold": 30
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:21.501894",
+      "trained_at": "2026-05-29 22:19:59.526756",
       "n_rows": 4863,
       "discard_rate": 0.023,
       "labels": {
@@ -513,7 +513,7 @@
         "max_hold": 20
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:27.895786",
+      "trained_at": "2026-05-29 22:20:06.314426",
       "n_rows": 4560,
       "discard_rate": 0.037,
       "labels": {
@@ -576,7 +576,7 @@
         "max_hold": 20
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:33.280057",
+      "trained_at": "2026-05-29 22:20:11.542459",
       "n_rows": 4548,
       "discard_rate": 0.04,
       "labels": {
@@ -639,7 +639,7 @@
         "max_hold": 8
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:37.997702",
+      "trained_at": "2026-05-29 22:20:16.127911",
       "n_rows": 4141,
       "discard_rate": 0.168,
       "labels": {
@@ -702,7 +702,7 @@
         "max_hold": 8
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:42.847682",
+      "trained_at": "2026-05-29 22:20:20.672591",
       "n_rows": 4051,
       "discard_rate": 0.186,
       "labels": {
@@ -765,7 +765,7 @@
         "max_hold": 8
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:47.708614",
+      "trained_at": "2026-05-29 22:20:25.729753",
       "n_rows": 4194,
       "discard_rate": 0.157,
       "labels": {
@@ -828,7 +828,7 @@
         "max_hold": 8
       },
       "deploy": true,
-      "trained_at": "2026-05-29 15:20:52.937414",
+      "trained_at": "2026-05-29 22:20:30.672957",
       "n_rows": 4128,
       "discard_rate": 0.17,
       "labels": {
