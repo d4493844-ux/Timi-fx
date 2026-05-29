@@ -53,7 +53,7 @@
     "max_hold": 20
   },
   "deploy": true,
-  "trained_at": "2026-05-16 11:01:29.331501",
+  "trained_at": "2026-05-29 11:01:51.764981",
   "n_rows": 4548,
   "discard_rate": 0.04,
   "labels": {

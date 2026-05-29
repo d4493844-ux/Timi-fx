@@ -363,7 +363,9 @@ def main():
     print("🧠 TIMI ADVANCED ML TRAINER v2.0")
     print("   Triple Barrier | Purged CV | Hawkes | Wavelet | Ensemble\n")
 
-    targets=["BOOM500","CRASH500"]
+    targets=["BOOM1000","BOOM500","CRASH1000","CRASH500",
+             "frxEURUSD","frxGBPUSD","frxUSDJPY","frxXAUUSD",
+             "frxXAGUSD","R_75","R_50","R_25","R_100"]
 
     results=[]
     for sym in targets:
