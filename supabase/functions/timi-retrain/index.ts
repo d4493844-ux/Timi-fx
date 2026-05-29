@@ -353,8 +353,9 @@ Deno.serve(async (req) => {
       if (hasML && perf.mlTotal >= 100 && perf.mlWins / perf.mlTotal < DEMOTION_RATE) {
         const mlWR = perf.mlWins / perf.mlTotal;
         log.push(`  ⬇️ ${symbol}: ML WR ${(mlWR*100).toFixed(1)}% < ${DEMOTION_RATE*100}% — DEMOTING`);
-        // Remove from ml_models
-        await supabase.from("ml_models").delete().eq("symbol", symbol);
+        // FIX: Never delete models — just mark as low performance
+        // await supabase.from("ml_models").delete().eq("symbol", symbol); // DISABLED
+        console.log(`⚠️ ${symbol} underperforming but keeping model — user controls symbols`);
         // FIX: Auto-removal disabled — user controls symbols via Settings
         // Remove from bot_config symbols - DISABLED
         const { data: cfg } = await supabase.from("bot_config").select("symbols").eq("active", true).single();
