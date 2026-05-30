@@ -2145,29 +2145,6 @@ function monteCarloStake(
   return { stake: finalStake, riskOfRuin, expectedGrowth, recommendation };
 }
 
-// ── Kelly Criterion ──
-async function getKellyStake(supabase: any, symbol: string, balance: number, minS: number, maxS: number): Promise<{stake:number;method:string;trades:number}> {
-  try {
-    const kdata = await supabase.from("trades").select("result, stake, pnl").eq("symbol", symbol).eq("account_name", "edge_function").in("result", ["win", "loss"]).not("pnl", "is", null).order("created_at", { ascending: false }).limit(20);
-    const rows = kdata.data;
-    if (!rows || rows.length < 8) return { stake: Math.max(minS, Math.min(maxS, balance * 0.015)), method: "flat", trades: rows?.length || 0 };
-    const wins = rows.filter((t: any) => t.result === "win");
-    const losses = rows.filter((t: any) => t.result === "loss");
-    const p = wins.length / rows.length;
-    const q = 1 - p;
-    const avgW = wins.length > 0 ? wins.reduce((s: number, t: any) => s + Math.abs(parseFloat(t.pnl || "0")) / Math.max(parseFloat(t.stake || "1"), 0.01), 0) / wins.length : 0.85;
-    const avgL = losses.length > 0 ? losses.reduce((s: number, t: any) => s + Math.abs(parseFloat(t.pnl || "0")) / Math.max(parseFloat(t.stake || "1"), 0.01), 0) / losses.length : 0.90;
-    const b = avgW / Math.max(avgL, 0.01);
-    const fFull = (p * b - q) / b;
-    if (fFull <= 0) return { stake: minS, method: "no_edge", trades: rows.length };
-    const fHalf = Math.min(fFull * 0.5, 0.15);
-    const stake = Math.max(minS, Math.min(maxS, parseFloat((balance * fHalf).toFixed(2))));
-    return { stake, method: "half_kelly", trades: rows.length };
-  } catch (e: any) {
-    return { stake: Math.max(minS, Math.min(maxS, balance * 0.015)), method: "error", trades: 0 };
-  }
-}
-
 // Get recent win rate and avg payout from trades table
 async function getRecentPerformance(supabase: any): Promise<{ winRate: number; avgWinPct: number; avgLossPct: number }> {
   try {
@@ -2643,20 +2620,19 @@ Deno.serve(async (req) => {
   // Only use Monte Carlo if enough real trade data exists
   let mc: any;
   let stake: number;
-  const kellyResult = await getKellyStake(supabase, best.symbol, balance, minStk, maxStk);
-  if (kellyResult.trades >= 8) {
-    stake = kellyResult.stake;
-    mc = { stake, riskOfRuin: 0, expectedGrowth: 0, recommendation: "kelly_" + kellyResult.method, base_stake: stake, final_stake: stake };
-  } else if (hasEnoughData) {
+  if (hasEnoughData) {
     mc = monteCarloStake(
         balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
-        Array.isArray(features) && features.length > 53 ? (features[53] || 0) : 0,
-        Array.isArray(features) && features.length > 54 ? (features[54] || 1) : 1
+        Array.isArray(features) && features.length > 53 ? (features[53] || 0) : 0,   // gc_skewness
+        Array.isArray(features) && features.length > 54 ? (features[54] || 1) : 1    // gc_kurtosis
       );
     stake = mc.stake;
+    console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation} ror:${(mc.riskOfRuin*100).toFixed(1)}%)`);
   } else {
+    // Not enough data — use flat risk_pct directly
     stake = Math.max(minStk, Math.min(maxStk, parseFloat(((balance * riskPct) / 100).toFixed(2))));
     mc = { stake, riskOfRuin: 0, expectedGrowth: 0, recommendation: "insufficient_data", base_stake: stake, final_stake: stake };
+    console.log(`💰 Flat stake: $${stake} (Monte Carlo needs 10+ trades)`);
   }
   const baseStake = Math.max(minStk, parseFloat(((balance * riskPct) / 100).toFixed(2)));
   console.log(`💰 Base stake: $${baseStake} → Monte Carlo adjusted: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
