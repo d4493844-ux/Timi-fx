@@ -3378,18 +3378,25 @@ Deno.serve(async (req) => {
         if (forexSymbols.includes(symbol)) {
           // Use ICT Smart Money engine for forex
           // ── PHASE 2: Cross-Asset Lead-Lag check ───────────────────
-          const leadLagPair = ({"frxUSDJPY":{leader:"frxXAUUSD",lag:3,correlation:-0.65},
-            "frxGBPUSD":{leader:"frxEURUSD",lag:2,correlation:0.85},
-            "frxAUDUSD":{leader:"frxXAUUSD",lag:2,correlation:0.70}} as any)[symbol];
+          const LEAD_LAG_MAP: Record<string,{leader:string;lag:number;correlation:number}> = {
+            "frxUSDJPY": {leader:"frxXAUUSD", lag:3, correlation:-0.65},
+            "frxGBPUSD": {leader:"frxEURUSD", lag:2, correlation:0.85},
+            "frxAUDUSD": {leader:"frxXAUUSD", lag:2, correlation:0.70},
+          };
+          const leadLagPair = LEAD_LAG_MAP[symbol];
+          let llBoost = 0;
           if (leadLagPair) {
-            const leaderCandles = await fetchLeaderCandles(leadLagPair.leader);
-            const llSig = detectLeadLagSignal(leaderCandles, leadLagPair.lag, leadLagPair.correlation);
-            if (llSig.signal !== "NONE" && llSig.strength > 0.4) {
-              scanLog.push(`${symbol}: lead_lag_${leadLagPair.leader}→${llSig.signal} str=${llSig.strength.toFixed(2)}`);
-              // Use lead-lag as additional confirmation for ICT
-            }
+            try {
+              const leaderC = await fetchLeaderCandles(leadLagPair.leader);
+              if (leaderC.length > 5) {
+                const llSig = detectLeadLagSignal(leaderC, leadLagPair.lag, leadLagPair.correlation);
+                if (llSig.signal !== "NONE" && llSig.strength > 0.4) {
+                  llBoost = Math.round(llSig.strength * 10);
+                  scanLog.push(`${symbol}: lead_lag boost=+${llBoost}`);
+                }
+              }
+            } catch(_) {}
           }
-
           const ictSig = ictForexSignal(c1m, c5m, symbol);
           if (!ictSig) {
             // Check if lead-lag gives a standalone signal
