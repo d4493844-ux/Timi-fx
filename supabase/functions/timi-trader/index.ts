@@ -1808,27 +1808,6 @@ function calcOFI(candles: any[], window: number = 20): number {
 // H < 0.45 = mean-reverting (rough) → use FVG/OB strategy
 // H > 0.55 = trending (smooth)     → use BOS/momentum strategy
 // H = 0.45-0.55 = random walk      → avoid trading
-// ── Volatility Exhaustion Detector ──────────────────────────
-const SYNTH_ANNUAL_VOL: Record<string,number> = {
-  "R_10":0.10,"R_25":0.25,"R_50":0.50,"R_75":0.75,"R_100":1.00,
-  "1HZ10V":0.10,"1HZ25V":0.25,"1HZ50V":0.50,"1HZ75V":0.75,"1HZ100V":1.00,
-};
-function detectVolatilityExhaustion(candles:any[], symbol:string): {state:string;adj:number;reason:string} {
-  const annVol = SYNTH_ANNUAL_VOL[symbol];
-  if (!annVol) return {state:"normal",adj:0,reason:"n/a"};
-  const expected = annVol / Math.sqrt(525600);
-  const closes = candles.slice(-20).map((c:any)=>parseFloat(c.close));
-  if (closes.length < 5) return {state:"normal",adj:0,reason:"insufficient"};
-  const moves = closes.slice(1).map((c,i)=>Math.abs(c-closes[i])/(closes[i]+1e-10));
-  const actual = moves.reduce((a,b)=>a+b,0)/moves.length;
-  const ratio = actual/(expected+1e-10);
-  if (ratio < 0.4) return {state:"coiling",adj:12,reason:`coiling_${ratio.toFixed(2)}`};
-  if (ratio < 0.7) return {state:"coiling",adj:6,reason:`mild_coil_${ratio.toFixed(2)}`};
-  if (ratio > 2.5) return {state:"exhausted",adj:-20,reason:`exhausted_${ratio.toFixed(2)}`};
-  if (ratio > 1.5) return {state:"exhausted",adj:-10,reason:`mild_exhaust_${ratio.toFixed(2)}`};
-  return {state:"normal",adj:0,reason:`normal_${ratio.toFixed(2)}`};
-}
-
 function calcHurstFast(closes: number[], window: number = 40): number {
   if (closes.length < window) return 0.5;
   const prices = closes.slice(-window);
@@ -2166,29 +2145,27 @@ function monteCarloStake(
   return { stake: finalStake, riskOfRuin, expectedGrowth, recommendation };
 }
 
-// ── Dynamic Kelly Criterion ──────────────────────────────────
-async function getKellyStake(supabase:any, symbol:string, balance:number, minStake:number, maxStake:number) {
+// ── Kelly Criterion ──
+async function getKellyStake(supabase: any, symbol: string, balance: number, minS: number, maxS: number): Promise<{stake:number;method:string;trades:number}> {
   try {
-    const { data } = await supabase.from("trades").select("result,stake,pnl")
-      .eq("symbol", symbol).eq("account_name","edge_function")
-      .in("result",["win","loss"]).not("pnl","is",null)
-      .order("created_at",{ascending:false}).limit(20);
-    if (!data || data.length < 8)
-      return { stake: Math.max(minStake,Math.min(maxStake,balance*0.015)), method:"flat", trades:data?.length||0 };
-    const wins=data.filter((t:any)=>t.result==="win");
-    const losses=data.filter((t:any)=>t.result==="loss");
-    const p=wins.length/data.length;
-    const q=1-p;
-    const avgWin=wins.length>0 ? wins.reduce((s:number,t:any)=>s+Math.abs(parseFloat(t.pnl||0))/Math.max(parseFloat(t.stake||1),0.01),0)/wins.length : 0.85;
-    const avgLoss=losses.length>0 ? losses.reduce((s:number,t:any)=>s+Math.abs(parseFloat(t.pnl||0))/Math.max(parseFloat(t.stake||1),0.01),0)/losses.length : 0.90;
-    const b=avgWin/Math.max(avgLoss,0.01);
-    const fullKelly=(p*b-q)/b;
-    if (fullKelly<=0) return { stake:minStake, method:"no_edge", trades:data.length };
-    const f=Math.min(fullKelly*0.5, 0.15);
-    const stake=Math.max(minStake,Math.min(maxStake,parseFloat((balance*f).toFixed(2))));
-    console.log(`📊 Kelly ${symbol}: f=${(f*100).toFixed(1)}% WR=${(p*100).toFixed(0)}% → $${stake}`);
-    return { stake, method:"half_kelly", trades:data.length, kellyF:f, winRate:p };
-  } catch(_e: any) { return { stake:Math.max(minStake,Math.min(maxStake,balance*0.015)), method:"error", trades:0 }; }
+    const kdata = await supabase.from("trades").select("result, stake, pnl").eq("symbol", symbol).eq("account_name", "edge_function").in("result", ["win", "loss"]).not("pnl", "is", null).order("created_at", { ascending: false }).limit(20);
+    const rows = kdata.data;
+    if (!rows || rows.length < 8) return { stake: Math.max(minS, Math.min(maxS, balance * 0.015)), method: "flat", trades: rows?.length || 0 };
+    const wins = rows.filter((t: any) => t.result === "win");
+    const losses = rows.filter((t: any) => t.result === "loss");
+    const p = wins.length / rows.length;
+    const q = 1 - p;
+    const avgW = wins.length > 0 ? wins.reduce((s: number, t: any) => s + Math.abs(parseFloat(t.pnl || "0")) / Math.max(parseFloat(t.stake || "1"), 0.01), 0) / wins.length : 0.85;
+    const avgL = losses.length > 0 ? losses.reduce((s: number, t: any) => s + Math.abs(parseFloat(t.pnl || "0")) / Math.max(parseFloat(t.stake || "1"), 0.01), 0) / losses.length : 0.90;
+    const b = avgW / Math.max(avgL, 0.01);
+    const fFull = (p * b - q) / b;
+    if (fFull <= 0) return { stake: minS, method: "no_edge", trades: rows.length };
+    const fHalf = Math.min(fFull * 0.5, 0.15);
+    const stake = Math.max(minS, Math.min(maxS, parseFloat((balance * fHalf).toFixed(2))));
+    return { stake, method: "half_kelly", trades: rows.length };
+  } catch (e: any) {
+    return { stake: Math.max(minS, Math.min(maxS, balance * 0.015)), method: "error", trades: 0 };
+  }
 }
 
 // Get recent win rate and avg payout from trades table
@@ -2666,21 +2643,20 @@ Deno.serve(async (req) => {
   // Only use Monte Carlo if enough real trade data exists
   let mc: any;
   let stake: number;
-  const kellyRes = await getKellyStake(supabase, best.symbol, balance, minStk, maxStk);
-  if (kellyRes.trades >= 8) {
-    stake = kellyRes.stake;
-    mc = { stake, riskOfRuin:0, expectedGrowth:0, recommendation:`kelly_${kellyRes.method}`, base_stake:stake, final_stake:stake };
-    console.log(`💰 Kelly stake: $${stake} (${kellyRes.method} n=${kellyRes.trades})`);
+  const kellyResult = await getKellyStake(supabase, best.symbol, balance, minStk, maxStk);
+  if (kellyResult.trades >= 8) {
+    stake = kellyResult.stake;
+    mc = { stake, riskOfRuin: 0, expectedGrowth: 0, recommendation: "kelly_" + kellyResult.method, base_stake: stake, final_stake: stake };
   } else if (hasEnoughData) {
-    mc = monteCarloStake(balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
-        Array.isArray(features) && features.length > 53 ? (features[53]||0) : 0,
-        Array.isArray(features) && features.length > 54 ? (features[54]||1) : 1);
+    mc = monteCarloStake(
+        balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
+        Array.isArray(features) && features.length > 53 ? (features[53] || 0) : 0,
+        Array.isArray(features) && features.length > 54 ? (features[54] || 1) : 1
+      );
     stake = mc.stake;
-    console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation})`);
   } else {
-    stake = Math.max(minStk, Math.min(maxStk, parseFloat(((balance*riskPct)/100).toFixed(2))));
-    mc = { stake, riskOfRuin:0, expectedGrowth:0, recommendation:"insufficient_data", base_stake:stake, final_stake:stake };
-    console.log(`💰 Flat stake: $${stake}`);
+    stake = Math.max(minStk, Math.min(maxStk, parseFloat(((balance * riskPct) / 100).toFixed(2))));
+    mc = { stake, riskOfRuin: 0, expectedGrowth: 0, recommendation: "insufficient_data", base_stake: stake, final_stake: stake };
   }
   const baseStake = Math.max(minStk, parseFloat(((balance * riskPct) / 100).toFixed(2)));
   console.log(`💰 Base stake: $${baseStake} → Monte Carlo adjusted: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
@@ -3079,17 +3055,6 @@ Deno.serve(async (req) => {
         }
 
         console.log(`📊 ${symbol}: H=${hurst.toFixed(2)} OFI=${ofi.toFixed(2)} regime=${adaptStrat.strategy} conf=${sig.confidence}%`);
-
-        // ── Volatility Exhaustion check ───────────────────────────
-        const volEx = detectVolatilityExhaustion(c1m, symbol);
-        if (volEx.state === "exhausted") {
-          scanLog.push(`${symbol}: ${volEx.reason} — skipping`);
-          continue;
-        }
-        if (volEx.adj !== 0) {
-          sig.confidence = Math.max(10, Math.min(95, sig.confidence + volEx.adj));
-          scanLog.push(`${symbol}: vol_${volEx.state} conf_adj=${volEx.adj>0?"+":""}${volEx.adj}`);
-        }
 
         // Apply Poisson/Topo confidence boost for BOOM/CRASH
         const spikeMeta = (globalThis as any)[`${symbol}_spike_meta`];
