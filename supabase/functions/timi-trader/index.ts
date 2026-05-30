@@ -1795,91 +1795,6 @@ function ictForexSignal(candles1m: any[], candles5m: any[], symbol: string): {
 // OFI > 0.65 = strong buying pressure
 // OFI < 0.35 = strong selling pressure
 // Used as confirmation for ICT signals
-// ── Direction Memory — 10 min lock prevents flip-flopping ──
-const DIRECTION_MEMORY: Record<string, {action:string; ts:number}> = {};
-const DIR_LOCK_MS = 10 * 60 * 1000;
-
-function checkDirectionLock(symbol: string, action: string): {blocked:boolean; reason:string} {
-  const mem = DIRECTION_MEMORY[symbol];
-  if (!mem) { DIRECTION_MEMORY[symbol] = {action, ts: Date.now()}; return {blocked:false, reason:"first"}; }
-  const elapsed = Date.now() - mem.ts;
-  if (mem.action !== action && elapsed < DIR_LOCK_MS) {
-    const mins = Math.ceil((DIR_LOCK_MS - elapsed)/60000);
-    return {blocked:true, reason:`direction_lock:was_${mem.action}_locked_${mins}min`};
-  }
-  DIRECTION_MEMORY[symbol] = {action, ts: Date.now()};
-  return {blocked:false, reason:"ok"};
-}
-
-// ═══════════════════════════════════════════════════════════════
-// CROSS-ASSET LEAD-LAG ENGINE
-// Uses leading asset momentum to predict lagging asset
-// Known relationships: XAU→JPY (2-3 min lag), EUR→GBP (1-2 min)
-// ═══════════════════════════════════════════════════════════════
-const LEAD_LAG_PAIRS: Record<string, { leader: string; lag: number; correlation: number }> = {
-  "frxUSDJPY": { leader: "frxXAUUSD", lag: 3, correlation: -0.65 }, // Gold up → JPY up (USD/JPY down)
-  "frxGBPUSD": { leader: "frxEURUSD", lag: 2, correlation: 0.85 },  // EUR leads GBP
-  "frxAUDUSD": { leader: "frxXAUUSD", lag: 2, correlation: 0.70 },  // Gold leads AUD
-  "CRASH500":  { leader: "CRASH1000", lag: 1, correlation: 0.80 },   // CRASH1000 leads CRASH500
-  "BOOM500":   { leader: "BOOM1000",  lag: 1, correlation: 0.80 },   // BOOM1000 leads BOOM500
-};
-
-// Cache for leader candle data
-const LEADER_CACHE: Record<string, { candles: any[]; ts: number }> = {};
-
-async function fetchLeaderCandles(leaderSymbol: string): Promise<any[]> {
-  const cached = LEADER_CACHE[leaderSymbol];
-  if (cached && Date.now() - cached.ts < 60000) return cached.candles;
-  
-  return new Promise((resolve) => {
-    try {
-      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const timeout = setTimeout(() => { ws.close(); resolve([]); }, 10000);
-      ws.onopen = () => ws.send(JSON.stringify({
-        ticks_history: leaderSymbol, adjust_start_time: 1,
-        count: 20, end: "latest", granularity: 60, style: "candles"
-      }));
-      ws.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.candles) {
-          clearTimeout(timeout); ws.close();
-          LEADER_CACHE[leaderSymbol] = { candles: d.candles, ts: Date.now() };
-          resolve(d.candles);
-        }
-        if (d.error) { clearTimeout(timeout); ws.close(); resolve([]); }
-      };
-      ws.onerror = () => { clearTimeout(timeout); resolve([]); };
-    } catch { resolve([]); }
-  });
-}
-
-function detectLeadLagSignal(leaderCandles: any[], lag: number, correlation: number): {
-  signal: string; strength: number; reason: string;
-} {
-  if (leaderCandles.length < lag + 3) return { signal: "NONE", strength: 0, reason: "insufficient_data" };
-  
-  // Look at leader's movement lag candles ago
-  const lagIdx = leaderCandles.length - 1 - lag;
-  const leaderMove = parseFloat(leaderCandles[lagIdx].close) - parseFloat(leaderCandles[lagIdx - 1]?.close || leaderCandles[lagIdx].close);
-  const leaderATR  = leaderCandles.slice(-10).reduce((s: number, c: any, i: number, arr: any[]) => {
-    if (i === 0) return s;
-    return s + Math.abs(parseFloat(c.close) - parseFloat(arr[i-1].close));
-  }, 0) / 9;
-  
-  if (Math.abs(leaderMove) < leaderATR * 0.5) return { signal: "NONE", strength: 0, reason: "weak_leader" };
-  
-  // Determine direction accounting for correlation sign
-  const leaderBull = leaderMove > 0;
-  const laggardBull = correlation > 0 ? leaderBull : !leaderBull;
-  const strength = Math.min(Math.abs(leaderMove) / leaderATR, 3) / 3;
-  
-  return {
-    signal: laggardBull ? "BUY" : "SELL",
-    strength,
-    reason: `lead_lag_${lag}min_${(correlation*100).toFixed(0)}pct_corr`
-  };
-}
-
 function calcOFI(candles: any[], window: number = 20): number {
   const recent = candles.slice(-window);
   let upCandles = 0;
@@ -1893,54 +1808,25 @@ function calcOFI(candles: any[], window: number = 20): number {
 // H < 0.45 = mean-reverting (rough) → use FVG/OB strategy
 // H > 0.55 = trending (smooth)     → use BOS/momentum strategy
 // H = 0.45-0.55 = random walk      → avoid trading
-// ═══════════════════════════════════════════════════════════════
-// VOLATILITY EXHAUSTION DETECTOR
-// Deriv synthetics have KNOWN annualised volatility:
-// R_10=10%, R_25=25%, R_50=50%, R_75=75%, R_100=100%
-// Expected move per candle = AnnualVol / sqrt(525600 minutes/year)
-// When actual move << expected → COILING → high probability entry
-// When actual move >> expected → EXHAUSTED → skip
-// ═══════════════════════════════════════════════════════════════
-const KNOWN_ANNUAL_VOL: Record<string, number> = {
-  "R_10": 0.10, "R_25": 0.25, "R_50": 0.50,
-  "R_75": 0.75, "R_100": 1.00,
-  "1HZ10V": 0.10, "1HZ25V": 0.25, "1HZ50V": 0.50,
-  "1HZ75V": 0.75, "1HZ100V": 1.00,
+// ── Volatility Exhaustion Detector ──────────────────────────
+const KNOWN_VOL: Record<string,number> = {
+  "R_10":0.10,"R_25":0.25,"R_50":0.50,"R_75":0.75,"R_100":1.00,
+  "1HZ10V":0.10,"1HZ25V":0.25,"1HZ50V":0.50,"1HZ75V":0.75,"1HZ100V":1.00,
 };
-
-function detectVolatilityExhaustion(candles: any[], symbol: string, window: number = 20): {
-  state: string;        // "coiling" | "exhausted" | "normal"
-  ratio: number;        // actual_vol / expected_vol
-  confidence_adj: number; // confidence adjustment (-20 to +15)
-  reason: string;
-} {
-  const annualVol = KNOWN_ANNUAL_VOL[symbol];
-  if (!annualVol) return { state: "normal", ratio: 1.0, confidence_adj: 0, reason: "unknown_symbol" };
-
-  const minutesPerYear = 525600;
-  const expectedMovePerCandle = annualVol / Math.sqrt(minutesPerYear); // per 1-minute candle
-
-  const closes = candles.slice(-window).map((c: any) => parseFloat(c.close));
-  if (closes.length < 5) return { state: "normal", ratio: 1.0, confidence_adj: 0, reason: "insufficient" };
-
-  const returns = closes.slice(1).map((c, i) => Math.abs(c - closes[i]) / (closes[i] + 1e-10));
-  const actualMoveAvg = returns.reduce((a, b) => a + b, 0) / returns.length;
-
-  const ratio = actualMoveAvg / (expectedMovePerCandle + 1e-10);
-
-  if (ratio < 0.4) {
-    // Price moving much less than expected — coiling, spring loading
-    return { state: "coiling", ratio, confidence_adj: 12, reason: `coiling_ratio=${ratio.toFixed(2)}` };
-  } else if (ratio < 0.7) {
-    return { state: "coiling", ratio, confidence_adj: 6, reason: `mild_coil_ratio=${ratio.toFixed(2)}` };
-  } else if (ratio > 2.5) {
-    // Price moving much more than expected — exhausted, likely to reverse
-    return { state: "exhausted", ratio, confidence_adj: -20, reason: `exhausted_ratio=${ratio.toFixed(2)}` };
-  } else if (ratio > 1.5) {
-    return { state: "exhausted", ratio, confidence_adj: -10, reason: `mild_exhaust_ratio=${ratio.toFixed(2)}` };
-  }
-
-  return { state: "normal", ratio, confidence_adj: 0, reason: `normal_ratio=${ratio.toFixed(2)}` };
+function detectVolatilityExhaustion(candles:any[], symbol:string): {state:string;adj:number;reason:string} {
+  const annVol = KNOWN_VOL[symbol];
+  if (!annVol) return {state:"normal",adj:0,reason:"n/a"};
+  const expected = annVol / Math.sqrt(525600);
+  const closes = candles.slice(-20).map((c:any)=>parseFloat(c.close));
+  if (closes.length < 5) return {state:"normal",adj:0,reason:"insufficient"};
+  const moves = closes.slice(1).map((c,i)=>Math.abs(c-closes[i])/(closes[i]+1e-10));
+  const actual = moves.reduce((a,b)=>a+b,0)/moves.length;
+  const ratio = actual/(expected+1e-10);
+  if (ratio < 0.4) return {state:"coiling",adj:12,reason:`coiling_${ratio.toFixed(2)}`};
+  if (ratio < 0.7) return {state:"coiling",adj:6,reason:`mild_coil_${ratio.toFixed(2)}`};
+  if (ratio > 2.5) return {state:"exhausted",adj:-20,reason:`exhausted_${ratio.toFixed(2)}`};
+  if (ratio > 1.5) return {state:"exhausted",adj:-10,reason:`mild_exhaust_${ratio.toFixed(2)}`};
+  return {state:"normal",adj:0,reason:`normal_${ratio.toFixed(2)}`};
 }
 
 function calcHurstFast(closes: number[], window: number = 40): number {
@@ -2280,77 +2166,28 @@ function monteCarloStake(
   return { stake: finalStake, riskOfRuin, expectedGrowth, recommendation };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// DYNAMIC KELLY CRITERION — Per-Symbol Optimal Staking
-// f* = (p×b - q) / b
-// p = win probability, b = avg_win/avg_loss, q = 1-p
-// Uses last 20 trades per symbol for live calculation
-// Half-Kelly used (×0.5) to account for estimation error
-// ═══════════════════════════════════════════════════════════════
-async function getKellyStake(
-  supabase: any,
-  symbol: string,
-  balance: number,
-  minStake: number,
-  maxStake: number
-): Promise<{ stake: number; kellyF: number; winRate: number; trades: number; method: string }> {
+// ── Dynamic Kelly Criterion ──────────────────────────────────
+async function getKellyStake(supabase:any, symbol:string, balance:number, minStake:number, maxStake:number) {
   try {
-    const { data } = await supabase
-      .from("trades")
-      .select("result, stake, pnl")
-      .eq("symbol", symbol)
-      .eq("account_name", "edge_function")
-      .in("result", ["win", "loss"])
-      .not("pnl", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(20);
-
-    if (!data || data.length < 8) {
-      // Insufficient data — use conservative flat 1.5%
-      const stake = Math.max(minStake, Math.min(maxStake, balance * 0.015));
-      return { stake, kellyF: 0.015, winRate: 0.5, trades: data?.length || 0, method: "flat_1.5pct" };
-    }
-
-    const wins   = data.filter((t: any) => t.result === "win");
-    const losses = data.filter((t: any) => t.result === "loss");
-    const p      = wins.length / data.length;
-    const q      = 1 - p;
-
-    // Average win and loss as fraction of stake
-    const avgWin  = wins.length > 0
-      ? wins.reduce((s: number, t: any) => s + Math.abs(parseFloat(t.pnl || 0)) / Math.max(parseFloat(t.stake || 1), 0.01), 0) / wins.length
-      : 0.85;
-    const avgLoss = losses.length > 0
-      ? losses.reduce((s: number, t: any) => s + Math.abs(parseFloat(t.pnl || 0)) / Math.max(parseFloat(t.stake || 1), 0.01), 0) / losses.length
-      : 0.90;
-
-    const b = avgWin / Math.max(avgLoss, 0.01);  // win/loss ratio
-
-    // Kelly fraction
-    const fullKelly = (p * b - q) / b;
-
-    if (fullKelly <= 0) {
-      // Negative Kelly = no edge on this symbol — minimum stake
-      console.log(`⚠️ ${symbol}: Kelly=${fullKelly.toFixed(3)} — no edge, using min stake`);
-      return { stake: minStake, kellyF: 0, winRate: p, trades: data.length, method: "no_edge" };
-    }
-
-    // Half-Kelly (industry standard — accounts for estimation error)
-    const halfKelly = fullKelly * 0.5;
-
-    // Cap at 15% max per trade (safety)
-    const cappedKelly = Math.min(halfKelly, 0.15);
-
-    const stake = Math.max(minStake, Math.min(maxStake, parseFloat((balance * cappedKelly).toFixed(2))));
-
-    console.log(`📊 ${symbol} Kelly: f*=${fullKelly.toFixed(3)} half=${halfKelly.toFixed(3)} WR=${(p*100).toFixed(0)}% b=${b.toFixed(2)} → $${stake}`);
-
-    return { stake, kellyF: cappedKelly, winRate: p, trades: data.length, method: "half_kelly" };
-
-  } catch(e) {
-    const stake = Math.max(minStake, Math.min(maxStake, balance * 0.015));
-    return { stake, kellyF: 0.015, winRate: 0.5, trades: 0, method: "error_fallback" };
-  }
+    const { data } = await supabase.from("trades").select("result,stake,pnl")
+      .eq("symbol", symbol).eq("account_name","edge_function")
+      .in("result",["win","loss"]).not("pnl","is",null)
+      .order("created_at",{ascending:false}).limit(20);
+    if (!data || data.length < 8)
+      return { stake: Math.max(minStake,Math.min(maxStake,balance*0.015)), method:"flat", trades:data?.length||0 };
+    const wins=data.filter((t:any)=>t.result==="win");
+    const losses=data.filter((t:any)=>t.result==="loss");
+    const p=wins.length/data.length; const q=1-p;
+    const avgWin=wins.length>0 ? wins.reduce((s:number,t:any)=>s+Math.abs(parseFloat(t.pnl||0))/Math.max(parseFloat(t.stake||1),0.01),0)/wins.length : 0.85;
+    const avgLoss=losses.length>0 ? losses.reduce((s:number,t:any)=>s+Math.abs(parseFloat(t.pnl||0))/Math.max(parseFloat(t.stake||1),0.01),0)/losses.length : 0.90;
+    const b=avgWin/Math.max(avgLoss,0.01);
+    const fullKelly=(p*b-q)/b;
+    if (fullKelly<=0) return { stake:minStake, method:"no_edge", trades:data.length };
+    const f=Math.min(fullKelly*0.5, 0.15);
+    const stake=Math.max(minStake,Math.min(maxStake,parseFloat((balance*f).toFixed(2))));
+    console.log(`📊 Kelly ${symbol}: f=${(f*100).toFixed(1)}% WR=${(p*100).toFixed(0)}% → $${stake}`);
+    return { stake, method:"half_kelly", trades:data.length, kellyF:f, winRate:p };
+  } catch { return { stake:Math.max(minStake,Math.min(maxStake,balance*0.015)), method:"error", trades:0 }; }
 }
 
 // Get recent win rate and avg payout from trades table
@@ -2828,31 +2665,21 @@ Deno.serve(async (req) => {
   // Only use Monte Carlo if enough real trade data exists
   let mc: any;
   let stake: number;
-  // ── PHASE 1: Dynamic Kelly Criterion per symbol ──────────────
-  // Uses last 20 trades for THIS symbol to compute optimal stake
-  // Overrides Monte Carlo for symbols with sufficient trade history
-  const kellyResult = await getKellyStake(supabase, best.symbol, balance, minStk, maxStk);
-
-  if (kellyResult.trades >= 8) {
-    // Enough symbol-specific data — use Kelly
-    stake = kellyResult.stake;
-    mc = { stake, riskOfRuin: 0, expectedGrowth: 0,
-      recommendation: `kelly_${kellyResult.method}`,
-      base_stake: stake, final_stake: stake,
-      kelly_f: kellyResult.kellyF, win_rate: kellyResult.winRate };
-    console.log(`💰 Kelly stake: $${stake} (f=${(kellyResult.kellyF*100).toFixed(1)}% WR=${(kellyResult.winRate*100).toFixed(0)}% n=${kellyResult.trades})`);
+  const kellyRes = await getKellyStake(supabase, best.symbol, balance, minStk, maxStk);
+  if (kellyRes.trades >= 8) {
+    stake = kellyRes.stake;
+    mc = { stake, riskOfRuin:0, expectedGrowth:0, recommendation:`kelly_${kellyRes.method}`, base_stake:stake, final_stake:stake };
+    console.log(`💰 Kelly stake: $${stake} (${kellyRes.method} n=${kellyRes.trades})`);
   } else if (hasEnoughData) {
-    mc = monteCarloStake(
-        balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
-        Array.isArray(features) && features.length > 53 ? (features[53] || 0) : 0,
-        Array.isArray(features) && features.length > 54 ? (features[54] || 1) : 1
-      );
+    mc = monteCarloStake(balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
+        Array.isArray(features) && features.length > 53 ? (features[53]||0) : 0,
+        Array.isArray(features) && features.length > 54 ? (features[54]||1) : 1);
     stake = mc.stake;
-    console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation} ror:${(mc.riskOfRuin*100).toFixed(1)}%)`);
+    console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation})`);
   } else {
-    stake = Math.max(minStk, Math.min(maxStk, parseFloat(((balance * riskPct) / 100).toFixed(2))));
-    mc = { stake, riskOfRuin: 0, expectedGrowth: 0, recommendation: "insufficient_data", base_stake: stake, final_stake: stake };
-    console.log(`💰 Flat stake: $${stake} (need more trades)`);
+    stake = Math.max(minStk, Math.min(maxStk, parseFloat(((balance*riskPct)/100).toFixed(2))));
+    mc = { stake, riskOfRuin:0, expectedGrowth:0, recommendation:"insufficient_data", base_stake:stake, final_stake:stake };
+    console.log(`💰 Flat stake: $${stake}`);
   }
   const baseStake = Math.max(minStk, parseFloat(((balance * riskPct) / 100).toFixed(2)));
   console.log(`💰 Base stake: $${baseStake} → Monte Carlo adjusted: $${stake} (ror:${(mc.riskOfRuin*100).toFixed(1)}% growth:${(mc.expectedGrowth*100).toFixed(1)}% rec:${mc.recommendation} winRate:${(perf.winRate*100).toFixed(0)}%)`);
@@ -2894,15 +2721,6 @@ Deno.serve(async (req) => {
     } catch(e) { console.log(`❌ ${row.symbol}: parse error ${e}`); }
   }
   console.log(`🧠 ML models: ${Object.keys(ML_MODELS).join(", ")}`);
-
-  // Weekend: block forex, only synthetics trade 24/7
-  const _dow = new Date().getUTCDay(); // 0=Sun, 6=Sat
-  if (_dow === 0 || _dow === 6) {
-    cfg.symbols = (cfg.symbols||[]).filter((s:string) =>
-      s.startsWith("BOOM") || s.startsWith("CRASH") ||
-      s.startsWith("R_")   || s.startsWith("1HZ"));
-    console.log(`📅 Weekend — synthetics only: ${cfg.symbols.join(", ")}`);
-  }
 
   const mlSymbols  = Object.keys(ML_MODELS);
   const cfgSymbols = cfg.symbols || ["BOOM500", "CRASH500", "frxUSDJPY"];
@@ -3235,17 +3053,6 @@ Deno.serve(async (req) => {
         const hurst       = calcHurstFast(closes4ofi, 40);
         const adaptStrat  = getAdaptiveStrategy(hurst, regime.name, ofi);
 
-        // ── PHASE 3: Volatility Exhaustion for synthetics ──────────
-        const volExhaust = detectVolatilityExhaustion(c1m, symbol, 20);
-        if (volExhaust.state === "exhausted" && !isSpikeSym) {
-          scanLog.push(`${symbol}: vol_exhausted — ${volExhaust.reason}`);
-          continue; // skip exhausted synthetics — high reversal risk
-        }
-        if (volExhaust.state !== "normal") {
-          sig.confidence = Math.max(10, Math.min(95, sig.confidence + volExhaust.confidence_adj));
-          scanLog.push(`${symbol}: vol_${volExhaust.state} conf_adj=${volExhaust.confidence_adj > 0 ? "+" : ""}${volExhaust.confidence_adj}`);
-        }
-
         // Apply regime-based confidence adjustment
         sig.confidence = Math.max(10, Math.min(95, sig.confidence + adaptStrat.confidence_boost));
         
@@ -3272,6 +3079,17 @@ Deno.serve(async (req) => {
 
         console.log(`📊 ${symbol}: H=${hurst.toFixed(2)} OFI=${ofi.toFixed(2)} regime=${adaptStrat.strategy} conf=${sig.confidence}%`);
 
+        // ── Volatility Exhaustion check ───────────────────────────
+        const volEx = detectVolatilityExhaustion(c1m, symbol);
+        if (volEx.state === "exhausted") {
+          scanLog.push(`${symbol}: ${volEx.reason} — skipping`);
+          continue;
+        }
+        if (volEx.adj !== 0) {
+          sig.confidence = Math.max(10, Math.min(95, sig.confidence + volEx.adj));
+          scanLog.push(`${symbol}: vol_${volEx.state} conf_adj=${volEx.adj>0?"+":""}${volEx.adj}`);
+        }
+
         // Apply Poisson/Topo confidence boost for BOOM/CRASH
         const spikeMeta = (globalThis as any)[`${symbol}_spike_meta`];
         if (spikeMeta && isSpikeSym) {
@@ -3285,10 +3103,6 @@ Deno.serve(async (req) => {
             console.log(`⚡ ${symbol}: HIGH CONVICTION — Poisson overdue + Topo compressed`);
           }
         }
-
-        // Direction lock — prevent flip-flopping
-        const dirLock = checkDirectionLock(symbol, sig.action);
-        if (dirLock.blocked) { scanLog.push(`${symbol}: ${dirLock.reason}`); continue; }
 
         const logLine = `${symbol}: ML→${sig.action} conf:${finalConf} HMM:${regime.name} (${sig.reason})`;
         scanLog.push(logLine);
@@ -3377,47 +3191,12 @@ Deno.serve(async (req) => {
 
         if (forexSymbols.includes(symbol)) {
           // Use ICT Smart Money engine for forex
-          // ── PHASE 2: Cross-Asset Lead-Lag check ───────────────────
-          const LEAD_LAG_MAP: Record<string,{leader:string;lag:number;correlation:number}> = {
-            "frxUSDJPY": {leader:"frxXAUUSD", lag:3, correlation:-0.65},
-            "frxGBPUSD": {leader:"frxEURUSD", lag:2, correlation:0.85},
-            "frxAUDUSD": {leader:"frxXAUUSD", lag:2, correlation:0.70},
-          };
-          const leadLagPair = LEAD_LAG_MAP[symbol];
-          let llBoost = 0;
-          if (leadLagPair) {
-            try {
-              const leaderC = await fetchLeaderCandles(leadLagPair.leader);
-              if (leaderC.length > 5) {
-                const llSig = detectLeadLagSignal(leaderC, leadLagPair.lag, leadLagPair.correlation);
-                if (llSig.signal !== "NONE" && llSig.strength > 0.4) {
-                  llBoost = Math.round(llSig.strength * 10);
-                  scanLog.push(`${symbol}: lead_lag boost=+${llBoost}`);
-                }
-              }
-            } catch(_) {}
-          }
           const ictSig = ictForexSignal(c1m, c5m, symbol);
           if (!ictSig) {
-            // Check if lead-lag gives a standalone signal
-            if (leadLagPair) {
-              const leaderCandles = await fetchLeaderCandles(leadLagPair.leader);
-              const llSig = detectLeadLagSignal(leaderCandles, leadLagPair.lag, leadLagPair.correlation);
-              if (llSig.signal !== "NONE" && llSig.strength > 0.6) {
-                sig = { action: llSig.signal, confidence: Math.round(50 + llSig.strength * 30),
-                  reason: llSig.reason, atr: calcATR(c1m, 14) };
-                scanLog.push(`${symbol}: lead_lag_signal→${sig.action} conf:${sig.confidence}%`);
-              } else {
-                scanLog.push(`${symbol}: ICT_no_setup + lead_lag_weak`);
-                continue;
-              }
-            } else {
-              scanLog.push(`${symbol}: ICT_no_setup (no confluence)`);
-              continue;
-            }
-          } else {
-            sig = ictSig;
+            scanLog.push(`${symbol}: ICT_no_setup (no confluence)`);
+            continue;
           }
+          sig = ictSig;
 
           // Enhance ICT signal with OFI + Hurst
           const ictCloses  = c1m.map((x: any) => parseFloat(x.close));
@@ -3654,16 +3433,7 @@ Deno.serve(async (req) => {
       "R_50":      "Volatility 50 Index",
       "R_75":      "Volatility 75 Index",
       "R_100":     "Volatility 100 Index",
-      "STPX":      "Step Index",
-      "BOOM600":   "Boom 600 Index",
-      "BOOM900":   "Boom 900 Index",
-      "CRASH600":  "Crash 600 Index",
-      "CRASH900":  "Crash 900 Index",
-      "1HZ10V":    "Volatility 10 (1s) Index",
-      "1HZ25V":    "Volatility 25 (1s) Index",
-      "1HZ50V":    "Volatility 50 (1s) Index",
-      "1HZ75V":    "Volatility 75 (1s) Index",
-      "1HZ100V":   "Volatility 100 (1s) Index",
+      "R_50":      "Volatility 50 Index",
     };
     const mt5Symbol = DERIV_TO_MT5[best.symbol];
     if (mt5Symbol) {
@@ -3673,7 +3443,6 @@ Deno.serve(async (req) => {
           action:     best.action,
           confidence: best.confidence,
           status:     "pending",
-          expires_at: new Date(Date.now() + 90 * 1000).toISOString(),
         });
         if (mt5Err) console.log(`⚠️  MT5 signal write error: ${mt5Err.message}`);
         else console.log(`📡 MT5 signal written: ${mt5Symbol} ${best.action} conf:${best.confidence}%`);
