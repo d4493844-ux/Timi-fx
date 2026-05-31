@@ -3,13 +3,21 @@ import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabase";
 
 const SYMBOLS = [
-  // Synthetic Indices
-  { id:"R_75",      label:"VIX 75" },
+  // Volatility Indices
+  { id:"R_10",      label:"VIX 10" },
   { id:"R_25",      label:"VIX 25" },
   { id:"R_50",      label:"VIX 50" },
+  { id:"R_75",      label:"VIX 75" },
   { id:"R_100",     label:"VIX 100" },
-  { id:"1HZ100V",   label:"VIX 100 (1s)" },
   { id:"1HZ75V",    label:"VIX 75 (1s)" },
+  { id:"1HZ100V",   label:"VIX 100 (1s)" },
+  // Jump Indices
+  { id:"JD10",      label:"Jump 10" },
+  { id:"JD25",      label:"Jump 25" },
+  { id:"JD50",      label:"Jump 50" },
+  { id:"JD75",      label:"Jump 75" },
+  { id:"JD100",     label:"Jump 100" },
+  // Boom & Crash
   { id:"BOOM1000",  label:"BOOM 1000" },
   { id:"BOOM500",   label:"BOOM 500" },
   { id:"CRASH1000", label:"CRASH 1000" },
