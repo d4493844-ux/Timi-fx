@@ -3046,6 +3046,25 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── Signal Persistence Check ─────────────────────────────
+        // Require last 2 candles to confirm direction before trading
+        // Prevents flip-flopping on single-candle reversals
+        const recentCloses = c1m.slice(-4).map((c: any) => parseFloat(c.close));
+        const recentBull = recentCloses[2] > recentCloses[1] && recentCloses[3] > recentCloses[2];
+        const recentBear = recentCloses[2] < recentCloses[1] && recentCloses[3] < recentCloses[2];
+        const signalConfirmed = (sig.action === "BUY" && recentBull) || (sig.action === "SELL" && recentBear);
+        const signalNeutral   = !recentBull && !recentBear; // choppy — allow with reduced confidence
+
+        if (!signalConfirmed && !signalNeutral) {
+          // Last 2 candles contradict signal — reduce confidence significantly
+          sig.confidence = Math.max(10, sig.confidence - 20);
+          scanLog.push(`${symbol}: persistence_conflict — candles contradict ${sig.action}, conf-=20`);
+        } else if (signalConfirmed) {
+          // Candles confirm signal — boost confidence
+          sig.confidence = Math.min(95, sig.confidence + 5);
+          scanLog.push(`${symbol}: persistence_confirmed — 2 candles agree ${sig.action}`);
+        }
+
         const logLine = `${symbol}: ML→${sig.action} conf:${finalConf} HMM:${regime.name} (${sig.reason})`;
         scanLog.push(logLine);
         console.log(logLine);
