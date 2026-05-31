@@ -7,8 +7,10 @@ from datetime import datetime
 import os
 
 SYMBOLS = [
-    "BOOM500", "CRASH500", "frxUSDJPY", "cryBTCUSD",
-    "BOOM1000", "CRASH1000", "R_25", "R_75", "R_50", "R_100",
+    "BOOM500", "CRASH500", "BOOM300", "CRASH300",
+    "frxUSDJPY", "cryBTCUSD",
+    "BOOM1000", "CRASH1000", "R_10", "R_25", "R_75", "R_50", "R_100",
+    "JD10", "JD25", "JD50", "JD75", "JD100",
     "frxEURUSD", "frxGBPUSD", "frxXAUUSD", "cryETHUSD",
     "frxEURGBP", "frxXAGUSD"
 ]

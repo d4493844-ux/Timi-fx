@@ -3392,7 +3392,13 @@ Deno.serve(async (req) => {
       "R_10":      "Volatility 10 Index",
       "R_25":      "Volatility 25 Index",
       "R_50":      "Volatility 50 Index",
+      "R_10":      "Volatility 10 Index",
       "R_75":      "Volatility 75 Index",
+      "JD10":      "Jump 10 Index",
+      "JD25":      "Jump 25 Index",
+      "JD50":      "Jump 50 Index",
+      "JD75":      "Jump 75 Index",
+      "JD100":     "Jump 100 Index",
       "R_100":     "Volatility 100 Index",
       "R_50":      "Volatility 50 Index",
     };

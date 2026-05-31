@@ -363,9 +363,7 @@ def train_symbol(symbol):
 
 def main():
     print("🧠 TIMI v3.0 — Path Signatures + ESN + Drift-Diffusion\n")
-    targets=["BOOM1000","BOOM500","CRASH1000","CRASH500",
-             "frxEURUSD","frxGBPUSD","frxUSDJPY",
-             "frxXAUUSD","frxXAGUSD","R_75","R_50","R_25","R_100"]
+    targets=["R_10","JD10","JD25","JD50","JD75","JD100"]
     results=[]
     for sym in targets:
         try:
