@@ -41,7 +41,7 @@ def tree_to_rules(node, features, depth=0):
     }
 
 def export_model_compact(symbol):
-    mp = f"/workspaces/Timi-fx/ml/models/{symbol}_model.txt"
+    mp = f"/workspaces/Timi-fx/ml/models/{symbol}_ensemble_0.txt"
     ep = f"/workspaces/Timi-fx/ml/models/{symbol}_meta.txt"
 
     model = lgb.Booster(model_file=mp)
