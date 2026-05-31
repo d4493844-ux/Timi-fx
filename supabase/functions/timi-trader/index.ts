@@ -1909,6 +1909,7 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         if (symbol.startsWith("BOOM"))       contractType = "MULTUP";
         else if (symbol.startsWith("CRASH")) contractType = "MULTDOWN";
         else if (symbol.startsWith("R_"))    contractType = action === "BUY" ? "CALL" : "PUT";
+        else if (symbol.startsWith("JD"))    contractType = action === "BUY" ? "MULTUP" : "MULTDOWN";
         else                                  contractType = action === "BUY" ? "MULTUP" : "MULTDOWN";
 
         const isMult   = contractType.startsWith("MULT");
@@ -3281,7 +3282,8 @@ Deno.serve(async (req) => {
     best.confidence
   );
 
-  const dynMult = selectMultiplier(
+  const isJumpIdx = best.symbol.startsWith("JD");
+  const dynMult = isJumpIdx ? 10 : selectMultiplier(
     best.symbol,
     best.confidence,
     best.regime || "WeakUptrend",
