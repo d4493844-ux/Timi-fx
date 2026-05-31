@@ -3066,6 +3066,16 @@ Deno.serve(async (req) => {
           scanLog.push(`${symbol}: persistence_confirmed — 2 candles agree ${sig.action}`);
         }
 
+        // Jump indices: require strong main model agreement (not just meta)
+        if (symbol.startsWith("JD")) {
+          const mainProb = Array.isArray(features) && features.length > 0 ? 0 : 0;
+          // Block if main model < 0.45 (weak directional conviction)
+          if (sig.reason.includes("ML:0.") && parseFloat(sig.reason.split("ML:")[1]) < 0.45) {
+            scanLog.push(`${symbol}: JD_weak_main_model — skipping`);
+            continue;
+          }
+        }
+
         const logLine = `${symbol}: ML→${sig.action} conf:${finalConf} HMM:${regime.name} (${sig.reason})`;
         scanLog.push(logLine);
         console.log(logLine);
