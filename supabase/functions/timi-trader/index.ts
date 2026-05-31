@@ -3100,16 +3100,30 @@ Deno.serve(async (req) => {
         // ── Signal Longevity ─────────────────────────────────────────
         const longevity  = calcSignalHalfLife(closes4ofi);
         const noiseChk   = detectNoiseVsReversal(closes4ofi, sig.action);
-        if (longevity.exitWarning && !noiseChk.isNoise) {
-          scanLog.push(`${symbol}: signal_dead HL=${longevity.halfLife} — skip`);
-          continue;
-        }
-        if (longevity.strength === "fading") {
-          sig.confidence = Math.max(10, sig.confidence - 8);
-          scanLog.push(`${symbol}: signal_fading HL=${longevity.halfLife}`);
-        } else if (longevity.strength === "strong") {
-          sig.confidence = Math.min(95, sig.confidence + 5);
-          scanLog.push(`${symbol}: signal_strong HL=${longevity.halfLife}`);
+        const isMeanRev  = symbol.startsWith("R_") || symbol.startsWith("JD") || symbol.startsWith("1HZ");
+        if (isMeanRev) {
+          if (longevity.exitWarning && !noiseChk.isNoise) {
+            sig.confidence = Math.max(10, sig.confidence - 15);
+            scanLog.push(`${symbol}: signal_dead HL=${longevity.halfLife} conf-=15`);
+          } else if (longevity.strength === "fading") {
+            sig.confidence = Math.max(10, sig.confidence - 5);
+            scanLog.push(`${symbol}: signal_fading HL=${longevity.halfLife} conf-=5`);
+          } else if (longevity.strength === "strong") {
+            sig.confidence = Math.min(95, sig.confidence + 5);
+            scanLog.push(`${symbol}: signal_strong HL=${longevity.halfLife} conf+=5`);
+          }
+        } else {
+          if (longevity.exitWarning && !noiseChk.isNoise) {
+            scanLog.push(`${symbol}: signal_dead HL=${longevity.halfLife} — skip`);
+            continue;
+          }
+          if (longevity.strength === "fading") {
+            sig.confidence = Math.max(10, sig.confidence - 8);
+            scanLog.push(`${symbol}: signal_fading HL=${longevity.halfLife} conf-=8`);
+          } else if (longevity.strength === "strong") {
+            sig.confidence = Math.min(95, sig.confidence + 5);
+            scanLog.push(`${symbol}: signal_strong HL=${longevity.halfLife} conf+=5`);
+          }
         }
         if (noiseChk.isNoise && noiseChk.confidence > 60) {
           scanLog.push(`${symbol}: noise_${noiseChk.reason} — holding direction`);
