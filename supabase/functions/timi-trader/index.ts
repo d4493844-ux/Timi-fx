@@ -3198,6 +3198,10 @@ Deno.serve(async (req) => {
         } else if (cryptoSymbols.includes(symbol) || ["R_50","R_25","R_100"].includes(symbol)) {
           scanLog.push(`${symbol}: ML_required (use ML models only)`);
           continue;
+        } else if (symbol.startsWith("JD") || symbol === "R_10") {
+          // Jump indices and R_10 — ML path already handled above, skip ICT
+          scanLog.push(`${symbol}: ML_only_no_ICT`);
+          continue;
         }
 
         // ── BOOM/CRASH fallback also needs Poisson/Topo gate ──

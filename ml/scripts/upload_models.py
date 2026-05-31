@@ -8,7 +8,8 @@ WIN_RATES = {
     "BOOM500": 0.780, "CRASH500": 0.761,
     "BOOM1000": 0.841, "CRASH1000": 0.811,
     "frxUSDJPY": 0.657, "cryBTCUSD": 0.632,
-    "R_25": 0.627, "R_50": 0.599, "R_75": 0.628, "R_100": 0.593,
+    "R_10": 0.580, "R_25": 0.627, "R_50": 0.599, "R_75": 0.628, "R_100": 0.593,
+    "JD10": 0.548, "JD25": 0.501, "JD50": 0.542, "JD75": 0.539, "JD100": 0.542,
     "frxEURUSD": 0.639, "frxGBPUSD": 0.608,
     "frxXAUUSD": 0.628, "cryETHUSD": 0.631,
     "frxEURGBP": 0.512, "frxXAGUSD": 0.584
@@ -17,7 +18,7 @@ WIN_RATES = {
 SUPABASE_URL = "https://pedbupgjxlcumidwoktc.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjMyNzQ1MiwiZXhwIjoyMDg3OTAzNDUyfQ.Ktm6Hj88LIJubB-WSPEZEhDNQwpZ5Gyw7nH2IWJI0fo"
 
-SYMBOLS = ["BOOM500","CRASH500","BOOM1000","CRASH1000","frxUSDJPY","cryBTCUSD","R_25","R_50","R_75","R_100","frxEURUSD","frxGBPUSD","frxXAUUSD","cryETHUSD","frxEURGBP","frxXAGUSD"]
+SYMBOLS = ["BOOM500","CRASH500","BOOM1000","CRASH1000","frxUSDJPY","cryBTCUSD","R_10","R_25","R_50","R_75","R_100","JD10","JD25","JD50","JD75","JD100","frxEURUSD","frxGBPUSD","frxXAUUSD","cryETHUSD","frxEURGBP","frxXAGUSD"]
 FEATURES = [
     'rsi', 'macd_hist', 'bb_pos', 'bb_width',
     'ema_bull', 'ema_bear',
