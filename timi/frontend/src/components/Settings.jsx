@@ -5,10 +5,16 @@ import { motion } from "framer-motion";
 import useRisk from "../hooks/useRisk";
 
 const ALL_SYMBOLS = [
-  { id:"R_75",      label:"VIX 75",     group:"Synthetic" },
+  { id:"R_10",      label:"VIX 10",     group:"Synthetic" },
   { id:"R_25",      label:"VIX 25",     group:"Synthetic" },
   { id:"R_50",      label:"VIX 50",     group:"Synthetic" },
+  { id:"R_75",      label:"VIX 75",     group:"Synthetic" },
   { id:"R_100",     label:"VIX 100",    group:"Synthetic" },
+  { id:"JD10",      label:"Jump 10",    group:"Synthetic" },
+  { id:"JD25",      label:"Jump 25",    group:"Synthetic" },
+  { id:"JD50",      label:"Jump 50",    group:"Synthetic" },
+  { id:"JD75",      label:"Jump 75",    group:"Synthetic" },
+  { id:"JD100",     label:"Jump 100",   group:"Synthetic" },
   { id:"BOOM1000",  label:"BOOM 1000",  group:"Synthetic" },
   { id:"BOOM500",   label:"BOOM 500",   group:"Synthetic" },
   { id:"CRASH1000", label:"CRASH 1000", group:"Synthetic" },
