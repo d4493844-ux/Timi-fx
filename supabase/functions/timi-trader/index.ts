@@ -3110,6 +3110,24 @@ Deno.serve(async (req) => {
 
         // Apply regime-based confidence adjustment
         sig.confidence = Math.max(10, Math.min(95, sig.confidence + adaptStrat.confidence_boost));
+
+        // ── Signal Longevity ─────────────────────────────────────────
+        const longevity  = calcSignalHalfLife(closes4ofi);
+        const noiseChk   = detectNoiseVsReversal(closes4ofi, sig.action);
+        if (longevity.exitWarning && !noiseChk.isNoise) {
+          scanLog.push(`${symbol}: signal_dead HL=${longevity.halfLife} — skip`);
+          continue;
+        }
+        if (longevity.strength === "fading") {
+          sig.confidence = Math.max(10, sig.confidence - 8);
+          scanLog.push(`${symbol}: signal_fading HL=${longevity.halfLife}`);
+        } else if (longevity.strength === "strong") {
+          sig.confidence = Math.min(95, sig.confidence + 5);
+          scanLog.push(`${symbol}: signal_strong HL=${longevity.halfLife}`);
+        }
+        if (noiseChk.isNoise && noiseChk.confidence > 60) {
+          scanLog.push(`${symbol}: noise_${noiseChk.reason} — holding direction`);
+        }
         
         // Block trades in random walk regime (no edge)
         if (adaptStrat.strategy === "skip") {
