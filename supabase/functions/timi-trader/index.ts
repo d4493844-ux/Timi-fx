@@ -2570,6 +2570,107 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
 // ─────────────────────────────────────────────
 // MAIN HANDLER
 // ─────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════
+// SIGNAL LONGEVITY ENGINE
+// Based on Information Half-Life theory (quant finance)
+// T_half = ln(0.5) / ln(phi) where phi = lag-1 autocorrelation
+// When half-life < 2 candles → signal decaying → warn/exit
+// ═══════════════════════════════════════════════════════════════
+
+function calcSignalHalfLife(closes: number[]): {
+  halfLife: number;     // candles until signal loses 50% power
+  phi: number;          // lag-1 autocorrelation (-1 to 1)
+  strength: string;     // "strong" | "fading" | "dead"
+  exitWarning: boolean;
+} {
+  if (closes.length < 10) return { halfLife: 5, phi: 0.5, strength: "unknown", exitWarning: false };
+
+  // Calculate returns
+  const returns = closes.slice(1).map((c, i) => c - closes[i]);
+
+  // Lag-1 autocorrelation (momentum persistence)
+  const n    = returns.length;
+  const mean = returns.reduce((a, b) => a + b, 0) / n;
+  const demeaned = returns.map(r => r - mean);
+
+  let numerator   = 0;
+  let denominator = 0;
+  for (let i = 1; i < demeaned.length; i++) {
+    numerator   += demeaned[i] * demeaned[i - 1];
+    denominator += demeaned[i] * demeaned[i];
+  }
+
+  const phi = denominator === 0 ? 0 : Math.max(-0.99, Math.min(0.99, numerator / denominator));
+
+  // Half-life formula from mean-reversion theory
+  const halfLife = phi <= 0 || phi >= 1
+    ? 1
+    : Math.abs(Math.log(0.5) / Math.log(Math.abs(phi)));
+
+  // Classify signal strength
+  let strength: string;
+  let exitWarning: boolean;
+
+  if (halfLife > 5 && phi > 0.3) {
+    strength = "strong";    exitWarning = false;
+  } else if (halfLife > 2 && phi > 0.1) {
+    strength = "fading";    exitWarning = false;
+  } else {
+    strength = "dead";      exitWarning = true;
+  }
+
+  return { halfLife: parseFloat(halfLife.toFixed(1)), phi: parseFloat(phi.toFixed(3)), strength, exitWarning };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NOISE vs REAL REVERSAL DETECTOR
+// Hyperbolic decay model: alpha(t) = K/(1 + lambda*t)
+// Real reversals follow hyperbolic curve
+// Noise spikes are random deviations from curve
+// ═══════════════════════════════════════════════════════════════
+function detectNoiseVsReversal(closes: number[], signalAction: string): {
+  isNoise: boolean;
+  confidence: number;  // 0-100 that move is noise
+  reason: string;
+} {
+  if (closes.length < 8) return { isNoise: false, confidence: 0, reason: "insufficient_data" };
+
+  const recent   = closes.slice(-5);
+  const baseline = closes.slice(-10, -5);
+
+  const recentMean   = recent.reduce((a, b) => a + b, 0) / recent.length;
+  const baselineMean = baseline.reduce((a, b) => a + b, 0) / baseline.length;
+
+  // Measure deviation magnitude vs baseline volatility
+  const baselineStd = Math.sqrt(
+    baseline.reduce((s, v) => s + Math.pow(v - baselineMean, 2), 0) / baseline.length
+  );
+
+  const deviation = Math.abs(recentMean - baselineMean);
+  const zScore    = baselineStd > 0 ? deviation / baselineStd : 0;
+
+  // Check if price moved AGAINST signal direction in recent candles
+  const priceMomentum = recent[recent.length - 1] - recent[0];
+  const signalBull    = signalAction === "BUY";
+  const movingAgainst = signalBull ? priceMomentum < 0 : priceMomentum > 0;
+
+  if (!movingAgainst) {
+    return { isNoise: false, confidence: 0, reason: "price_confirming_signal" };
+  }
+
+  // Small z-score against signal = noise (< 1.5 sigma)
+  // Large z-score against signal = real reversal (> 2.5 sigma)
+  if (zScore < 1.0) {
+    return { isNoise: true, confidence: Math.round(80 - zScore * 20), reason: `noise_z=${zScore.toFixed(2)}_small_deviation` };
+  } else if (zScore < 2.0) {
+    return { isNoise: true, confidence: Math.round(50 - (zScore - 1.0) * 20), reason: `marginal_z=${zScore.toFixed(2)}` };
+  } else {
+    return { isNoise: false, confidence: Math.round((zScore - 2.0) * 30), reason: `real_reversal_z=${zScore.toFixed(2)}` };
+  }
+}
+
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
