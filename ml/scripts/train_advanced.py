@@ -41,7 +41,7 @@ SYMBOLS = {
     "forex":      ["frxEURUSD","frxGBPUSD","frxUSDJPY","frxGBPJPY","frxAUDUSD"],
     "gold":       ["frxXAUUSD","frxXAGUSD"],
     "crypto":     ["cryBTCUSD","cryETHUSD"],
-    "synthetics": ["R_50","R_75","R_100","R_25"],
+    "synthetics": ["R_50","R_75","R_100","R_25","R_10","JD10","JD25","JD50","JD75","JD100"],
     "boom_crash": ["BOOM1000","CRASH1000","BOOM500","CRASH500"],
 }
 
@@ -363,7 +363,7 @@ def train_symbol(symbol):
 
 def main():
     print("🧠 TIMI v3.0 — Path Signatures + ESN + Drift-Diffusion\n")
-    targets=["R_10","JD10","JD25","JD50","JD75","JD100"]
+    targets=["JD10","JD25","JD50","JD75","JD100","R_10"]
     results=[]
     for sym in targets:
         try:

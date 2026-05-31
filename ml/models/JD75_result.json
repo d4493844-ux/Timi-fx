@@ -1,9 +1,9 @@
 {
   "symbol": "JD75",
-  "instrument_class": "forex",
-  "cv_accuracy": 0.5777,
-  "meta_win_rate": 0.966,
-  "meta_trades": 3000,
+  "instrument_class": "synthetics",
+  "cv_accuracy": 0.5394,
+  "meta_win_rate": 0.9559,
+  "meta_trades": 1701,
   "meta_threshold": 0.8,
   "features": [
     "rsi",
@@ -54,16 +54,16 @@
     "hurst"
   ],
   "barrier_config": {
-    "tp_mult": 2.0,
-    "sl_mult": 1.0,
-    "max_hold": 30
+    "tp_mult": 1.5,
+    "sl_mult": 1.5,
+    "max_hold": 8
   },
   "trainer": "v3",
   "deploy": true,
-  "trained_at": "2026-05-31 13:58:15.397496",
-  "n_rows": 4921,
+  "trained_at": "2026-05-31 16:17:40.911868",
+  "n_rows": 3975,
   "labels": {
-    "buy": 1726,
-    "sell": 3195
+    "buy": 2039,
+    "sell": 1936
   }
 }

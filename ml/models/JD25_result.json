@@ -1,9 +1,9 @@
 {
   "symbol": "JD25",
-  "instrument_class": "forex",
-  "cv_accuracy": 0.5253,
-  "meta_win_rate": 0.9777,
-  "meta_trades": 2422,
+  "instrument_class": "synthetics",
+  "cv_accuracy": 0.5015,
+  "meta_win_rate": 0.9289,
+  "meta_trades": 1294,
   "meta_threshold": 0.8,
   "features": [
     "rsi",
@@ -54,16 +54,16 @@
     "hurst"
   ],
   "barrier_config": {
-    "tp_mult": 2.0,
-    "sl_mult": 1.0,
-    "max_hold": 30
+    "tp_mult": 1.5,
+    "sl_mult": 1.5,
+    "max_hold": 8
   },
   "trainer": "v3",
   "deploy": true,
-  "trained_at": "2026-05-31 13:58:00.439059",
-  "n_rows": 4927,
+  "trained_at": "2026-05-31 16:17:31.368396",
+  "n_rows": 4004,
   "labels": {
-    "buy": 1737,
-    "sell": 3190
+    "buy": 1984,
+    "sell": 2020
   }
 }

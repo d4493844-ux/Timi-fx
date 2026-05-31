@@ -1,9 +1,9 @@
 {
   "symbol": "R_10",
-  "instrument_class": "forex",
-  "cv_accuracy": 0.539,
-  "meta_win_rate": 0.9743,
-  "meta_trades": 3033,
+  "instrument_class": "synthetics",
+  "cv_accuracy": 0.4803,
+  "meta_win_rate": 0.9577,
+  "meta_trades": 852,
   "meta_threshold": 0.8,
   "features": [
     "rsi",
@@ -54,16 +54,16 @@
     "hurst"
   ],
   "barrier_config": {
-    "tp_mult": 2.0,
-    "sl_mult": 1.0,
-    "max_hold": 30
+    "tp_mult": 1.5,
+    "sl_mult": 1.5,
+    "max_hold": 8
   },
   "trainer": "v3",
   "deploy": true,
-  "trained_at": "2026-05-31 13:57:48.022110",
-  "n_rows": 4929,
+  "trained_at": "2026-05-31 16:17:50.027699",
+  "n_rows": 4091,
   "labels": {
-    "buy": 1587,
-    "sell": 3342
+    "buy": 2003,
+    "sell": 2088
   }
 }

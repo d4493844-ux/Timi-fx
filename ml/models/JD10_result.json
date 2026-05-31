@@ -1,10 +1,10 @@
 {
   "symbol": "JD10",
-  "instrument_class": "forex",
-  "cv_accuracy": 0.5449,
-  "meta_win_rate": 0.9411,
-  "meta_trades": 2732,
-  "meta_threshold": 0.8,
+  "instrument_class": "synthetics",
+  "cv_accuracy": 0.4825,
+  "meta_win_rate": 0.9117,
+  "meta_trades": 2004,
+  "meta_threshold": 0.7,
   "features": [
     "rsi",
     "macd_hist",
@@ -54,16 +54,16 @@
     "hurst"
   ],
   "barrier_config": {
-    "tp_mult": 2.0,
-    "sl_mult": 1.0,
-    "max_hold": 30
+    "tp_mult": 1.5,
+    "sl_mult": 1.5,
+    "max_hold": 8
   },
   "trainer": "v3",
   "deploy": true,
-  "trained_at": "2026-05-31 13:57:54.143705",
-  "n_rows": 4920,
+  "trained_at": "2026-05-31 16:17:27.117506",
+  "n_rows": 4031,
   "labels": {
-    "buy": 1869,
-    "sell": 3051
+    "buy": 2120,
+    "sell": 1911
   }
 }
