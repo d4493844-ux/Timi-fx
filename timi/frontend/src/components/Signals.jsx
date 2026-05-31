@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { supabase } from "../lib/supabase";
 
 const NAMES = {
   R_10:"VIX 10", R_25:"VIX 25", R_50:"VIX 50", R_75:"VIX 75", R_100:"VIX 100",
@@ -14,270 +15,323 @@ const NAMES = {
 
 const SESSION_COLORS = { london:"#00d4ff", newYork:"#00ff9d", tokyo:"#ffcc00", sydney:"#ff9966" };
 
-// ── Signal Longevity Engine (same math as backend) ──────────────
+// ── Signal Health Engine ────────────────────────────────────────
 function getSignalHealth(closes = [], action = "BUY") {
   if (!closes || closes.length < 10) return null;
-
   const returns = closes.slice(1).map((c, i) => c - closes[i]);
-  const n    = returns.length;
+  const n = returns.length;
   const mean = returns.reduce((a, b) => a + b, 0) / n;
-  const dm   = returns.map(r => r - mean);
+  const dm = returns.map(r => r - mean);
   let num = 0, den = 0;
   for (let i = 1; i < dm.length; i++) { num += dm[i]*dm[i-1]; den += dm[i]*dm[i]; }
-  const phi    = den === 0 ? 0 : Math.max(-0.99, Math.min(0.99, num/den));
-  const hl     = (phi <= 0 || phi >= 1) ? 1 : Math.abs(Math.log(0.5) / Math.log(Math.abs(phi)));
-  const netMov = Math.abs(closes[closes.length-1] - closes[0]);
-  const atr    = returns.reduce((s, r) => s + Math.abs(r), 0) / returns.length;
-  const snr    = atr > 0 ? netMov / (atr * Math.sqrt(closes.length)) : 0;
-
-  // Noise check
-  const recent   = closes.slice(-5);
-  const baseline = closes.slice(-10, -5);
-  const bm = baseline.reduce((a,b)=>a+b,0)/baseline.length;
-  const bs = Math.sqrt(baseline.reduce((s,v)=>s+Math.pow(v-bm,2),0)/baseline.length);
-  const rm = recent.reduce((a,b)=>a+b,0)/recent.length;
-  const z  = bs > 0 ? Math.abs(rm-bm)/bs : 0;
+  const phi = den === 0 ? 0 : Math.max(-0.99, Math.min(0.99, num/den));
+  const hl  = (phi <= 0 || phi >= 1) ? 1 : Math.abs(Math.log(0.5) / Math.log(Math.abs(phi)));
+  const net = Math.abs(closes[closes.length-1] - closes[0]);
+  const atr = returns.reduce((s, r) => s + Math.abs(r), 0) / returns.length;
+  const snr = atr > 0 ? net / (atr * Math.sqrt(closes.length)) : 0;
+  // Noise
+  const recent = closes.slice(-5), base = closes.slice(-10,-5);
+  const bm = base.reduce((a,b)=>a+b,0)/base.length;
+  const bs = Math.sqrt(base.reduce((s,v)=>s+Math.pow(v-bm,2),0)/base.length);
+  const z  = bs > 0 ? Math.abs(recent.reduce((a,b)=>a+b,0)/recent.length - bm)/bs : 0;
   const against = action==="BUY" ? recent[recent.length-1]<recent[0] : recent[recent.length-1]>recent[0];
   const isNoise = against && z < 1.5;
 
-  let status, color, icon, advice;
+  let status, color, icon, action_advice;
   if (snr > 0.5 && phi > -0.3) {
-    status = "STRONG";  color = "#00ff9d"; icon = "🟢";
-    advice = "Signal is healthy — safe to hold or enter";
+    status="STRONG"; color="#00ff9d"; icon="🟢";
+    action_advice = "✅ Signal healthy — safe to hold";
   } else if (snr > 0.2 || (Math.min(hl,20) > 2 && phi > 0.0)) {
-    status = "FADING";  color = "#ffcc00"; icon = "🟡";
-    advice = isNoise ? "Small dip — likely noise, signal still alive" : "Momentum weakening — watch closely";
+    status="FADING"; color="#ffcc00"; icon="🟡";
+    action_advice = isNoise ? "💡 Small dip — likely noise, stay in" : "⚠️ Weakening — watch closely";
   } else {
-    status = "DEAD";    color = "#ff3366"; icon = "🔴";
-    advice = isNoise ? "Noise spike — signal may recover" : "Signal exhausted — high risk, avoid entry";
+    status="DEAD"; color="#ff3366"; icon="🔴";
+    action_advice = isNoise ? "⚡ Noise spike — may recover" : "🚫 Signal gone — high risk";
   }
-
-  return {
-    status, color, icon, advice,
-    hl: Math.min(hl, 20).toFixed(1),
-    snr: snr.toFixed(2),
-    phi: phi.toFixed(3),
-    isNoise,
-    pct: Math.min(snr / 1.0, 1) * 100
-  };
+  return { status, color, icon, action_advice, hl: Math.min(hl,20).toFixed(1), snr: snr.toFixed(2), phi: phi.toFixed(3), isNoise, pct: Math.min(snr/1.0,1)*100 };
 }
 
-// ── Signal Age Clock ─────────────────────────────────────────────
-function LiveClock({ createdAt }) {
-  const [age, setAge] = useState(0);
+// ── Live candle fetcher ─────────────────────────────────────────
+function useLiveCandles(symbol) {
+  const [closes, setCloses] = useState([]);
   useEffect(() => {
-    const update = () => createdAt && setAge(Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000));
-    update();
-    const t = setInterval(update, 1000);
+    if (!symbol) return;
+    let ws;
+    const connect = () => {
+      ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+      ws.onopen = () => ws.send(JSON.stringify({
+        ticks_history: symbol, adjust_start_time: 1,
+        count: 20, end: "latest", granularity: 60, style: "candles"
+      }));
+      ws.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.candles) setCloses(d.candles.map(c => parseFloat(c.close)));
+      };
+    };
+    connect();
+    const refresh = setInterval(connect, 60000); // refresh every minute
+    return () => { clearInterval(refresh); ws?.close(); };
+  }, [symbol]);
+  return closes;
+}
+
+// ── Trade Health Card ───────────────────────────────────────────
+function TradeHealthCard({ trade }) {
+  const closes = useLiveCandles(trade.symbol);
+  const health = getSignalHealth(closes, trade.type);
+  const [age, setAge] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setAge(Math.floor((Date.now() - new Date(trade.created_at).getTime()) / 1000));
+    }, 1000);
     return () => clearInterval(t);
-  }, [createdAt]);
-  const m = Math.floor(age/60), s = age%60;
-  const color = age < 60 ? "#00ff9d" : age > 180 ? "#ff3366" : "#ffcc00";
-  const label = age < 60 ? "FRESH" : age > 180 ? "STALE" : "AGING";
+  }, [trade.created_at]);
+
+  const mins = Math.floor(age/60), secs = age%60;
+  const ageColor = age < 60 ? "#00ff9d" : age > 300 ? "#ff3366" : "#ffcc00";
+  const ageLabel = age < 60 ? "FRESH" : age > 300 ? "OLD" : "LIVE";
+  const tradeColor = trade.type === "BUY" ? "#00ff9d" : "#ff3366";
+
   return (
-    <span style={{fontFamily:"'Share Tech Mono',monospace", fontSize:9, color}}>
-      {label} · {m>0?`${m}m `:""}{s}s
-    </span>
+    <motion.div
+      initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }}
+      style={{ background:"#071525", border:`1px solid ${health ? health.color+"44" : "#0a2540"}`, borderRadius:14, padding:16, marginBottom:12 }}>
+
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+        <div>
+          <div style={{ fontFamily:"'Orbitron',monospace", fontSize:15, fontWeight:700, color:"#fff" }}>
+            {NAMES[trade.symbol]||trade.symbol}
+          </div>
+          <div style={{ display:"flex", gap:8, marginTop:4, alignItems:"center" }}>
+            <span style={{ fontFamily:"'Orbitron',monospace", fontSize:11, fontWeight:700, color:tradeColor }}>
+              {trade.type}
+            </span>
+            <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"#3a6080" }}>
+              ${trade.stake} stake
+            </span>
+            <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:ageColor }}>
+              {ageLabel} · {mins>0?`${mins}m `:""}{secs}s
+            </span>
+          </div>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"#3a6080" }}>
+            {trade.confidence}% conf
+          </div>
+          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"#3a6080", marginTop:2 }}>
+            {trade.session || ""}
+          </div>
+        </div>
+      </div>
+
+      {/* Signal Health */}
+      {health ? (
+        <div style={{ borderRadius:10, overflow:"hidden", border:`1px solid ${health.color}33` }}>
+          {/* Status bar */}
+          <div style={{ background:`${health.color}15`, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:16 }}>{health.icon}</span>
+              <div>
+                <div style={{ fontFamily:"'Orbitron',monospace", fontSize:11, fontWeight:700, color:health.color }}>
+                  SIGNAL {health.status}
+                </div>
+                <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"#c8e8ff", marginTop:1 }}>
+                  {health.action_advice}
+                </div>
+              </div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontFamily:"'Orbitron',monospace", fontSize:18, fontWeight:900, color:health.color }}>{health.hl}</div>
+              <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080" }}>candles left</div>
+            </div>
+          </div>
+
+          {/* Strength bar */}
+          <div style={{ padding:"8px 12px", background:"rgba(0,0,0,0.2)" }}>
+            <div style={{ height:6, background:"#0a2540", borderRadius:3, overflow:"hidden", marginBottom:6 }}>
+              <motion.div
+                animate={{ width: health.pct+"%" }}
+                transition={{ duration:0.8 }}
+                style={{ height:"100%", borderRadius:3, background:`linear-gradient(90deg,${health.color}55,${health.color})` }}
+              />
+            </div>
+            <div style={{ display:"flex", gap:12 }}>
+              <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080" }}>
+                SNR <span style={{ color:health.color }}>{health.snr}</span>
+              </span>
+              <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080" }}>
+                φ <span style={{ color:"#c8e8ff" }}>{health.phi}</span>
+              </span>
+              {health.isNoise && (
+                <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#ffcc00" }}>⚡ noise</span>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:"#3a6080", textAlign:"center", padding:"10px 0" }}>
+          Loading live data...
+        </div>
+      )}
+    </motion.div>
   );
 }
 
-// ── Longevity Meter Card ─────────────────────────────────────────
-function LongevityCard({ closes, action }) {
-  const h = getSignalHealth(closes, action);
-  if (!h) return null;
-
+// ── Legend ──────────────────────────────────────────────────────
+function Legend() {
   return (
-    <div style={{marginTop:10, borderRadius:10, overflow:"hidden", border:`1px solid ${h.color}33`}}>
-      {/* Top bar — status */}
-      <div style={{background:`${h.color}15`, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-        <div style={{display:"flex", alignItems:"center", gap:8}}>
-          <span style={{fontSize:14}}>{h.icon}</span>
-          <div>
-            <div style={{fontFamily:"'Orbitron',monospace", fontSize:11, fontWeight:700, color:h.color}}>
-              SIGNAL {h.status}
-            </div>
-            <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"#3a6080", marginTop:1}}>
-              {h.advice}
-            </div>
+    <div style={{ background:"#071525", border:"1px solid #0a2540", borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
+      <div style={{ fontFamily:"'Orbitron',monospace", fontSize:9, color:"#3a6080", letterSpacing:2, marginBottom:8 }}>HOW TO READ</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
+        {[
+          { icon:"🟢", label:"STRONG", desc:"Hold — momentum intact" },
+          { icon:"🟡", label:"FADING", desc:"Watch — take profit soon" },
+          { icon:"🔴", label:"DEAD", desc:"High risk — signal gone" },
+        ].map(({ icon, label, desc }) => (
+          <div key={label} style={{ textAlign:"center", padding:"6px 4px", background:"rgba(0,0,0,0.2)", borderRadius:8 }}>
+            <div style={{ fontSize:18, marginBottom:2 }}>{icon}</div>
+            <div style={{ fontFamily:"'Orbitron',monospace", fontSize:8, color:"#c8e8ff" }}>{label}</div>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:7, color:"#3a6080", marginTop:2, lineHeight:1.4 }}>{desc}</div>
           </div>
-        </div>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"'Orbitron',monospace", fontSize:16, fontWeight:900, color:h.color}}>
-            {h.hl}
-          </div>
-          <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080"}}>candles left</div>
-        </div>
-      </div>
-
-      {/* Strength bar */}
-      <div style={{padding:"8px 12px", background:"rgba(0,0,0,0.2)"}}>
-        <div style={{display:"flex", justifyContent:"space-between", marginBottom:4}}>
-          <span style={{fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080"}}>SIGNAL STRENGTH</span>
-          <span style={{fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:h.color}}>{Math.round(h.pct)}%</span>
-        </div>
-        <div style={{height:6, background:"#0a2540", borderRadius:3, overflow:"hidden"}}>
-          <motion.div
-            initial={{width:0}}
-            animate={{width:h.pct+"%"}}
-            transition={{duration:1, ease:"easeOut"}}
-            style={{height:"100%", borderRadius:3, background:`linear-gradient(90deg,${h.color}55,${h.color})`}}
-          />
-        </div>
-
-        {/* Stats row */}
-        <div style={{display:"flex", gap:12, marginTop:6, flexWrap:"wrap"}}>
-          <span style={{fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080"}}>
-            SNR <span style={{color:h.color}}>{h.snr}</span>
-          </span>
-          <span style={{fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080"}}>
-            φ <span style={{color:"#c8e8ff"}}>{h.phi}</span>
-          </span>
-          {h.isNoise && (
-            <span style={{fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#ffcc00"}}>
-              ⚡ NOISE — dip is temporary
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* How to read guide */}
-      <div style={{padding:"6px 12px", background:"rgba(0,0,0,0.15)", borderTop:"1px solid #0a2540"}}>
-        <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:"#3a6080", lineHeight:1.6}}>
-          {h.status==="STRONG" && "✅ Hold position — momentum intact, signal fresh"}
-          {h.status==="FADING" && !h.isNoise && "⚠️ Monitor closely — take profit if in profit"}
-          {h.status==="FADING" && h.isNoise && "💡 Small counter-move — likely temporary, stay in"}
-          {h.status==="DEAD" && !h.isNoise && "🚫 Signal exhausted — do not enter new trade"}
-          {h.status==="DEAD" && h.isNoise && "⚡ Volatility spike — signal may recover soon"}
-        </div>
+        ))}
       </div>
     </div>
   );
 }
 
-export default function Signals({ signals={}, session={}, candles={} }) {
-  const entries = Object.entries(signals).filter(([, sig]) => sig.action !== "HOLD");
+// ── Main Component ───────────────────────────────────────────────
+export default function Signals({ session={} }) {
+  const [openTrades, setOpenTrades]   = useState([]);
+  const [recentTrades, setRecentTrades] = useState([]);
+  const [loading, setLoading]         = useState(true);
   const activeSessions = session.active || [];
 
+  const fetchTrades = useCallback(async () => {
+    try {
+      // Open trades (last 30 min, result = open or null)
+      const { data: open } = await supabase
+        .from("trades")
+        .select("*")
+        .eq("account_name", "edge_function")
+        .in("result", ["open", "OPEN"])
+        .gte("created_at", new Date(Date.now() - 30*60*1000).toISOString())
+        .order("created_at", { ascending: false });
+
+      // Recent completed trades (last 2 hours)
+      const { data: recent } = await supabase
+        .from("trades")
+        .select("*")
+        .eq("account_name", "edge_function")
+        .in("result", ["win", "loss", "WIN", "LOSS"])
+        .gte("created_at", new Date(Date.now() - 2*60*60*1000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      setOpenTrades(open || []);
+      setRecentTrades(recent || []);
+    } catch(e) {
+      console.error("Trades fetch error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTrades();
+    // Refresh every 30 seconds
+    const t = setInterval(fetchTrades, 30000);
+    // Realtime subscription for new trades
+    const sub = supabase
+      .channel("trades-signals")
+      .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, fetchTrades)
+      .subscribe();
+    return () => { clearInterval(t); sub.unsubscribe(); };
+  }, [fetchTrades]);
+
   return (
-    <div style={{padding:"20px 20px 100px", background:"#020810", minHeight:"100vh"}}>
-      <div style={{fontFamily:"'Orbitron',monospace", fontSize:18, fontWeight:700, color:"#fff", marginBottom:4}}>Signals</div>
-      <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:"#3a6080", letterSpacing:2, marginBottom:16}}>
-        // LIVE SIGNAL HEALTH · HALF-LIFE ENGINE
+    <div style={{ padding:"20px 20px 100px", background:"#020810", minHeight:"100vh" }}>
+      <div style={{ fontFamily:"'Orbitron',monospace", fontSize:18, fontWeight:700, color:"#fff", marginBottom:4 }}>
+        Signal Health
+      </div>
+      <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:"#3a6080", letterSpacing:2, marginBottom:16 }}>
+        // LIVE TRADE MONITOR · HALF-LIFE ENGINE
       </div>
 
-      {/* SESSION BAR */}
-      <div style={{background:"#071525", border:"1px solid rgba(0,212,255,0.2)", borderRadius:12, padding:"12px 16px", marginBottom:14, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+      {/* Session bar */}
+      <div style={{ background:"#071525", border:"1px solid rgba(0,212,255,0.2)", borderRadius:12, padding:"10px 14px", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div>
-          <div style={{fontFamily:"'Orbitron',monospace", fontSize:9, color:"#3a6080", letterSpacing:3, marginBottom:4}}>ACTIVE SESSIONS</div>
-          <div style={{display:"flex", gap:6}}>
+          <div style={{ fontFamily:"'Orbitron',monospace", fontSize:8, color:"#3a6080", letterSpacing:3, marginBottom:3 }}>SESSIONS</div>
+          <div style={{ display:"flex", gap:6 }}>
             {activeSessions.length === 0
-              ? <span style={{fontFamily:"'Share Tech Mono',monospace", fontSize:11, color:"#3a6080"}}>Off-hours</span>
+              ? <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:"#3a6080" }}>Off-hours</span>
               : activeSessions.map(s => (
-                  <span key={s.name} style={{fontFamily:"'Share Tech Mono',monospace", fontSize:11, color:SESSION_COLORS[s.name]||"#fff", background:"rgba(0,212,255,0.08)", padding:"3px 8px", borderRadius:6}}>
-                    {s.name.charAt(0).toUpperCase()+s.name.slice(1)}
-                  </span>
-                ))
+                <span key={s.name} style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:SESSION_COLORS[s.name]||"#fff", background:"rgba(0,212,255,0.08)", padding:"2px 7px", borderRadius:5 }}>
+                  {s.name.charAt(0).toUpperCase()+s.name.slice(1)}
+                </span>
+              ))
             }
           </div>
         </div>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"'Orbitron',monospace", fontSize:18, fontWeight:700, color:session.overlap?"#00ff9d":"#00d4ff"}}>
-            {session.strength||0}/4
+        <button onClick={fetchTrades} style={{ background:"rgba(0,212,255,0.1)", border:"1px solid rgba(0,212,255,0.3)", borderRadius:8, padding:"6px 12px", color:"#00d4ff", fontFamily:"'Share Tech Mono',monospace", fontSize:9, cursor:"pointer" }}>
+          ↻ Refresh
+        </button>
+      </div>
+
+      <Legend />
+
+      {/* Open Trades */}
+      {loading ? (
+        <div style={{ textAlign:"center", color:"#3a6080", fontFamily:"'Share Tech Mono',monospace", fontSize:11, padding:40 }}>
+          Loading live trades...
+        </div>
+      ) : openTrades.length > 0 ? (
+        <>
+          <div style={{ fontFamily:"'Orbitron',monospace", fontSize:10, color:"#00ff9d", letterSpacing:2, marginBottom:10 }}>
+            ● {openTrades.length} OPEN TRADE{openTrades.length > 1 ? "S" : ""}
           </div>
-          <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"#3a6080"}}>{session.overlap?"OVERLAP":"STRENGTH"}</div>
-        </div>
-      </div>
-
-      {/* LEGEND */}
-      <div style={{background:"#071525", border:"1px solid #0a2540", borderRadius:10, padding:"10px 14px", marginBottom:14}}>
-        <div style={{fontFamily:"'Orbitron',monospace", fontSize:9, color:"#3a6080", letterSpacing:2, marginBottom:8}}>HOW TO READ SIGNAL HEALTH</div>
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8}}>
-          {[
-            {icon:"🟢", label:"STRONG", desc:"Safe to enter or hold"},
-            {icon:"🟡", label:"FADING", desc:"Take profit if in profit"},
-            {icon:"🔴", label:"DEAD", desc:"Avoid — signal gone"},
-          ].map(({icon, label, desc}) => (
-            <div key={label} style={{textAlign:"center"}}>
-              <div style={{fontSize:16, marginBottom:3}}>{icon}</div>
-              <div style={{fontFamily:"'Orbitron',monospace", fontSize:8, color:"#c8e8ff"}}>{label}</div>
-              <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:7, color:"#3a6080", marginTop:2}}>{desc}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {entries.length === 0 && (
-        <div style={{textAlign:"center", color:"#3a6080", fontFamily:"'Share Tech Mono',monospace", fontSize:12, marginTop:60}}>
-          <div style={{fontSize:32, marginBottom:12}}>🔍</div>
-          Scanning markets...
+          <AnimatePresence>
+            {openTrades.map(trade => <TradeHealthCard key={trade.id} trade={trade} />)}
+          </AnimatePresence>
+        </>
+      ) : (
+        <div style={{ textAlign:"center", color:"#3a6080", fontFamily:"'Share Tech Mono',monospace", fontSize:11, padding:30, background:"#071525", borderRadius:12 }}>
+          <div style={{ fontSize:28, marginBottom:8 }}>👁</div>
+          No open trades right now
           <br/>
-          <span style={{fontSize:10}}>Signals appear when ML + HMM + longevity align</span>
+          <span style={{ fontSize:9 }}>Signal health will appear here when bot places trades</span>
         </div>
       )}
 
-      <AnimatePresence>
-        {entries.map(([sym, sig], i) => {
-          const color     = sig.action==="BUY"?"#00ff9d":sig.action==="SELL"?"#ff3366":"#ffcc00";
-          const rawCloses = (candles[sym]||[]).map(c => parseFloat(c.close));
-
-          return (
-            <motion.div key={sym}
-              style={{background:"#071525", border:"1px solid #0a2540", borderRadius:14, padding:16, marginBottom:12}}
-              initial={{opacity:0,y:20}} animate={{opacity:1,y:0}}
-              exit={{opacity:0,y:-10}} transition={{delay:i*0.08}}>
-
-              {/* Header */}
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10}}>
-                <div>
-                  <div style={{fontFamily:"'Orbitron',monospace", fontSize:15, fontWeight:700, color:"#fff"}}>
-                    {NAMES[sym]||sym}
-                  </div>
-                  <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:"#3a6080", marginTop:2}}>
-                    RSI: {sig.rsi} · Score: {sig.score}
-                  </div>
-                  {sig.createdAt && (
-                    <div style={{marginTop:3}}><LiveClock createdAt={sig.createdAt}/></div>
-                  )}
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontFamily:"'Orbitron',monospace", fontSize:22, fontWeight:900, color}}>{sig.action}</div>
-                  <div style={{fontFamily:"'Share Tech Mono',monospace", fontSize:11, color, marginTop:2}}>{sig.confidence}% conf</div>
-                </div>
+      {/* Recent trades */}
+      {recentTrades.length > 0 && (
+        <>
+          <div style={{ fontFamily:"'Orbitron',monospace", fontSize:10, color:"#3a6080", letterSpacing:2, margin:"16px 0 10px" }}>
+            RECENT TRADES
+          </div>
+          {recentTrades.map(trade => (
+            <div key={trade.id} style={{ background:"#071525", border:"1px solid #0a2540", borderRadius:10, padding:"10px 14px", marginBottom:8, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div>
+                <span style={{ fontFamily:"'Orbitron',monospace", fontSize:10, color:trade.type==="BUY"?"#00ff9d":"#ff3366", marginRight:8 }}>
+                  {trade.type}
+                </span>
+                <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:"#c8e8ff" }}>
+                  {NAMES[trade.symbol]||trade.symbol}
+                </span>
               </div>
-
-              {/* Confidence bar */}
-              <div style={{height:4, background:"#0a2540", borderRadius:2, overflow:"hidden", marginBottom:10}}>
-                <motion.div style={{height:"100%", borderRadius:2, background:`linear-gradient(90deg,${color}55,${color})`}}
-                  initial={{width:0}} animate={{width:sig.confidence+"%"}} transition={{duration:0.8}}/>
+              <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"#3a6080" }}>
+                  ${parseFloat(trade.pnl||0).toFixed(2)}
+                </span>
+                <span style={{ fontFamily:"'Orbitron',monospace", fontSize:11, fontWeight:700, color:["win","WIN"].includes(trade.result)?"#00ff9d":"#ff3366" }}>
+                  {(trade.result||"").toUpperCase()}
+                </span>
               </div>
-
-              {/* Signal Health Card */}
-              <LongevityCard closes={rawCloses} action={sig.action} />
-
-              {/* Patterns */}
-              {sig.patterns && sig.patterns.length > 0 && (
-                <div style={{display:"flex", gap:5, flexWrap:"wrap", marginTop:8}}>
-                  {sig.patterns.map(p => (
-                    <span key={p.name} style={{
-                      fontFamily:"'Share Tech Mono',monospace", fontSize:9, padding:"3px 7px", borderRadius:5,
-                      background:p.type==="bullish"?"rgba(0,255,157,0.1)":"rgba(255,51,102,0.1)",
-                      border:"1px solid "+(p.type==="bullish"?"rgba(0,255,157,0.3)":"rgba(255,51,102,0.3)"),
-                      color:p.type==="bullish"?"#00ff9d":"#ff3366"
-                    }}>🕯 {p.name}</span>
-                  ))}
-                </div>
-              )}
-
-              {/* Reasons */}
-              <div style={{display:"flex", gap:5, flexWrap:"wrap", marginTop:6}}>
-                {(sig.reasons||[]).slice(0,5).map(r => (
-                  <span key={r} style={{fontFamily:"'Share Tech Mono',monospace", fontSize:9, padding:"3px 7px", borderRadius:5, border:"1px solid #0a2540", color:"#3a6080"}}>{r}</span>
-                ))}
-              </div>
-            </motion.div>
-          );
-        })}
-      </AnimatePresence>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
