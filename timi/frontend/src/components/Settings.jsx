@@ -44,7 +44,13 @@ const DEFAULT_ON = [
 ];
 
 // Symbols with trained ML models
-const ML_TRAINED = ["BOOM1000", "CRASH1000", "frxUSDJPY"];
+const ML_TRAINED = [
+  "BOOM1000","BOOM500","CRASH1000","CRASH500",
+  "R_10","R_25","R_50","R_75","R_100",
+  "JD10","JD25","JD50","JD75","JD100",
+  "frxEURUSD","frxGBPUSD","frxUSDJPY","frxXAUUSD","frxXAGUSD",
+  "cryBTCUSD","cryETHUSD","frxEURGBP"
+];
 
 const c = {
   page:   { padding: "20px 20px 110px", background: "#020810", minHeight: "100vh" },
