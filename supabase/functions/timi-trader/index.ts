@@ -2252,11 +2252,17 @@ function firstPassageTime(
   // BOOM/CRASH: SL=1.5×ATR (65-74% of losses were SL clips at 1×ATR)
   // Others: SL=1.0×ATR (standard 2:1 RR)
   const isBoomCrashSymbol = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-  const slMult = isBoomCrashSymbol ? 1.5 : 1.0;
-  const slPct  = Math.min(tpPct * slMult * 0.5, 0.90);
+  const isVIXSymbol = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("JD");
+  // VIX tight SL = 0.4x TP → 2.5:1 ratio (backtested: avg loss was bigger than avg win)
+  // BOOM/CRASH wider SL = 1.5x TP (spike volatility needs room)
+  const slMult = isBoomCrashSymbol ? 1.5 : isVIXSymbol ? 0.4 : 0.5;
+  const rawSlPct = Math.min(tpPct * slMult, 0.90);
+  // Enforce minimum 2:1 TP/SL — never trade with worse ratio
+  const finalTpPct = tpPct < rawSlPct * 2.0 ? rawSlPct * 2.0 : tpPct;
+  const slPct = rawSlPct;
 
   // Calculate actual win probability
-  const winProb = tpPct / (tpPct + slPct);  // FIX: TP/(TP+SL) = probability of hitting TP first (Brownian motion FPT)
+  const winProb = finalTpPct / (finalTpPct + slPct);
 
   // tpMultiplier = TP as fraction of stake (for contract_update)
   // stake * multiplier * tpPct = TP profit
@@ -2264,7 +2270,7 @@ function firstPassageTime(
   // We'll calculate actual $ amounts in placeTrade
   const tpMultiplier = tpPct * 100; // normalized
 
-  return { tpPct, slPct, winProb, tpMultiplier };
+  return { tpPct: finalTpPct, slPct, winProb, tpMultiplier };
 }
 
 // ─────────────────────────────────────────────
