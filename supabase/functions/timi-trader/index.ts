@@ -1923,8 +1923,12 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         if (fptTpPct > 0 && fptSlPct > 0) {
           // FPT: TP = stake × multiplier × tpPct (price move needed × leverage)
           // e.g. stake=$1, mult=x200, tpPct=0.5% → TP = 1 × 200 × 0.005 = $1.00
-          takeProfit = parseFloat((adjStake * dynMultiplier * fptTpPct).toFixed(2));
-          stopLoss   = parseFloat(Math.min(adjStake * dynMultiplier * fptSlPct, adjStake * 0.9).toFixed(2));
+          // R_75/VIX: wider TP, tighter SL for positive expectancy
+          const isVIX = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("JD");
+          const tpMult = isVIX ? fptTpPct * 1.5 : fptTpPct;   // +50% TP for VIX
+          const slMult = isVIX ? fptSlPct * 0.6 : fptSlPct;   // -40% SL for VIX
+          takeProfit = parseFloat((adjStake * dynMultiplier * tpMult).toFixed(2));
+          stopLoss   = parseFloat(Math.min(adjStake * dynMultiplier * slMult, adjStake * 0.5).toFixed(2));
           // Deriv MULT contract limits:
           // TP must be >= stake (can't TP for less than you risked)
           // SL must be <= stake (can't lose more than stake)
@@ -2729,6 +2733,15 @@ Deno.serve(async (req) => {
   // Circuit breaker — 3 consecutive losses → pause
   // BUT: if a high-confidence signal appears (85%+) → allow it through
   // This prevents the bot from missing genuinely good setups during pause
+  // Circuit breaker: check R_75 specific consecutive losses
+  const r75Losses = await supabase.from("trades")
+    .select("result").eq("symbol","R_75").eq("account_name","edge_function")
+    .order("created_at",{ascending:false}).limit(5);
+  const r75ConsecLoss = (r75Losses.data||[]).every((t:any) => t.result === "loss");
+  if (r75ConsecLoss && (r75Losses.data||[]).length >= 5) {
+    console.log("🛑 R_75 circuit breaker: 5 consecutive losses — pausing R_75 for this cycle");
+    cfg.symbols = (cfg.symbols||[]).filter((s:string) => s !== "R_75");
+  }
   const consec = await getConsecutiveLosses(supabase);
   // FIX: Circuit breaker at 5 losses not 3 — 3 was too sensitive
   // Also reduced confidence boost from 85% to 75% — 85% almost never fires
