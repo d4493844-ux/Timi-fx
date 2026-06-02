@@ -2777,6 +2777,35 @@ Deno.serve(async (req) => {
   console.log(`🧠 ML models: ${Object.keys(ML_MODELS).join(", ")}`);
 
   const mlSymbols  = Object.keys(ML_MODELS);
+  // ── Gold & Symbol Protection ─────────────────────────────────
+  // Block Gold if last 2 same-direction trades both lost
+  try {
+    const { data: xauR } = await supabase.from("trades")
+      .select("type,result").eq("symbol","frxXAUUSD").eq("account_name","edge_function")
+      .in("result",["win","loss"]).order("created_at",{ascending:false}).limit(3);
+    if (xauR && xauR.length >= 2) {
+      const sameDir = xauR[0].type === xauR[1].type;
+      const bothLoss = xauR[0].result==="loss" && xauR[1].result==="loss";
+      if (sameDir && bothLoss) {
+        console.log(`⚠️ XAU: 2 consecutive ${xauR[0].type} losses — skipping XAU this cycle`);
+        cfg.symbols = (cfg.symbols||[]).filter((s:string) => s !== "frxXAUUSD");
+      }
+    }
+  } catch(_e) {}
+
+  // Block any symbol with 3+ consecutive losses this cycle
+  try {
+    for (const sym of (cfg.symbols||[])) {
+      const { data: symR } = await supabase.from("trades")
+        .select("result").eq("symbol",sym).eq("account_name","edge_function")
+        .in("result",["win","loss"]).order("created_at",{ascending:false}).limit(3);
+      if (symR && symR.length >= 3 && symR.every((t:any) => t.result==="loss")) {
+        console.log(`🛑 ${sym}: 3 consecutive losses — cooling down this cycle`);
+        cfg.symbols = (cfg.symbols||[]).filter((s:string) => s !== sym);
+      }
+    }
+  } catch(_e) {}
+
   const cfgSymbols = cfg.symbols || ["BOOM500", "CRASH500", "frxUSDJPY"];
   // INTERSECTION only — must be in BOTH ml_models AND bot_config.symbols
   // This means user controls exactly which symbols trade via Settings
