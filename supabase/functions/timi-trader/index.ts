@@ -3600,7 +3600,15 @@ Deno.serve(async (req) => {
       "JD100":     "Jump 100 Index",
     };
     const mt5Symbol = DERIV_TO_MT5[best.symbol];
-    if (mt5Symbol) {
+    // Block forex/gold/crypto MT5 signals when market is closed
+    const _mt5Day  = new Date().getUTCDay();
+    const _mt5Hour = new Date().getUTCHours();
+    const _isWeekend = _mt5Day === 0 || _mt5Day === 6;
+    const _isFxAsset = best.symbol.startsWith("frx") || best.symbol.startsWith("cry");
+    // Forex market hours: Mon 00:00 UTC to Fri 21:00 UTC
+    const _forexClosed = _isWeekend || (_mt5Day === 5 && _mt5Hour >= 21);
+    const _skipMT5 = _isFxAsset && _forexClosed;
+    if (mt5Symbol && !_skipMT5) {
       try {
         const { error: mt5Err } = await supabase.from("mt5_signals").insert({
           symbol:     mt5Symbol,
