@@ -2829,12 +2829,20 @@ Deno.serve(async (req) => {
     .from("trades")
     .select("symbol, created_at")
     .in("result", ["loss", "LOSS"])
-    .gte("created_at", new Date(Date.now() - 5 * 60 * 1000).toISOString())
+    .gte("created_at", new Date(Date.now() - 30 * 60 * 1000).toISOString())
     .order("created_at", { ascending: false });
 
   const cooldownSymbols = new Set<string>();
+  const getCooldown = (sym: string) => {
+    if (sym.startsWith("R_") || sym.startsWith("JD") || sym.startsWith("1HZ")) return 30;
+    if (sym.startsWith("BOOM") || sym.startsWith("CRASH")) return 15;
+    return 20;
+  };
   for (const loss of (recentLosses || [])) {
-    cooldownSymbols.add(loss.symbol);
+    const cd = getCooldown(loss.symbol) * 60 * 1000;
+    if (Date.now() - new Date(loss.created_at).getTime() < cd) {
+      cooldownSymbols.add(loss.symbol);
+    }
   }
   if (cooldownSymbols.size > 0) {
     console.log(`⏱️  Cooldown active for: ${[...cooldownSymbols].join(", ")}`);
