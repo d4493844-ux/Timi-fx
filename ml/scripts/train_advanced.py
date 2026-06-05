@@ -363,7 +363,7 @@ def train_symbol(symbol):
 
 def main():
     print("🧠 TIMI v3.0 — Path Signatures + ESN + Drift-Diffusion\n")
-    targets=["JD10","JD25","JD50","JD75","JD100","R_10"]
+    targets=["R_75","R_50","R_100","R_25"]
     results=[]
     for sym in targets:
         try:

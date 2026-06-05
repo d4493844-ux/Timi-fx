@@ -1971,9 +1971,7 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         } else {
           ws.send(JSON.stringify({
             buy: 1, price: adjStake,
-            // Forex: 3min during overlap (most liquid), 5min otherwise
-          const fxDuration = session.name === "LondonNY_Overlap" ? 3 : 5;
-          parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", duration: fxDuration, duration_unit: "m", symbol }
+            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", duration: 5, duration_unit: "m", symbol }
           }));
         }
       }

@@ -1,9 +1,9 @@
 {
   "symbol": "R_100",
   "instrument_class": "synthetics",
-  "cv_accuracy": 0.5262,
-  "meta_win_rate": 0.9199,
-  "meta_trades": 2097,
+  "cv_accuracy": 0.5126,
+  "meta_win_rate": 0.9552,
+  "meta_trades": 1049,
   "meta_threshold": 0.8,
   "features": [
     "rsi",
@@ -60,10 +60,10 @@
   },
   "trainer": "v3",
   "deploy": true,
-  "trained_at": "2026-05-29 22:54:34.825666",
-  "n_rows": 4128,
+  "trained_at": "2026-06-05 04:00:23.718627",
+  "n_rows": 4114,
   "labels": {
-    "buy": 2065,
-    "sell": 2063
+    "buy": 2048,
+    "sell": 2066
   }
 }
