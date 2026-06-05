@@ -3570,29 +3570,34 @@ Deno.serve(async (req) => {
   if (success) {
     // Deriv → MT5 symbol mapping
     const DERIV_TO_MT5: Record<string,string> = {
-      "frxEURUSD": "EURUSD",  "frxGBPUSD": "GBPUSD",
-      "frxUSDJPY": "USDJPY",  "frxAUDUSD": "AUDUSD",
-      "frxUSDCAD": "USDCAD",  "frxUSDCHF": "USDCHF",
-      "frxEURGBP": "EURGBP",  "frxEURJPY": "EURJPY",
-      "frxGBPJPY": "GBPJPY",  "frxXAUUSD": "XAUUSD",
-      "frxXAGUSD": "XAGUSD",  "frxNZDUSD": "NZDUSD",
-      "cryBTCUSD": "BTCUSD",  "cryETHUSD": "ETHUSD",
+      // Forex — Deriv MT5 uses standard names
+      "frxEURUSD": "EURUSD",   "frxGBPUSD": "GBPUSD",
+      "frxUSDJPY": "USDJPY",   "frxAUDUSD": "AUDUSD",
+      "frxUSDCAD": "USDCAD",   "frxUSDCHF": "USDCHF",
+      "frxEURGBP": "EURGBP",   "frxEURJPY": "EURJPY",
+      "frxGBPJPY": "GBPJPY",   "frxNZDUSD": "NZDUSD",
+      // Metals — Deriv MT5 uses "Gold Index" not "XAUUSD"
+      "frxXAUUSD": "Gold Index",
+      "frxXAGUSD": "Silver Index",
+      // Crypto
+      "cryBTCUSD": "BTCUSD",   "cryETHUSD": "ETHUSD",
+      // Boom & Crash
       "BOOM1000":  "Boom 1000 Index",
       "BOOM500":   "Boom 500 Index",
       "CRASH1000": "Crash 1000 Index",
       "CRASH500":  "Crash 500 Index",
+      // Volatility indices
       "R_10":      "Volatility 10 Index",
       "R_25":      "Volatility 25 Index",
       "R_50":      "Volatility 50 Index",
-      "R_10":      "Volatility 10 Index",
       "R_75":      "Volatility 75 Index",
+      "R_100":     "Volatility 100 Index",
+      // Jump indices
       "JD10":      "Jump 10 Index",
       "JD25":      "Jump 25 Index",
       "JD50":      "Jump 50 Index",
       "JD75":      "Jump 75 Index",
       "JD100":     "Jump 100 Index",
-      "R_100":     "Volatility 100 Index",
-      "R_50":      "Volatility 50 Index",
     };
     const mt5Symbol = DERIV_TO_MT5[best.symbol];
     if (mt5Symbol) {
