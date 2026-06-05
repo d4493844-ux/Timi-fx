@@ -3577,8 +3577,8 @@ Deno.serve(async (req) => {
       "frxEURGBP": "EURGBP",   "frxEURJPY": "EURJPY",
       "frxGBPJPY": "GBPJPY",   "frxNZDUSD": "NZDUSD",
       // Metals — Deriv MT5 uses "Gold Index" not "XAUUSD"
-      "frxXAUUSD": "Gold Index",
-      "frxXAGUSD": "Silver Index",
+      "frxXAUUSD": "XAUUSD",
+      "frxXAGUSD": "XAGUSD",
       // Crypto
       "cryBTCUSD": "BTCUSD",   "cryETHUSD": "ETHUSD",
       // Boom & Crash
