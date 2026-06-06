@@ -2714,6 +2714,22 @@ function detectNoiseVsReversal(closes: number[], signalAction: string): {
 }
 
 
+
+// ── Per-symbol optimal RSI thresholds (backtested June 2026) ──
+const SYNTH_RSI_THRESHOLDS: Record<string,{buy:number,sell:number}> = {
+  "R_100": { buy: 20, sell: 80 },
+  "JD10":  { buy: 32, sell: 68 },
+  "JD50":  { buy: 35, sell: 65 },
+  "JD25":  { buy: 20, sell: 80 },
+  "R_10":  { buy: 35, sell: 65 },
+  "R_25":  { buy: 30, sell: 70 },
+  "JD100": { buy: 28, sell: 72 },
+  "R_75":  { buy: 32, sell: 68 },
+  "JD75":  { buy: 25, sell: 75 },
+  "R_50":  { buy: 20, sell: 80 },
+};
+const BELOW_BREAKEVEN = ["R_75","JD75","JD100","R_50"];
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
@@ -3323,6 +3339,27 @@ Deno.serve(async (req) => {
           sig.ticks_since_spike = spikeMeta.ticksSinceSpike;
           if (spikeMeta.highConviction) {
             console.log(`⚡ ${symbol}: HIGH CONVICTION — Poisson overdue + Topo compressed`);
+          }
+        }
+
+        // ── Per-symbol RSI threshold check for synthetics ──────────
+        const isMeanRevert = symbol.startsWith("R_") || symbol.startsWith("JD") || symbol.startsWith("1HZ");
+        if (isMeanRevert) {
+          const rsiThresh = SYNTH_RSI_THRESHOLDS[symbol];
+          if (rsiThresh) {
+            const rsiNow = features[2] * 100;
+            const rsiOK = (sig.action === "BUY"  && rsiNow <= rsiThresh.buy) ||
+                          (sig.action === "SELL" && rsiNow >= rsiThresh.sell);
+            if (!rsiOK) {
+              sig.confidence = Math.max(10, sig.confidence - 25);
+              scanLog.push(`${symbol}: rsi_thresh_miss RSI=${rsiNow.toFixed(1)} need<=${rsiThresh.buy}/>${rsiThresh.sell} conf-=25`);
+            } else {
+              sig.confidence = Math.min(95, sig.confidence + 8);
+              scanLog.push(`${symbol}: rsi_thresh_ok RSI=${rsiNow.toFixed(1)} conf+=8`);
+            }
+            if (BELOW_BREAKEVEN.includes(symbol)) {
+              sig.confidence = Math.max(10, sig.confidence - 8);
+            }
           }
         }
 
