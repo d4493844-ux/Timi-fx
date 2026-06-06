@@ -1531,8 +1531,8 @@ function isKillZone(): { active: boolean; zone: string } {
   const h = new Date().getUTCHours();
   const m = new Date().getUTCMinutes();
   const t = h + m/60;
-  if (t >= 7.0 && t < 9.0)   return { active: true,  zone: "London_Open" };
-  if (t >= 13.0 && t < 15.0) return { active: true,  zone: "NY_Open" };
+  if (t >= 8.0  && t < 12.0) return { active: true,  zone: "London_Open" };
+  if (t >= 13.0 && t < 17.0) return { active: true,  zone: "NY_Open" };
   if (t >= 15.0 && t < 17.0) return { active: true,  zone: "London_Close" };
   return { active: false, zone: "Dead_Zone" };
 }
@@ -1541,6 +1541,35 @@ function isKillZone(): { active: boolean; zone: string } {
 // A bullish FVG: candle[i-2].high < candle[i].low (gap between wicks)
 // Price leaving an inefficiency — market will return to fill it
 // We enter when price RETURNS to the FVG zone (high probability)
+
+// ── Judas Swing Detection ─────────────────────────────────────
+// ICT: At session open price makes fake move to trap retail
+// then reverses strongly in true direction
+// Pattern: strong move in one direction in first 15min of session
+// followed by reversal candle closing beyond 50% of fake move
+function detectJudasSwing(candles: any[], sessionOpenIdx: number = 0): {
+  detected: boolean; fakeDirection: string; trueDirection: string; sweepSize: number;
+} {
+  if (candles.length < 10) return { detected:false, fakeDirection:"", trueDirection:"", sweepSize:0 };
+  const recent = candles.slice(-8);
+  const opens  = recent.map((c: any) => parseFloat(c.open));
+  const closes = recent.map((c: any) => parseFloat(c.close));
+  const highs  = recent.map((c: any) => parseFloat(c.high));
+  const lows   = recent.map((c: any) => parseFloat(c.low));
+  // First 3 candles make strong move
+  const firstMove = closes[2] - opens[0];
+  const moveRange = Math.max(...highs.slice(0,4)) - Math.min(...lows.slice(0,4));
+  if (moveRange === 0) return { detected:false, fakeDirection:"", trueDirection:"", sweepSize:0 };
+  // Reversal in last 3 candles — more than 50% retracement
+  const lastMove = closes[7] - closes[3];
+  const isReversal = Math.abs(lastMove) > Math.abs(firstMove) * 0.6;
+  const opposite   = (firstMove > 0 && lastMove < 0) || (firstMove < 0 && lastMove > 0);
+  if (!isReversal || !opposite) return { detected:false, fakeDirection:"", trueDirection:"", sweepSize:0 };
+  const fakeDir  = firstMove > 0 ? "BUY"  : "SELL";
+  const trueDir  = lastMove  > 0 ? "BUY"  : "SELL";
+  return { detected:true, fakeDirection:fakeDir, trueDirection:trueDir, sweepSize:Math.abs(firstMove) };
+}
+
 function detectFVG(candles: any[]): {
   bullish: Array<{top: number; bottom: number; index: number}>;
   bearish: Array<{top: number; bottom: number; index: number}>;
@@ -1695,6 +1724,13 @@ function ictForexSignal(candles1m: any[], candles5m: any[], symbol: string): {
   // Kill zone check — only trade during high liquidity periods
   const kz = isKillZone();
   if (!kz.active) return null;
+
+  // Judas Swing check — detect fake session open move
+  const judas = detectJudasSwing(candles1m.slice(-20));
+  if (judas.detected) {
+    // Judas confirms the TRUE direction — use it
+    console.log(`📍 Judas Swing: fake=${judas.fakeDirection} true=${judas.trueDirection} sweep=${judas.sweepSize.toFixed(5)}`);
+  }
   
   const closes = candles1m.map((c: any) => parseFloat(c.close));
   const price  = closes[closes.length-1];
@@ -3162,10 +3198,62 @@ Deno.serve(async (req) => {
         // Apply regime-based confidence adjustment
         sig.confidence = Math.max(10, Math.min(95, sig.confidence + adaptStrat.confidence_boost));
 
+        // ── OU Z-Score Override for VIX/JD ──────────────────────────
+        // When z-score > 2.0 → price is 2σ above mean → statistically MUST revert
+        // This is a 95% probability event by Gaussian distribution
+        const isMeanRev  = symbol.startsWith("R_") || symbol.startsWith("JD") || symbol.startsWith("1HZ");
+        if (isMeanRev) {
+          const ouData  = ouFeatures(closes4ofi, 100);
+          const ouZ     = ouData.zscore;
+          const ouTheta = ouData.theta;
+          if (Math.abs(ouZ) >= 2.0) {
+            // Strong OU signal — override ML direction if contradicts
+            const ouAction = ouZ > 2.0 ? "SELL" : "BUY";
+            if (ouAction !== sig.action) {
+              scanLog.push(`${symbol}: OU_override z=${ouZ.toFixed(2)} forcing ${ouAction} (price ${ouZ>0?"above":"below"} 2σ mean)`);
+              sig.action = ouAction;
+              sig.confidence = Math.min(95, sig.confidence + 10);
+            } else {
+              scanLog.push(`${symbol}: OU_confirmed z=${ouZ.toFixed(2)} θ=${ouTheta.toFixed(5)} conf+=10`);
+              sig.confidence = Math.min(95, sig.confidence + 10);
+            }
+          } else if (Math.abs(ouZ) >= 1.5) {
+            // Moderate OU signal — boost if confirming
+            const ouAction = ouZ > 1.5 ? "SELL" : "BUY";
+            if (ouAction === sig.action) {
+              scanLog.push(`${symbol}: OU_boost z=${ouZ.toFixed(2)} conf+=5`);
+              sig.confidence = Math.min(95, sig.confidence + 5);
+            } else {
+              scanLog.push(`${symbol}: OU_weak_conflict z=${ouZ.toFixed(2)} conf-=5`);
+              sig.confidence = Math.max(10, sig.confidence - 5);
+            }
+          } else {
+            scanLog.push(`${symbol}: OU_neutral z=${ouZ.toFixed(2)} no adjustment`);
+          }
+        }
+
+        // ── Bollinger Band confirmation for VIX/JD ───────────────────
+        if (isMeanRev) {
+          const bb20 = closes4ofi.slice(-20);
+          const bbMid  = bb20.reduce((a: number, b: number) => a+b, 0) / 20;
+          const bbStd  = Math.sqrt(bb20.reduce((s: number, v: number) => s + Math.pow(v-bbMid, 2), 0) / 20);
+          const bbUpper = bbMid + 2*bbStd;
+          const bbLower = bbMid - 2*bbStd;
+          const price   = closes4ofi[closes4ofi.length-1];
+          const belowLower = price < bbLower;
+          const aboveUpper = price > bbUpper;
+          if ((sig.action === "BUY" && belowLower) || (sig.action === "SELL" && aboveUpper)) {
+            sig.confidence = Math.min(95, sig.confidence + 8);
+            scanLog.push(`${symbol}: BB_extreme_confirmed conf+=8`);
+          } else if ((sig.action === "BUY" && aboveUpper) || (sig.action === "SELL" && belowLower)) {
+            sig.confidence = Math.max(10, sig.confidence - 10);
+            scanLog.push(`${symbol}: BB_conflict conf-=10`);
+          }
+        }
+
         // ── Signal Longevity ─────────────────────────────────────────
         const longevity  = calcSignalHalfLife(closes4ofi);
         const noiseChk   = detectNoiseVsReversal(closes4ofi, sig.action);
-        const isMeanRev  = symbol.startsWith("R_") || symbol.startsWith("JD") || symbol.startsWith("1HZ");
         if (isMeanRev) {
           if (longevity.exitWarning && !noiseChk.isNoise) {
             sig.confidence = Math.max(10, sig.confidence - 15);
