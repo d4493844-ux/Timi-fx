@@ -1745,8 +1745,10 @@ function ictForexSignal(candles1m: any[], candles5m: any[], symbol: string): {
       const l=d.reduce((s,v)=>s+Math.max(0,-v),0)/n;
       return l>0?100-100/(1+g/l):50;
     })();
-    if (rsiFx <= rsiThresh)        return { action:"BUY",  confidence:82, reason:`RSI_revert=${rsiFx.toFixed(1)}<${rsiThresh}`, atr:calcATR(candles1m,14) };
-    if (rsiFx >= (100-rsiThresh))  return { action:"SELL", confidence:82, reason:`RSI_revert=${rsiFx.toFixed(1)}>${100-rsiThresh}`, atr:calcATR(candles1m,14) };
+    // Confidence scales with how extreme RSI is
+    const rsiConf = rsiFx < rsiThresh*0.7 || rsiFx > 100-rsiThresh*0.7 ? 88 : 80;
+    if (rsiFx <= rsiThresh)        return { action:"BUY",  confidence:rsiConf, reason:`RSI_revert=${rsiFx.toFixed(1)}<${rsiThresh}`, atr:calcATR(candles1m,14) };
+    if (rsiFx >= (100-rsiThresh))  return { action:"SELL", confidence:rsiConf, reason:`RSI_revert=${rsiFx.toFixed(1)}>${100-rsiThresh}`, atr:calcATR(candles1m,14) };
     return null;
   }
 
@@ -2755,8 +2757,8 @@ const BELOW_BREAKEVEN = ["R_75","JD75","JD100","R_50"];
 // TREND pairs: EMA crossover works (EUR, GBP)
 // MEAN-REVERT pairs: RSI works (Gold, Silver, JPY)
 const FOREX_STRATEGY: Record<string,string> = {
-  "frxEURUSD": "trend",    // EMA 0.03% crossover — 80% WR
-  "frxGBPUSD": "trend",    // EMA 0.03% crossover — 75% WR
+  "frxEURUSD": "trend",    // EMA 0.03% crossover — 80% WR backtested
+  "frxGBPUSD": "trend",    // EMA 0.03% crossover — 64.6% WR backtested
   "frxEURGBP": "trend",    // EMA crossover
   "frxGBPJPY": "trend",    // EMA crossover
   "frxXAUUSD": "revert",   // RSI<30 mean reversion — 60% WR
@@ -2767,9 +2769,9 @@ const FOREX_STRATEGY: Record<string,string> = {
   "frxUSDCHF": "revert",   // RSI mean reversion
 };
 const FOREX_RSI_THRESH: Record<string,number> = {
-  "frxXAUUSD": 30,  // RSI<30 for Gold — 60.1% WR
-  "frxXAGUSD": 30,  // RSI<30 for Silver — 59.1% WR
-  "frxUSDJPY": 25,  // RSI<25 for JPY — 57% WR
+  "frxXAUUSD": 35,  // RSI<35 for Gold — 58.6% WR (more trades, still profitable)
+  "frxXAGUSD": 35,  // RSI<35 for Silver — 59.9% WR
+  "frxUSDJPY": 30,  // RSI<30 for JPY — 56% WR
   "frxAUDUSD": 30,
   "frxUSDCAD": 30,
   "frxUSDCHF": 30,
