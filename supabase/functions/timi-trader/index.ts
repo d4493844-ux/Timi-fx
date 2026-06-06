@@ -2990,13 +2990,15 @@ Deno.serve(async (req) => {
         const isBoom  = symbol.startsWith("BOOM");
 
         // CRASH: block if RSI > 72 (too overbought = uptrend too strong for crash spike)
-        if (isCrash && currentRsi > 72) {
-          scanLog.push(`${symbol}: rsi_block_crash RSI=${currentRsi.toFixed(1)} > 72 (uptrend too strong)`);
+        // CRASH: RSI block removed — Poisson process gates timing, not RSI
+        if (isCrash && currentRsi > 90) {
+          scanLog.push(`${symbol}: rsi_block_crash RSI=${currentRsi.toFixed(1)} — extreme only`);
           continue;
         }
-        // BOOM: block if RSI < 28 (too oversold = downtrend too strong for boom spike)
-        if (isBoom && currentRsi < 28) {
-          scanLog.push(`${symbol}: rsi_block_boom RSI=${currentRsi.toFixed(1)} < 28 (downtrend too strong)`);
+        // BOOM: RSI block removed — Poisson process gates timing, not RSI
+        // BOOM spikes happen regardless of trend direction
+        if (isBoom && currentRsi < 10) {
+          scanLog.push(`${symbol}: rsi_block_boom RSI=${currentRsi.toFixed(1)} — extreme only`);
           continue;
         }
         console.log(`📈 ${symbol} RSI=${currentRsi.toFixed(1)} — passed RSI filter`);
