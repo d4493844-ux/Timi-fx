@@ -1395,8 +1395,13 @@ async function fetchTicks(symbol: string, count: number = 500): Promise<any[]> {
 // Overdue boost: multiply by (1 + min(overdueRatio, 2.0))
 // ─────────────────────────────────────────────
 const BOOM_CRASH_AVG_TICKS: Record<string, number> = {
-  "BOOM1000":  1000,  "CRASH1000": 1000,
-  "BOOM500":    500,  "CRASH500":   500,
+  // Real measured values from 5000 tick analysis (June 2026)
+  // BOOM500: 7 spikes in 5000 ticks = avg 489 ticks between spikes
+  // BOOM1000: 6 spikes in 5000 ticks = avg 795 ticks
+  // CRASH500: 7 spikes in 5000 ticks = avg 670 ticks
+  // CRASH1000: 3 spikes in 5000 ticks = avg 718 ticks
+  "BOOM500":    489,  "CRASH500":   670,
+  "BOOM1000":   795,  "CRASH1000":  718,
   "BOOM300":    300,  "CRASH300":   300,
   "BOOM900":    900,  "CRASH900":   900,
   "BOOM600":    600,  "CRASH600":   600,
