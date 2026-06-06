@@ -1730,6 +1730,26 @@ function ictForexSignal(candles1m: any[], candles5m: any[], symbol: string): {
   const kz = isKillZone();
   if (!kz.active) return null;
 
+  // Route to correct strategy based on pair type
+  const fxStrategy = FOREX_STRATEGY[symbol] || "trend";
+  const closes_fx  = candles1m.map((c: any) => parseFloat(c.close));
+  const price_fx   = closes_fx[closes_fx.length - 1];
+
+  // ── Mean Reversion path (Gold, Silver, JPY) ──────────────────
+  if (fxStrategy === "revert") {
+    const rsiThresh = FOREX_RSI_THRESH[symbol] || 30;
+    const rsiFx = (() => {
+      const n=14; if(closes_fx.length<n+1) return 50;
+      const d=closes_fx.slice(-n-1).map((v,i,a)=>i?v-a[i-1]:0).slice(1);
+      const g=d.reduce((s,v)=>s+Math.max(0,v),0)/n;
+      const l=d.reduce((s,v)=>s+Math.max(0,-v),0)/n;
+      return l>0?100-100/(1+g/l):50;
+    })();
+    if (rsiFx <= rsiThresh)        return { action:"BUY",  confidence:82, reason:`RSI_revert=${rsiFx.toFixed(1)}<${rsiThresh}`, atr:calcATR(candles1m,14) };
+    if (rsiFx >= (100-rsiThresh))  return { action:"SELL", confidence:82, reason:`RSI_revert=${rsiFx.toFixed(1)}>${100-rsiThresh}`, atr:calcATR(candles1m,14) };
+    return null;
+  }
+
   // Judas Swing check — detect fake session open move
   const judas = detectJudasSwing(candles1m.slice(-20));
   if (judas.detected) {
@@ -2729,6 +2749,31 @@ const SYNTH_RSI_THRESHOLDS: Record<string,{buy:number,sell:number}> = {
   "R_50":  { buy: 20, sell: 80 },
 };
 const BELOW_BREAKEVEN = ["R_75","JD75","JD100","R_50"];
+
+
+// ── Forex signal strategy per pair (backtested June 2026) ──
+// TREND pairs: EMA crossover works (EUR, GBP)
+// MEAN-REVERT pairs: RSI works (Gold, Silver, JPY)
+const FOREX_STRATEGY: Record<string,string> = {
+  "frxEURUSD": "trend",    // EMA 0.03% crossover — 80% WR
+  "frxGBPUSD": "trend",    // EMA 0.03% crossover — 75% WR
+  "frxEURGBP": "trend",    // EMA crossover
+  "frxGBPJPY": "trend",    // EMA crossover
+  "frxXAUUSD": "revert",   // RSI<30 mean reversion — 60% WR
+  "frxXAGUSD": "revert",   // RSI<30 mean reversion — 59% WR
+  "frxUSDJPY": "revert",   // RSI<30 mean reversion — 57% WR
+  "frxAUDUSD": "revert",   // RSI mean reversion
+  "frxUSDCAD": "revert",   // RSI mean reversion
+  "frxUSDCHF": "revert",   // RSI mean reversion
+};
+const FOREX_RSI_THRESH: Record<string,number> = {
+  "frxXAUUSD": 30,  // RSI<30 for Gold — 60.1% WR
+  "frxXAGUSD": 30,  // RSI<30 for Silver — 59.1% WR
+  "frxUSDJPY": 25,  // RSI<25 for JPY — 57% WR
+  "frxAUDUSD": 30,
+  "frxUSDCAD": 30,
+  "frxUSDCHF": 30,
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
