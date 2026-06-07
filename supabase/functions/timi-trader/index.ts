@@ -2777,6 +2777,71 @@ const FOREX_RSI_THRESH: Record<string,number> = {
   "frxUSDCHF": 30,
 };
 
+
+// ── High Impact News Filter ────────────────────────────────────
+const CURRENCY_TO_PAIRS: Record<string,string[]> = {
+  "USD": ["frxEURUSD","frxGBPUSD","frxUSDJPY","frxXAUUSD","frxXAGUSD","frxAUDUSD","frxUSDCAD","frxUSDCHF"],
+  "EUR": ["frxEURUSD","frxEURGBP","frxEURJPY"],
+  "GBP": ["frxGBPUSD","frxGBPJPY","frxEURGBP"],
+  "JPY": ["frxUSDJPY","frxGBPJPY","frxEURJPY"],
+  "XAU": ["frxXAUUSD"],
+  "XAG": ["frxXAGUSD"],
+  "AUD": ["frxAUDUSD","frxAUDJPY"],
+  "CAD": ["frxUSDCAD"],
+  "CHF": ["frxUSDCHF"],
+  "NZD": ["frxNZDUSD"],
+};
+
+let _newsCache: { data: any[]; ts: number } | null = null;
+const NEWS_CACHE_MS = 5 * 60 * 1000;
+
+async function fetchHighImpactNews(): Promise<any[]> {
+  if (_newsCache && Date.now() - _newsCache.ts < NEWS_CACHE_MS) {
+    return _newsCache.data;
+  }
+  try {
+    const res = await fetch(
+      "https://www.jblanked.com/news/api/forex-factory/calendar/week/?impact=High",
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const events = Array.isArray(data) ? data : [];
+    _newsCache = { data: events, ts: Date.now() };
+    return events;
+  } catch {
+    return _newsCache?.data || [];
+  }
+}
+
+async function getNewsImpact(symbol: string): Promise<{
+  blocked: boolean; reduced: boolean; reason: string; minutesUntil: number;
+}> {
+  if (!symbol.startsWith("frx")) {
+    return { blocked:false, reduced:false, reason:"", minutesUntil:999 };
+  }
+  const events = await fetchHighImpactNews();
+  const now    = Date.now();
+  for (const ev of events) {
+    const cur   = ev.currency || ev.economy || "";
+    const pairs = CURRENCY_TO_PAIRS[cur] || [];
+    if (!pairs.includes(symbol)) continue;
+    const evTime  = new Date(ev.date || ev.data).getTime();
+    const diffMin = (evTime - now) / 60000;
+    if (diffMin > -15 && diffMin < 15) {
+      return { blocked:true, reduced:false,
+        reason: `news_block: ${ev.title||ev.name} ${Math.abs(Math.round(diffMin))}min ${diffMin>0?"away":"ago"}`,
+        minutesUntil: diffMin };
+    }
+    if (diffMin > -30 && diffMin < 30) {
+      return { blocked:false, reduced:true,
+        reason: `news_caution: ${ev.title||ev.name} ${Math.abs(Math.round(diffMin))}min ${diffMin>0?"away":"ago"}`,
+        minutesUntil: diffMin };
+    }
+  }
+  return { blocked:false, reduced:false, reason:"", minutesUntil:999 };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 

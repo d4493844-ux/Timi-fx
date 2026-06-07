@@ -2,6 +2,7 @@ const tabs = [
   { id:"dashboard", icon:"◈",  label:"DASH" },
   { id:"trades",    icon:"◆",  label:"TRADES" },
   { id:"signals",   icon:"◉",  label:"SIGNALS" },
+  { id:"news",      icon:"📰", label:"NEWS" },
   { id:"ai",        icon:"🧠", label:"AI" },
   { id:"remote",    icon:"☁️", label:"REMOTE" },
   { id:"growth",    icon:"📈", label:"GROWTH" },

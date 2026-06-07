@@ -4,6 +4,7 @@ import Dashboard from "./components/Dashboard";
 import Trades from "./components/Trades";
 import Signals from "./components/Signals";
 import History from "./components/History";
+import ForexNews from './components/ForexNews';
 import Settings from "./components/Settings";
 import Backtest from "./components/Backtest";
 import Growth from "./components/Growth";
