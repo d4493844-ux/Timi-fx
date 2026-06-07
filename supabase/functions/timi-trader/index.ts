@@ -3726,13 +3726,12 @@ Deno.serve(async (req) => {
           const newsChk  = await getNewsImpact(symbol);
           const newsTrade = await getNewsTradingSignal(symbol);
 
-          // Post-news trade: actual vs forecast surprise — highest priority
+          // Post-news trade: DISABLED for CALL/PUT contracts
+          // Market moves too fast — signal arrives after the move
+          // Keeping for future multiplier contract implementation
           if (newsTrade && newsTrade.hasSignal) {
-            scanLog.push(`${symbol}: ${newsTrade.reason}`);
-            await placeTrade(supabase, derivWs, symbol, newsTrade.action,
-              newsTrade.confidence, newsTrade.reason, cfg.stake || 9,
-              [], false, [], {});
-            continue;
+            scanLog.push(`${symbol}: news_signal_available but disabled for CALL/PUT — ${newsTrade.reason}`);
+            // await placeTrade(...) — disabled
           }
 
           // Hard block: high impact event within 15 min
