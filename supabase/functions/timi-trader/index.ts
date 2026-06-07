@@ -2926,21 +2926,42 @@ Deno.serve(async (req) => {
 
   // ── News API proxy endpoint ─────────────────────────────────
   const url = new URL(req.url);
-  if (url.pathname.endsWith("/news")) {
+  // News proxy — triggered by ?action=news query param
+  // Uses Finnhub free API (no auth needed for economic calendar)
+  if (url.searchParams.get("action") === "news") {
     try {
-      const source = url.searchParams.get("source") || "forex-factory";
-      const impact = url.searchParams.get("impact") || "";
-      const currency = url.searchParams.get("currency") || "";
-      let apiUrl = `https://www.jblanked.com/news/api/${source}/calendar/week/`;
-      const params = new URLSearchParams();
-      if (impact)   params.set("impact",   impact);
-      if (currency) params.set("currency", currency);
-      if ([...params].length) apiUrl += "?" + params.toString();
-      const res  = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
-      const data = res.ok ? await res.json() : [];
-      return new Response(JSON.stringify(Array.isArray(data) ? data : []),
+      // Get date range — this week
+      const now   = new Date();
+      const from  = new Date(now); from.setDate(now.getDate() - 1);
+      const to    = new Date(now); to.setDate(now.getDate() + 7);
+      const fmt   = (d: Date) => d.toISOString().split("T")[0];
+
+      // Finnhub economic calendar — completely free, no auth
+      const finnhubUrl = `https://finnhub.io/api/v1/calendar/economic?from=${fmt(from)}&to=${fmt(to)}&token=sandbox_c9jk2aiad3ic3sfe9bt0`;
+      const res  = await fetch(finnhubUrl, { signal: AbortSignal.timeout(8000) });
+      const json = await res.json();
+      const raw  = Array.isArray(json?.economicCalendar) ? json.economicCalendar : [];
+
+      // Normalize to our standard format
+      const events = raw.map((e: any) => ({
+        title:    e.event || e.name || "Economic Event",
+        currency: e.country === "US" ? "USD" : e.country === "EU" ? "EUR"
+                : e.country === "GB" ? "GBP" : e.country === "JP" ? "JPY"
+                : e.country === "AU" ? "AUD" : e.country === "CA" ? "CAD"
+                : e.country === "CH" ? "CHF" : e.country === "NZ" ? "NZD"
+                : e.country || "USD",
+        impact:   e.impact === 3 ? "High" : e.impact === 2 ? "Medium" : "Low",
+        date:     e.time || e.date,
+        actual:   e.actual   != null ? String(e.actual)   : "--",
+        forecast: e.estimate != null ? String(e.estimate) : "--",
+        previous: e.prev     != null ? String(e.prev)     : "--",
+        unit:     e.unit || "",
+      }));
+
+      return new Response(JSON.stringify(events),
         { headers: { ...CORS, "Content-Type": "application/json" } });
     } catch(e) {
+      console.error("News fetch error:", e);
       return new Response(JSON.stringify([]),
         { headers: { ...CORS, "Content-Type": "application/json" } });
     }
