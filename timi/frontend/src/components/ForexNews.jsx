@@ -43,7 +43,7 @@ function fmtDate(d) {
 async function loadNews(source) {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/news?source=${source}`,
+      `${SUPABASE_URL}?action=news&source=${source}`,
       { headers:{ Authorization:`Bearer ${SUPABASE_KEY}` } }
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
