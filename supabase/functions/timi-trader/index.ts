@@ -3727,21 +3727,22 @@ Deno.serve(async (req) => {
           const newsTrade = await getNewsTradingSignal(symbol);
 
           // Post-news trade: Send to MT5 ONLY (not Deriv CALL/PUT)
-          // MT5 can enter/exit anytime — news spikes are profitable there
+          // EA picks it up normally — no EA changes needed
           if (newsTrade && newsTrade.hasSignal) {
-            scanLog.push(`${symbol}: ${newsTrade.reason} — MT5 only`);
-            // Write directly to mt5_signals table for EA to pick up
+            scanLog.push(`${symbol}: ${newsTrade.reason} — sending to MT5`);
             const mt5Symbol = symbol.replace("frx","");
-            await supabase.from("mt5_signals").insert({
-              symbol:     mt5Symbol,
-              action:     newsTrade.action,
-              confidence: newsTrade.confidence,
-              reason:     newsTrade.reason,
-              status:     "pending",
-              trade_type: "news",  // EA will use tighter SL for news trades
-              created_at: new Date().toISOString(),
-            });
-            console.log(`📰 News trade sent to MT5: ${mt5Symbol} ${newsTrade.action} ${newsTrade.confidence}%`);
+            try {
+              await supabase.from("mt5_signals").insert({
+                symbol:     mt5Symbol,
+                action:     newsTrade.action,
+                confidence: newsTrade.confidence,
+                status:     "pending",
+                created_at: new Date().toISOString(),
+              });
+              console.log(`📰 News signal → MT5: ${mt5Symbol} ${newsTrade.action} ${newsTrade.confidence}%`);
+            } catch(e) {
+              console.error("Failed to write news signal to mt5_signals:", e);
+            }
           }
 
           // Hard block: high impact event within 15 min
