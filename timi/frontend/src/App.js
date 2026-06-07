@@ -58,6 +58,7 @@ export default function App() {
     dashboard: Dashboard,
     trades:    Trades,
     signals:   Signals,
+    news:      ForexNews,
     history:   History,
     settings:  Settings,
     backtest:  Backtest,
