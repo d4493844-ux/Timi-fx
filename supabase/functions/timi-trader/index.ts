@@ -3726,12 +3726,22 @@ Deno.serve(async (req) => {
           const newsChk  = await getNewsImpact(symbol);
           const newsTrade = await getNewsTradingSignal(symbol);
 
-          // Post-news trade: DISABLED for CALL/PUT contracts
-          // Market moves too fast — signal arrives after the move
-          // Keeping for future multiplier contract implementation
+          // Post-news trade: Send to MT5 ONLY (not Deriv CALL/PUT)
+          // MT5 can enter/exit anytime — news spikes are profitable there
           if (newsTrade && newsTrade.hasSignal) {
-            scanLog.push(`${symbol}: news_signal_available but disabled for CALL/PUT — ${newsTrade.reason}`);
-            // await placeTrade(...) — disabled
+            scanLog.push(`${symbol}: ${newsTrade.reason} — MT5 only`);
+            // Write directly to mt5_signals table for EA to pick up
+            const mt5Symbol = symbol.replace("frx","");
+            await supabase.from("mt5_signals").insert({
+              symbol:     mt5Symbol,
+              action:     newsTrade.action,
+              confidence: newsTrade.confidence,
+              reason:     newsTrade.reason,
+              status:     "pending",
+              trade_type: "news",  // EA will use tighter SL for news trades
+              created_at: new Date().toISOString(),
+            });
+            console.log(`📰 News trade sent to MT5: ${mt5Symbol} ${newsTrade.action} ${newsTrade.confidence}%`);
           }
 
           // Hard block: high impact event within 15 min
