@@ -2927,38 +2927,39 @@ Deno.serve(async (req) => {
   // ── News API proxy endpoint ─────────────────────────────────
   const url = new URL(req.url);
   // News proxy — triggered by ?action=news query param
-  // Uses Finnhub free API (no auth needed for economic calendar)
+  // Uses ForexFactory public JSON feed — no auth, completely free
   if (url.searchParams.get("action") === "news") {
     try {
-      // Get date range — this week
-      const now   = new Date();
-      const from  = new Date(now); from.setDate(now.getDate() - 1);
-      const to    = new Date(now); to.setDate(now.getDate() + 7);
-      const fmt   = (d: Date) => d.toISOString().split("T")[0];
+      const week = url.searchParams.get("week") || "thisweek";
+      // nfs.faireconomy.media hosts the official FF calendar JSON
+      const ffUrl = `https://nfs.faireconomy.media/ff_calendar_${week}.json`;
+      const res   = await fetch(ffUrl, {
+        signal: AbortSignal.timeout(8000),
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      const raw = await res.json();
+      const events = Array.isArray(raw) ? raw : [];
 
-      // Finnhub economic calendar — completely free, no auth
-      const finnhubUrl = `https://finnhub.io/api/v1/calendar/economic?from=${fmt(from)}&to=${fmt(to)}&token=sandbox_c9jk2aiad3ic3sfe9bt0`;
-      const res  = await fetch(finnhubUrl, { signal: AbortSignal.timeout(8000) });
-      const json = await res.json();
-      const raw  = Array.isArray(json?.economicCalendar) ? json.economicCalendar : [];
+      // Normalize country → currency
+      const countryToCurrency: Record<string,string> = {
+        "USD":"USD","EUR":"EUR","GBP":"GBP","JPY":"JPY",
+        "AUD":"AUD","CAD":"CAD","CHF":"CHF","NZD":"NZD",
+        "CNY":"CNY","CNH":"CNY"
+      };
 
-      // Normalize to our standard format
-      const events = raw.map((e: any) => ({
-        title:    e.event || e.name || "Economic Event",
-        currency: e.country === "US" ? "USD" : e.country === "EU" ? "EUR"
-                : e.country === "GB" ? "GBP" : e.country === "JP" ? "JPY"
-                : e.country === "AU" ? "AUD" : e.country === "CA" ? "CAD"
-                : e.country === "CH" ? "CHF" : e.country === "NZ" ? "NZD"
-                : e.country || "USD",
-        impact:   e.impact === 3 ? "High" : e.impact === 2 ? "Medium" : "Low",
-        date:     e.time || e.date,
-        actual:   e.actual   != null ? String(e.actual)   : "--",
-        forecast: e.estimate != null ? String(e.estimate) : "--",
-        previous: e.prev     != null ? String(e.prev)     : "--",
-        unit:     e.unit || "",
+      const normalized = events.map((e: any) => ({
+        title:    e.title || "Economic Event",
+        currency: countryToCurrency[e.country] || e.country || "USD",
+        impact:   e.impact === "High" ? "High"
+                : e.impact === "Medium" ? "Medium"
+                : e.impact === "Low" ? "Low" : "None",
+        date:     e.date || "",
+        actual:   e.actual   || "--",
+        forecast: e.forecast || "--",
+        previous: e.previous || "--",
       }));
 
-      return new Response(JSON.stringify(events),
+      return new Response(JSON.stringify(normalized),
         { headers: { ...CORS, "Content-Type": "application/json" } });
     } catch(e) {
       console.error("News fetch error:", e);
