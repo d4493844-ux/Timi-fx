@@ -3669,6 +3669,30 @@ Deno.serve(async (req) => {
         const cryptoSymbols = ["cryBTCUSD","cryETHUSD"];
 
         if (forexSymbols.includes(symbol)) {
+          // ── News check before forex signal ──────────────────
+          const newsChk  = await getNewsImpact(symbol);
+          const newsTrade = await getNewsTradingSignal(symbol);
+
+          // Post-news trade: actual vs forecast surprise — highest priority
+          if (newsTrade && newsTrade.hasSignal) {
+            scanLog.push(`${symbol}: ${newsTrade.reason}`);
+            await placeTrade(supabase, derivWs, symbol, newsTrade.action,
+              newsTrade.confidence, newsTrade.reason, cfg.stake || 9,
+              [], false, [], {});
+            continue;
+          }
+
+          // Hard block: high impact event within 15 min
+          if (newsChk.blocked) {
+            scanLog.push(`${symbol}: ${newsChk.reason}`);
+            continue;
+          }
+
+          // Soft caution: reduce confidence within 30 min
+          if (newsChk.reduced) {
+            scanLog.push(`${symbol}: ${newsChk.reason} conf-=20`);
+          }
+
           // Use ICT Smart Money engine for forex
           const ictSig = ictForexSignal(c1m, c5m, symbol);
           if (!ictSig) {
@@ -3676,6 +3700,11 @@ Deno.serve(async (req) => {
             continue;
           }
           sig = ictSig;
+
+          // Apply news caution penalty
+          if (newsChk.reduced) {
+            sig = { ...sig, confidence: Math.max(10, sig.confidence - 20) };
+          }
 
           // Enhance ICT signal with OFI + Hurst
           const ictCloses  = c1m.map((x: any) => parseFloat(x.close));
