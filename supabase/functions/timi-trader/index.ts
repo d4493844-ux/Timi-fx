@@ -2800,13 +2800,22 @@ async function fetchHighImpactNews(): Promise<any[]> {
     return _newsCache.data;
   }
   try {
+    // Use same ForexFactory public feed as UI
     const res = await fetch(
-      "https://www.jblanked.com/news/api/forex-factory/calendar/week/?impact=High",
-      { signal: AbortSignal.timeout(5000) }
+      "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+      { signal: AbortSignal.timeout(5000), headers:{ "User-Agent":"Mozilla/5.0" } }
     );
     if (!res.ok) return [];
-    const data = await res.json();
-    const events = Array.isArray(data) ? data : [];
+    const raw = await res.json();
+    const all = Array.isArray(raw) ? raw : [];
+    // Only return high impact events with correct currency field
+    const events = all
+      .filter((e: any) => e.impact === "High")
+      .map((e: any) => ({
+        ...e,
+        currency: e.country || e.currency || "USD",
+        date: e.date || "",
+      }));
     _newsCache = { data: events, ts: Date.now() };
     return events;
   } catch {
