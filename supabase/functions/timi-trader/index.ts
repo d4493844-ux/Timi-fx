@@ -2842,6 +2842,85 @@ async function getNewsImpact(symbol: string): Promise<{
   return { blocked:false, reduced:false, reason:"", minutesUntil:999 };
 }
 
+
+// ── Post-News Trading Signal ───────────────────────────────────
+// When actual significantly beats/misses forecast → trade the move
+// This turns high impact news from a blocker into an opportunity
+async function getNewsTradingSignal(symbol: string): Promise<{
+  hasSignal: boolean;
+  action: string;
+  confidence: number;
+  reason: string;
+} | null> {
+  if (!symbol.startsWith("frx")) return null;
+
+  const events = await fetchHighImpactNews();
+  const now    = Date.now();
+
+  for (const ev of events) {
+    const cur   = ev.currency || ev.economy || "";
+    const pairs = CURRENCY_TO_PAIRS[cur] || [];
+    if (!pairs.includes(symbol)) continue;
+
+    const evTime  = new Date(ev.date || ev.data).getTime();
+    const diffMin = (evTime - now) / 60000;
+
+    // Only trade 0-60 min AFTER the news released
+    if (diffMin > 0 || diffMin < -60) continue;
+
+    const actual   = parseFloat(ev.actual   || "");
+    const forecast = parseFloat(ev.forecast || "");
+    const previous = parseFloat(ev.previous || "");
+
+    if (isNaN(actual) || isNaN(forecast)) continue;
+
+    const diff    = actual - forecast;
+    const base    = Math.abs(forecast) || Math.abs(previous) || 1;
+    const diffPct = Math.abs(diff) / base * 100;
+
+    // Only trade significant surprises (>10% deviation from forecast)
+    if (diffPct < 10) continue;
+
+    const beat = diff > 0;  // actual > forecast = currency strengthens
+    const title = ev.title || ev.name || "News Event";
+
+    // Determine direction based on currency vs symbol
+    // e.g. USD beats → EURUSD goes DOWN (USD stronger)
+    // e.g. EUR beats → EURUSD goes UP (EUR stronger)
+    let action = "";
+    const symbolBase  = symbol.replace("frx","").slice(0,3); // EUR in EURUSD
+    const symbolQuote = symbol.replace("frx","").slice(3,6); // USD in EURUSD
+
+    if (cur === symbolBase) {
+      action = beat ? "BUY" : "SELL";   // Base currency stronger = pair goes up
+    } else if (cur === symbolQuote) {
+      action = beat ? "SELL" : "BUY";   // Quote currency stronger = pair goes down
+    } else if (cur === "XAU") {
+      // Gold: USD beat → Gold down, USD miss → Gold up
+      action = beat ? "SELL" : "BUY";
+    } else if (cur === "XAG") {
+      action = beat ? "SELL" : "BUY";
+    } else {
+      continue;
+    }
+
+    // Confidence scales with surprise magnitude
+    const conf = diffPct > 50 ? 90
+               : diffPct > 30 ? 85
+               : diffPct > 20 ? 80
+               : 75;
+
+    const minsAgo = Math.abs(Math.round(diffMin));
+    return {
+      hasSignal:  true,
+      action,
+      confidence: conf,
+      reason: `news_trade: ${title} actual=${ev.actual} forecast=${ev.forecast} ${beat?"BEAT":"MISS"} ${diffPct.toFixed(0)}% ${minsAgo}min ago`
+    };
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
