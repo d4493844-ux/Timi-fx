@@ -2924,6 +2924,28 @@ async function getNewsTradingSignal(symbol: string): Promise<{
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
+  // ── News API proxy endpoint ─────────────────────────────────
+  const url = new URL(req.url);
+  if (url.pathname.endsWith("/news")) {
+    try {
+      const source = url.searchParams.get("source") || "forex-factory";
+      const impact = url.searchParams.get("impact") || "";
+      const currency = url.searchParams.get("currency") || "";
+      let apiUrl = `https://www.jblanked.com/news/api/${source}/calendar/week/`;
+      const params = new URLSearchParams();
+      if (impact)   params.set("impact",   impact);
+      if (currency) params.set("currency", currency);
+      if ([...params].length) apiUrl += "?" + params.toString();
+      const res  = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
+      const data = res.ok ? await res.json() : [];
+      return new Response(JSON.stringify(Array.isArray(data) ? data : []),
+        { headers: { ...CORS, "Content-Type": "application/json" } });
+    } catch(e) {
+      return new Response(JSON.stringify([]),
+        { headers: { ...CORS, "Content-Type": "application/json" } });
+    }
+  }
+
   const supabase  = createClient(SUPABASE_URL, SUPABASE_KEY);
   const { data: cfg } = await supabase.from("bot_config").select("*").eq("active", true).single();
   if (!cfg || !cfg.auto_trade) return new Response(JSON.stringify({ status: "disabled" }), { headers: CORS });
