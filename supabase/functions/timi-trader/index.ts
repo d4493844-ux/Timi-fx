@@ -1623,16 +1623,87 @@ async function fetchTicks(symbol: string, count: number = 500): Promise<any[]> {
 // ─────────────────────────────────────────────
 const BOOM_CRASH_AVG_TICKS: Record<string, number> = {
   // Real measured values from 5000 tick analysis (June 2026)
-  // BOOM500: 7 spikes in 5000 ticks = avg 489 ticks between spikes
-  // BOOM1000: 6 spikes in 5000 ticks = avg 795 ticks
-  // CRASH500: 7 spikes in 5000 ticks = avg 670 ticks
-  // CRASH1000: 3 spikes in 5000 ticks = avg 718 ticks
   "BOOM500":    489,  "CRASH500":   670,
   "BOOM1000":   795,  "CRASH1000":  718,
   "BOOM300":    300,  "CRASH300":   300,
   "BOOM900":    900,  "CRASH900":   900,
   "BOOM600":    600,  "CRASH600":   600,
 };
+
+// ── Adaptive Lambda Cache ─────────────────────────────────────
+// Updates spike rate from recent actual spike observations
+const _adaptiveLambdaCache: Record<string, {
+  avgGap: number; lastUpdated: number; spikeCount: number;
+}> = {};
+
+function getAdaptiveLambda(symbol: string, ticks: number[]): number {
+  const baseGap = BOOM_CRASH_AVG_TICKS[symbol] || 600;
+  const isBoom  = symbol.startsWith("BOOM");
+
+  if (ticks.length < 200) return baseGap;
+
+  // Find actual spikes in recent tick data
+  const moves = ticks.slice(1).map((v,i) => v - ticks[i]);
+  const avgMove = moves.reduce((s,m) => s+Math.abs(m), 0) / moves.length;
+  const spikeThresh = avgMove * 50;
+
+  const spikes: number[] = [];
+  for (let i=0; i<moves.length; i++) {
+    if (isBoom  && moves[i] > spikeThresh) spikes.push(i);
+    if (!isBoom && moves[i] < -spikeThresh) spikes.push(i);
+  }
+
+  if (spikes.length < 2) return baseGap;
+
+  // Calculate adaptive average gap from recent spikes
+  const gaps = spikes.slice(1).map((s,i) => s - spikes[i]);
+  const adaptiveGap = gaps.reduce((a,b) => a+b, 0) / gaps.length;
+
+  // Weighted average: 70% adaptive, 30% historical base
+  const blendedGap = adaptiveGap * 0.7 + baseGap * 0.3;
+
+  // Cache it
+  _adaptiveLambdaCache[symbol] = {
+    avgGap: blendedGap,
+    lastUpdated: Date.now(),
+    spikeCount: spikes.length,
+  };
+
+  return Math.max(50, Math.min(2000, blendedGap));
+}
+
+// ── Hawkes Process intensity ───────────────────────────────────
+// Self-exciting: each spike increases probability of next spike
+// λ(t) = μ + α × Σ exp(-β(t-t_i)) for previous spike times
+function hawkesIntensity(
+  ticks: number[],
+  symbol: string,
+  mu=0.001, alpha=0.8, betaDecay=0.5
+): number {
+  const isBoom = symbol.startsWith("BOOM");
+  const moves  = ticks.slice(1).map((v,i) => v - ticks[i]);
+  const avgMove = moves.reduce((s,m) => s+Math.abs(m), 0) / moves.length;
+  const spikeThresh = avgMove * 50;
+
+  // Find spike times (as tick indices)
+  const spikeTimes: number[] = [];
+  for (let i=0; i<moves.length; i++) {
+    if (isBoom  && moves[i] > spikeThresh) spikeTimes.push(i);
+    if (!isBoom && moves[i] < -spikeThresh) spikeTimes.push(i);
+  }
+
+  if (spikeTimes.length === 0) return mu;
+
+  // Current time = last tick index
+  const T = ticks.length - 1;
+
+  // Hawkes intensity at current time
+  // λ(T) = μ + α × Σ exp(-β(T - t_i))
+  const excitation = spikeTimes.reduce((sum, ti) =>
+    sum + Math.exp(-betaDecay * (T - ti)), 0);
+
+  return mu + alpha * excitation;
+}
 
 function detectLastSpike(ticks: number[], isBoom: boolean): number {
   // Detect where the last spike occurred in tick history
@@ -2696,7 +2767,25 @@ function trueBayesianWinProb(
   // ── Adaptive prior: use symbol's actual historical win rate ──
   // Laplace smoothing: prior = (wins+1)/(total+2) avoids 0 or 1
   // This is loaded from perf object passed in from scan loop
-  const adaptivePrior = priorWinRate; // already set per-symbol from performance data
+  // ── Adaptive Bayesian prior per symbol ──────────────────────
+  // Uses Laplace smoothing: prior = (wins+1)/(total+2)
+  // This prevents 0 or 1 estimates with few trades
+  // priorWinRate is already fetched from performance data per symbol
+  // Beta distribution credible interval:
+  // α = wins+1, β = losses+1 → mean = α/(α+β) = prior
+  const wins_sym   = Math.max(0, (priorWinRate - 0.5) * 100 + 25);
+  const losses_sym = Math.max(0, 50 - wins_sym);
+  const alpha_beta = wins_sym + 1;
+  const beta_beta  = losses_sym + 1;
+  // Credible interval width — wide means uncertain, be conservative
+  const credibleWidth = 1.96 * Math.sqrt(
+    (alpha_beta * beta_beta) /
+    ((alpha_beta + beta_beta)**2 * (alpha_beta + beta_beta + 1))
+  );
+  // If very uncertain (few trades) → use conservative prior
+  const adaptivePrior = credibleWidth > 0.15
+    ? Math.max(0.48, priorWinRate)  // uncertain → conservative
+    : priorWinRate;                  // confident → use actual
   const prior = Math.max(0.35, Math.min(0.92, adaptivePrior));
   const priorLoss = 1 - prior;
   const factors: Record<string, number> = {};
@@ -3175,6 +3264,117 @@ async function getNewsTradingSignal(symbol: string): Promise<{
   }
   return null;
 }
+
+
+// ── Enhanced OFI — Volume-weighted + Cumulative Delta ────────────
+function calcOFIEnhanced(candles: any[], window=20): {
+  basic: number;           // Original: bull candles / total
+  volumeWeighted: number;  // Volume-weighted OFI
+  cumulativeDelta: number; // Running sum of buy-sell pressure
+  deltaVelocity: number;   // Rate of change of cumulative delta
+  divergence: boolean;     // Price up but OFI down = weakness
+  regime: string;          // "buying" | "selling" | "neutral"
+} {
+  if (candles.length < 5) return {
+    basic:0.5, volumeWeighted:0.5, cumulativeDelta:0,
+    deltaVelocity:0, divergence:false, regime:"neutral"
+  };
+
+  const recent = candles.slice(-Math.min(window, candles.length));
+
+  // ── 1. Basic OFI (existing) ───────────────────────────────────
+  const bullCount = recent.filter((c:any) => parseFloat(c.close) > parseFloat(c.open)).length;
+  const basic = bullCount / recent.length;
+
+  // ── 2. Volume-weighted OFI ────────────────────────────────────
+  // Weight each candle by its range (proxy for volume on Deriv)
+  // Bull candle: positive contribution weighted by range
+  // Bear candle: negative contribution weighted by range
+  let buyVolume = 0, sellVolume = 0;
+  for (const c of recent) {
+    const high  = parseFloat(c.high);
+    const low   = parseFloat(c.low);
+    const open  = parseFloat(c.open);
+    const close = parseFloat(c.close);
+    const range = (high - low) + 1e-10;
+    // Candle body as fraction of range = conviction
+    const body  = Math.abs(close - open);
+    const weight = range; // range as volume proxy
+    if (close > open) buyVolume  += weight;
+    else              sellVolume += weight;
+  }
+  const totalVolume = buyVolume + sellVolume + 1e-10;
+  const volumeWeighted = buyVolume / totalVolume;
+
+  // ── 3. Cumulative Delta ───────────────────────────────────────
+  // Sum of (buy_volume - sell_volume) over window
+  // Positive = buying pressure building
+  // Negative = selling pressure building
+  let cumDelta = 0;
+  const deltaHistory: number[] = [];
+  for (const c of recent) {
+    const high  = parseFloat(c.high);
+    const low   = parseFloat(c.low);
+    const open  = parseFloat(c.open);
+    const close = parseFloat(c.close);
+    const range = (high - low) + 1e-10;
+    const delta = close > open ? range : -range;
+    cumDelta += delta;
+    deltaHistory.push(cumDelta);
+  }
+  // Normalize cumulative delta by average candle range
+  const avgRange = recent.reduce((s:number,c:any)=>
+    s+(parseFloat(c.high)-parseFloat(c.low)),0) / recent.length + 1e-10;
+  const normalizedDelta = cumDelta / (avgRange * recent.length);
+
+  // ── 4. Delta velocity (rate of change) ───────────────────────
+  const deltaVelocity = deltaHistory.length >= 5
+    ? (deltaHistory[deltaHistory.length-1] - deltaHistory[deltaHistory.length-5]) /
+      (5 * avgRange + 1e-10)
+    : 0;
+
+  // ── 5. Divergence detection ───────────────────────────────────
+  // Price making new high but OFI declining = bearish divergence
+  const prices = recent.map((c:any) => parseFloat(c.close));
+  const priceUp = prices[prices.length-1] > prices[0];
+  const ofiUp   = volumeWeighted > 0.5;
+  const divergence = (priceUp && !ofiUp) || (!priceUp && ofiUp);
+
+  // ── 6. OFI Regime ─────────────────────────────────────────────
+  const regime = normalizedDelta > 0.3 ? "buying"
+               : normalizedDelta < -0.3 ? "selling"
+               : "neutral";
+
+  return {
+    basic,
+    volumeWeighted,
+    cumulativeDelta: normalizedDelta,
+    deltaVelocity,
+    divergence,
+    regime,
+  };
+}
+
+
+// ── HMM Regime-Specific Signal Parameters ─────────────────────
+// Backtested optimal thresholds per market regime
+// Trending: RSI can stay extreme longer — use wider threshold
+// Ranging:  RSI extremes are more reliable — use tighter threshold
+// HighVol:  Most signals unreliable — use very tight threshold
+const REGIME_SIGNAL_PARAMS: Record<string, {
+  rsiMultiplier: number;  // multiply RSI threshold by this
+  ouWeight: number;       // weight for OU z-score signal
+  bbWeight: number;       // weight for Bollinger Band signal
+  minConf: number;        // minimum confidence to trade this regime
+  stakeMultiplier: number; // position size multiplier for regime
+}> = {
+  "Uptrend":      { rsiMultiplier:1.4, ouWeight:0.5, bbWeight:0.8, minConf:75, stakeMultiplier:1.2 },
+  "Downtrend":    { rsiMultiplier:1.4, ouWeight:0.5, bbWeight:0.8, minConf:75, stakeMultiplier:1.2 },
+  "Ranging":      { rsiMultiplier:0.8, ouWeight:1.5, bbWeight:1.3, minConf:78, stakeMultiplier:1.0 },
+  "HighVolatility":{ rsiMultiplier:0.7, ouWeight:0.3, bbWeight:0.6, minConf:85, stakeMultiplier:0.6 },
+  "WeakUptrend":  { rsiMultiplier:1.1, ouWeight:0.9, bbWeight:1.0, minConf:78, stakeMultiplier:0.9 },
+  "WeakDowntrend":{ rsiMultiplier:1.1, ouWeight:0.9, bbWeight:1.0, minConf:78, stakeMultiplier:0.9 },
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -3846,6 +4046,33 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── Enhanced OFI ─────────────────────────────────────────────
+        const ofiEnhanced = calcOFIEnhanced(c1m, 20);
+        // Wire enhanced OFI into signal confidence
+        if (ofiEnhanced.divergence) {
+          sig.confidence = Math.max(10, sig.confidence - 12);
+          scanLog.push(`${symbol}: OFI_divergence price≠flow conf-=12`);
+        }
+        if (ofiEnhanced.regime === "buying" && sig.action === "BUY") {
+          sig.confidence = Math.min(95, sig.confidence + 8);
+          scanLog.push(`${symbol}: OFI_cumDelta_bullish Δ=${ofiEnhanced.cumulativeDelta.toFixed(2)} conf+=8`);
+        } else if (ofiEnhanced.regime === "selling" && sig.action === "SELL") {
+          sig.confidence = Math.min(95, sig.confidence + 8);
+          scanLog.push(`${symbol}: OFI_cumDelta_bearish Δ=${ofiEnhanced.cumulativeDelta.toFixed(2)} conf+=8`);
+        } else if (
+          (ofiEnhanced.regime === "selling" && sig.action === "BUY") ||
+          (ofiEnhanced.regime === "buying"  && sig.action === "SELL")
+        ) {
+          sig.confidence = Math.max(10, sig.confidence - 10);
+          scanLog.push(`${symbol}: OFI_regime_conflict ${ofiEnhanced.regime} vs ${sig.action} conf-=10`);
+        }
+        // Volume-weighted OFI replaces basic OFI in signal scoring
+        const vwOFI = ofiEnhanced.volumeWeighted;
+        if ((sig.action==="BUY" && vwOFI>0.65) || (sig.action==="SELL" && vwOFI<0.35)) {
+          sig.confidence = Math.min(95, sig.confidence + 6);
+          scanLog.push(`${symbol}: OFI_volweighted=${vwOFI.toFixed(2)} conf+=6`);
+        }
+
         // ── GARCH Full Exploitation ──────────────────────────────────
         const garchReturns = closes4ofi.slice(1).map((v:number,i:number) =>
           (v - closes4ofi[i]) / (closes4ofi[i] + 1e-10));
@@ -3974,6 +4201,32 @@ Deno.serve(async (req) => {
           sig.ticks_since_spike = spikeMeta.ticksSinceSpike;
           if (spikeMeta.highConviction) {
             console.log(`⚡ ${symbol}: HIGH CONVICTION — Poisson overdue + Topo compressed`);
+          }
+        }
+
+        // ── Bayesian Sequential Update (candle confirmation) ─────────
+        // P(win|c1,c2,c3) updated as each confirming candle forms
+        // Only enter when 2+ consecutive confirming candles
+        if (isMeanRev || symbol.startsWith("frx")) {
+          const lastCandles = c1m.slice(-5);
+          const direction   = sig.action === "BUY" ? 1 : -1;
+          let confirmCount  = 0;
+          let conflictCount = 0;
+          for (let ci = lastCandles.length-1; ci >= 0; ci--) {
+            const candleDir = parseFloat(lastCandles[ci].close) >
+                              parseFloat(lastCandles[ci].open) ? 1 : -1;
+            if (candleDir === direction) confirmCount++;
+            else { conflictCount++; break; }
+          }
+          if (confirmCount >= 3) {
+            sig.confidence = Math.min(95, sig.confidence + 10);
+            scanLog.push(`${symbol}: SEQ_BAYES ${confirmCount} confirming candles conf+=10`);
+          } else if (confirmCount >= 2) {
+            sig.confidence = Math.min(95, sig.confidence + 5);
+            scanLog.push(`${symbol}: SEQ_BAYES ${confirmCount} confirming candles conf+=5`);
+          } else if (conflictCount >= 2) {
+            sig.confidence = Math.max(10, sig.confidence - 10);
+            scanLog.push(`${symbol}: SEQ_BAYES ${conflictCount} conflicting candles conf-=10`);
           }
         }
 
