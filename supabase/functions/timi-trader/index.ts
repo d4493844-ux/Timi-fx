@@ -1018,10 +1018,17 @@ async function loadHMMModel(supabase: any): Promise<void> {
   }
 }
 
-function hmmViterbi(obs: number[]): { state: number; name: string; tradable: boolean; allowedAction: string } {
-  if (!HMM_MODEL || obs.length === 0) {
-    return { state: 2, name: "Ranging", tradable: false, allowedAction: "NONE" };
-  }
+function hmmViterbi(obs: number[]): {
+  state: number; name: string; tradable: boolean; allowedAction: string;
+  stateProbs: number[]; regimeConfidence: number; transitionRisk: number;
+  expectedDuration: number; regimeMature: boolean; entropy: number;
+} {
+  const defResult = {
+    state:2, name:"Ranging", tradable:false, allowedAction:"NONE",
+    stateProbs:[], regimeConfidence:0, transitionRisk:0.5,
+    expectedDuration:5, regimeMature:false, entropy:1.0
+  };
+  if (!HMM_MODEL || obs.length === 0) return defResult;
 
   const A  = HMM_MODEL.A  as number[][];
   const B  = HMM_MODEL.B  as number[][];
@@ -1029,44 +1036,90 @@ function hmmViterbi(obs: number[]): { state: number; name: string; tradable: boo
   const N  = pi.length;
   const T  = obs.length;
 
-  // Log-space Viterbi
-  const logDelta = Array.from({length: T}, () => new Array(N).fill(-Infinity));
-  const psi      = Array.from({length: T}, () => new Array(N).fill(0));
-
-  // Initialize
-  for (let i = 0; i < N; i++) {
-    logDelta[0][i] = Math.log(pi[i] + 1e-300) + Math.log(B[i][obs[0]] + 1e-300);
-  }
-
-  // Recurse
-  for (let t = 1; t < T; t++) {
-    for (let j = 0; j < N; j++) {
-      let maxVal = -Infinity, maxIdx = 0;
-      for (let i = 0; i < N; i++) {
-        const val = logDelta[t-1][i] + Math.log(A[i][j] + 1e-300);
-        if (val > maxVal) { maxVal = val; maxIdx = i; }
+  // ── 1. Log-space Viterbi (best path) ─────────────────────────
+  const logDelta = Array.from({length:T}, ()=>new Array(N).fill(-Infinity));
+  const psi      = Array.from({length:T}, ()=>new Array(N).fill(0));
+  for (let i=0; i<N; i++)
+    logDelta[0][i] = Math.log(pi[i]+1e-300) + Math.log(B[i][obs[0]]+1e-300);
+  for (let t=1; t<T; t++) {
+    for (let j=0; j<N; j++) {
+      let maxVal=-Infinity, maxIdx=0;
+      for (let i=0; i<N; i++) {
+        const val = logDelta[t-1][i] + Math.log(A[i][j]+1e-300);
+        if (val>maxVal) { maxVal=val; maxIdx=i; }
       }
-      logDelta[t][j] = maxVal + Math.log(B[j][obs[t]] + 1e-300);
+      logDelta[t][j] = maxVal + Math.log(B[j][obs[t]]+1e-300);
       psi[t][j] = maxIdx;
     }
   }
+  let lastState=0; let maxLogP=-Infinity;
+  for (let i=0; i<N; i++)
+    if (logDelta[T-1][i]>maxLogP) { maxLogP=logDelta[T-1][i]; lastState=i; }
 
-  // Backtrack to find last state
-  let lastState = 0;
-  let maxVal = -Infinity;
-  for (let i = 0; i < N; i++) {
-    if (logDelta[T-1][i] > maxVal) { maxVal = logDelta[T-1][i]; lastState = i; }
+  // ── 2. Forward algorithm (state probabilities) ───────────────
+  // α_t(i) = P(o_1,...,o_t, q_t=i)
+  const alpha = Array.from({length:T}, ()=>new Array(N).fill(0));
+  for (let i=0; i<N; i++)
+    alpha[0][i] = pi[i] * (B[i][obs[0]] || 1e-10);
+  // Normalize each step to prevent underflow
+  for (let t=1; t<T; t++) {
+    let rowSum = 0;
+    for (let j=0; j<N; j++) {
+      let s = 0;
+      for (let i=0; i<N; i++) s += alpha[t-1][i] * A[i][j];
+      alpha[t][j] = s * (B[j][obs[t]] || 1e-10);
+      rowSum += alpha[t][j];
+    }
+    if (rowSum > 0) for (let j=0; j<N; j++) alpha[t][j] /= rowSum;
   }
+  // State probabilities at last timestep
+  const rawProbs = alpha[T-1];
+  const totalP   = rawProbs.reduce((a,b)=>a+b,0) || 1;
+  const stateProbs = rawProbs.map(p=>p/totalP);
+
+  // ── 3. Regime confidence = probability of best state ─────────
+  const regimeConfidence = stateProbs[lastState];
+
+  // ── 4. Shannon entropy of state distribution ─────────────────
+  // Low entropy = model is certain about regime
+  // High entropy = model is uncertain = risky to trade
+  const entropy = -stateProbs.reduce((s,p)=>
+    p>1e-10 ? s + p*Math.log(p) : s, 0) / Math.log(N);
+
+  // ── 5. Transition risk from A matrix ─────────────────────────
+  // How likely is current regime to transition AWAY in next step?
+  const stayProb = A[lastState] ? A[lastState][lastState] : 0.5;
+  const transitionRisk = 1 - stayProb;
+
+  // ── 6. Expected duration = geometric mean from transition prob ─
+  // E[duration] = 1 / (1 - P(stay)) in candles
+  const expectedDuration = stayProb > 0.01
+    ? Math.round(1 / (1-stayProb))
+    : 999;
+
+  // ── 7. Backtrack full path to count regime duration ───────────
+  const path = new Array(T).fill(0);
+  path[T-1] = lastState;
+  for (let t=T-2; t>=0; t--) path[t] = psi[t+1][path[t+1]];
+  // Count consecutive candles in current regime
+  let regimeDuration = 0;
+  for (let t=T-1; t>=0; t--) {
+    if (path[t] === lastState) regimeDuration++;
+    else break;
+  }
+  // Regime is "mature" if it has lasted longer than expected
+  const regimeMature = regimeDuration > expectedDuration * 0.8;
 
   const names = HMM_MODEL.state_names || ["Uptrend","Downtrend","Ranging","HighVolatility"];
   const name  = names[lastState];
+  const tradable = lastState !== 2 && lastState !== 3;
+  const allowedAction = lastState===0?"BUY":lastState===1?"SELL":"NONE";
 
-  const tradable    = lastState !== 2 && lastState !== 3; // not Ranging or HighVol
-  const allowedAction = lastState === 0 ? "BUY"
-                      : lastState === 1 ? "SELL"
-                      : "NONE";
-
-  return { state: lastState, name, tradable, allowedAction };
+  return {
+    state: lastState, name, tradable, allowedAction,
+    stateProbs, regimeConfidence, transitionRisk,
+    expectedDuration, regimeMature, entropy,
+  };
 }
 
 function extractHMMObservations(candles1m: any[]): number[] {
