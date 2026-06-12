@@ -314,25 +314,80 @@ function garchVolatility(returns: number[], omega=1e-6, alpha=0.1, beta=0.85): n
 // ─────────────────────────────────────────────
 // ORNSTEIN-UHLENBECK — mean reversion features
 // ─────────────────────────────────────────────
-function ouFeatures(prices: number[], window=20): { theta: number; zscore: number; revTime: number; meanDist: number } {
-  if (prices.length < window) return { theta:0, zscore:0, revTime:1, meanDist:0 };
-  const p   = prices.slice(-window);
-  const mu  = p.reduce((a,b) => a+b, 0) / window;
-  const std = Math.sqrt(p.reduce((a,b) => a + (b-mu)**2, 0) / window) + 1e-10;
+function ouFeatures(prices: number[], window=100): {
+  theta: number; zscore: number; revTime: number; meanDist: number;
+  halfLife: number; mu: number; std: number; revSpeed: number;
+  ouVelocity: number; rSquared: number; tpTarget: number;
+  slDistance: number; contractMinutes: number;
+} {
+  const defResult = { theta:0, zscore:0, revTime:1, meanDist:0,
+    halfLife:10, mu:0, std:0, revSpeed:0, ouVelocity:0,
+    rSquared:0, tpTarget:0, slDistance:0, contractMinutes:5 };
+  if (prices.length < 20) return defResult;
 
-  // Estimate theta via OLS: dp = theta*(mu-p)*dt
-  const y = p.slice(1).map((v,i) => v - p[i]);
-  const x = p.slice(0,-1).map(v => mu - v);
+  const w   = Math.min(window, prices.length);
+  const p   = prices.slice(-w);
+  const mu  = p.reduce((a,b) => a+b, 0) / w;
+  const std = Math.sqrt(p.reduce((a,b) => a + (b-mu)**2, 0) / w) + 1e-10;
+
+  // ── OLS regression: dp = κ(mu - p)dt → estimate κ (reversion speed)
+  const y     = p.slice(1).map((v,i) => v - p[i]);
+  const x     = p.slice(0,-1).map(v => mu - v);
+  const xMean = x.reduce((a,b) => a+b, 0) / x.length;
+  const yMean = y.reduce((a,b) => a+b, 0) / y.length;
   const xxSum = x.reduce((a,b) => a + b*b, 0);
   const xySum = x.reduce((a,b,i) => a + b*y[i], 0);
-  const theta = xxSum > 1e-12 ? Math.max(0, Math.min(5, xySum/xxSum)) : 0;
+  const kappa = xxSum > 1e-12 ? Math.max(0, Math.min(5, xySum/xxSum)) : 0;
 
-  const last = prices[prices.length-1];
+  // ── R² of OU fit — how well does OU model explain the data?
+  const yPred   = x.map(xi => kappa * xi);
+  const ssRes   = yPred.reduce((s,yp,i) => s + (y[i]-yp)**2, 0);
+  const ssTot   = y.reduce((s,yi) => s + (yi-yMean)**2, 0);
+  const rSquared = ssTot > 1e-12 ? Math.max(0, 1 - ssRes/ssTot) : 0;
+
+  // ── Half-life: time for deviation to decay by 50%
+  // HL = ln(2) / κ (in candles)
+  const halfLife = kappa > 0.001 ? Math.log(2) / kappa : 999;
+
+  // ── Current state
+  const last    = prices[prices.length - 1];
+  const prev    = prices[prices.length - 2] || last;
+  const zscore  = (last - mu) / std;
+
+  // ── OU Velocity: rate of change of z-score (is it moving toward or away from mean?)
+  const zPrev     = (prev - mu) / std;
+  const ouVelocity = zscore - zPrev; // negative = moving toward mean (good for revert trade)
+
+  // ── TP Target = mu (the mathematical equilibrium)
+  // This is WHERE PRICE WILL RETURN — not a fixed ratio
+  const tpTarget = mu;
+
+  // ── SL Distance = 0.5σ beyond current deviation
+  // If z=2.5, price is 2.5σ from mean, SL at 3.0σ
+  const slDistance = std * (Math.abs(zscore) + 0.5);
+
+  // ── Contract minutes = half-life rounded to nearest Deriv contract
+  // Available: 1, 2, 3, 5, 10, 15 minutes
+  const availContracts = [1, 2, 3, 5, 10, 15];
+  const idealMins      = halfLife; // candles ≈ minutes on M1
+  const contractMinutes = availContracts.reduce((best, c) =>
+    Math.abs(c - idealMins) < Math.abs(best - idealMins) ? c : best
+  , 5);
+
   return {
-    theta,
-    zscore:   (last - mu) / std,
-    revTime:  theta > 0.01 ? Math.min(1, 1/(theta*50)) : 1,
-    meanDist: (last - mu) / (mu + 1e-10)
+    theta:    kappa,
+    zscore,
+    revTime:  kappa > 0.01 ? Math.min(1, 1/(kappa*50)) : 1,
+    meanDist: (last - mu) / (mu + 1e-10),
+    halfLife:         Math.min(halfLife, 100),
+    mu,
+    std,
+    revSpeed:         kappa,
+    ouVelocity,
+    rSquared,
+    tpTarget,
+    slDistance,
+    contractMinutes,
   };
 }
 
@@ -2300,9 +2355,24 @@ function firstPassageTime(
   // → SL >= 1.5 * TP
   // But we also want TP to be reachable given volatility
 
-  // TP = distance price needs to move to profit
-  // Set TP at 1.5x current volatility — achievable in 5-15 min
+  // TP target: use OU mean (theta) if available and closer than vol-based target
+  // OU says price WILL return to mu — so mu IS the TP
+  // tpPct = |current_price - mu| / current_price
+  const currentPrice = prices.length > 0 ? prices[prices.length-1] : 0;
+  const ouData2      = prices.length > 20 ? ouFeatures(prices, Math.min(100, prices.length)) : null;
+  const ouMuTarget   = ouData2 && ouData2.rSquared > 0.15 ? ouData2.mu : 0;
+  const ouTPPct      = ouMuTarget > 0 && currentPrice > 0
+    ? Math.abs(currentPrice - ouMuTarget) / currentPrice
+    : 0;
+
+  // Use OU-based TP if it gives better R:R than vol-based TP
+  // Vol-based: tpPct = adjVol * 1.5
+  // OU-based:  tpPct = distance to mean
   let tpPct = adjVol * 1.5;
+  if (ouTPPct > 0 && ouTPPct < adjVol * 4) {
+    // OU target is reasonable — use weighted average
+    tpPct = ouTPPct * 0.6 + adjVol * 1.5 * 0.4;
+  }
 
   // For mean reversion trades (OU zscore extreme) — tighter TP
   // Price will snap back quickly
@@ -2451,7 +2521,11 @@ function trueBayesianWinProb(
   const emaBull   = features[4]  || 0;
   const emaBear   = features[5]  || 0;
 
-  const prior     = Math.max(0.40, Math.min(0.95, priorWinRate));
+  // ── Adaptive prior: use symbol's actual historical win rate ──
+  // Laplace smoothing: prior = (wins+1)/(total+2) avoids 0 or 1
+  // This is loaded from perf object passed in from scan loop
+  const adaptivePrior = priorWinRate; // already set per-symbol from performance data
+  const prior = Math.max(0.35, Math.min(0.92, adaptivePrior));
   const priorLoss = 1 - prior;
   const factors: Record<string, number> = {};
   const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
@@ -3470,32 +3544,64 @@ Deno.serve(async (req) => {
         // This is a 95% probability event by Gaussian distribution
         const isMeanRev  = symbol.startsWith("R_") || symbol.startsWith("JD") || symbol.startsWith("1HZ");
         if (isMeanRev) {
-          const ouData  = ouFeatures(closes4ofi, 100);
-          const ouZ     = ouData.zscore;
-          const ouTheta = ouData.theta;
-          if (Math.abs(ouZ) >= 2.0) {
-            // Strong OU signal — override ML direction if contradicts
-            const ouAction = ouZ > 2.0 ? "SELL" : "BUY";
-            if (ouAction !== sig.action) {
-              scanLog.push(`${symbol}: OU_override z=${ouZ.toFixed(2)} forcing ${ouAction} (price ${ouZ>0?"above":"below"} 2σ mean)`);
-              sig.action = ouAction;
-              sig.confidence = Math.min(95, sig.confidence + 10);
-            } else {
-              scanLog.push(`${symbol}: OU_confirmed z=${ouZ.toFixed(2)} θ=${ouTheta.toFixed(5)} conf+=10`);
-              sig.confidence = Math.min(95, sig.confidence + 10);
-            }
-          } else if (Math.abs(ouZ) >= 1.5) {
-            // Moderate OU signal — boost if confirming
-            const ouAction = ouZ > 1.5 ? "SELL" : "BUY";
-            if (ouAction === sig.action) {
-              scanLog.push(`${symbol}: OU_boost z=${ouZ.toFixed(2)} conf+=5`);
-              sig.confidence = Math.min(95, sig.confidence + 5);
-            } else {
-              scanLog.push(`${symbol}: OU_weak_conflict z=${ouZ.toFixed(2)} conf-=5`);
-              sig.confidence = Math.max(10, sig.confidence - 5);
-            }
+          const ouData     = ouFeatures(closes4ofi, 100);
+          const ouZ        = ouData.zscore;
+          const ouMu       = ouData.mu;
+          const ouStd      = ouData.std;
+          const ouHL       = ouData.halfLife;
+          const ouVel      = ouData.ouVelocity;
+          const ouR2       = ouData.rSquared;
+          const ouTP       = ouData.tpTarget;
+          const ouContract = ouData.contractMinutes;
+
+          // ── R² gate: if OU model doesn't fit, don't use it ──
+          if (ouR2 < 0.15) {
+            scanLog.push(`${symbol}: OU_poor_fit R²=${ouR2.toFixed(2)} — random walk, skipping OU`);
           } else {
-            scanLog.push(`${symbol}: OU_neutral z=${ouZ.toFixed(2)} no adjustment`);
+            // ── Direction signal from z-score ──
+            const ouAction = ouZ > 0 ? "SELL" : "BUY"; // above mean=SELL, below=BUY
+
+            // ── Velocity check: is price MOVING TOWARD mean? ──
+            const movingToMean = (ouZ > 0 && ouVel < 0) || (ouZ < 0 && ouVel > 0);
+
+            if (Math.abs(ouZ) >= 2.0) {
+              if (ouAction !== sig.action) {
+                scanLog.push(`${symbol}: OU_override z=${ouZ.toFixed(2)} R²=${ouR2.toFixed(2)} forcing ${ouAction} HL=${ouHL.toFixed(1)}min`);
+                sig.action = ouAction;
+                sig.confidence = Math.min(95, sig.confidence + 12);
+              } else {
+                const velBonus = movingToMean ? 8 : 3;
+                sig.confidence = Math.min(95, sig.confidence + velBonus);
+                scanLog.push(`${symbol}: OU_confirmed z=${ouZ.toFixed(2)} vel=${ouVel.toFixed(4)} movingToMean=${movingToMean} conf+=${velBonus}`);
+              }
+              // Store OU TP target and contract duration on signal
+              sig.ouTPTarget      = ouTP;
+              sig.ouContractMins  = ouContract;
+              sig.ouHalfLife      = ouHL;
+              scanLog.push(`${symbol}: OU_targets TP=${ouTP.toFixed(5)} contract=${ouContract}min HL=${ouHL.toFixed(1)}`);
+
+            } else if (Math.abs(ouZ) >= 1.5) {
+              if (ouAction === sig.action) {
+                const velBonus = movingToMean ? 6 : 3;
+                sig.confidence = Math.min(95, sig.confidence + velBonus);
+                scanLog.push(`${symbol}: OU_boost z=${ouZ.toFixed(2)} vel=${ouVel.toFixed(4)} conf+=${velBonus}`);
+              } else {
+                sig.confidence = Math.max(10, sig.confidence - 5);
+                scanLog.push(`${symbol}: OU_conflict z=${ouZ.toFixed(2)} conf-=5`);
+              }
+            } else {
+              scanLog.push(`${symbol}: OU_neutral z=${ouZ.toFixed(2)} R²=${ouR2.toFixed(2)}`);
+            }
+
+            // ── Half-life gate: if HL > 30 candles, reversion too slow for 5min contract ──
+            if (ouHL > 30) {
+              sig.confidence = Math.max(10, sig.confidence - 10);
+              scanLog.push(`${symbol}: OU_slow_revert HL=${ouHL.toFixed(1)} conf-=10`);
+            }
+
+            // ── Stake multiplier from z-score magnitude (Kelly-inspired) ──
+            // Larger deviation = stronger edge = larger position
+            sig.ouStakeMult = Math.min(2.5, 1.0 + Math.max(0, Math.abs(ouZ) - 1.5) * 0.5);
           }
         }
 
@@ -3900,12 +4006,49 @@ Deno.serve(async (req) => {
     best.symbol,
     best.confidence,
     best.regime || "WeakUptrend",
-    bestFeats[23] || 0,      // kalman_velocity
-    bestFeats[27] || 0.003   // garch_vol
+    bestFeats[23] || 0,
+    bestFeats[27] || 0.003
   );
 
+  // ── KELLY CRITERION stake sizing ─────────────────────────────
+  // f* = (p*b - q) / b  where p=winProb, b=payout, q=1-p
+  // Use fractional Kelly (25%) to reduce variance
+  const kellyP    = Math.max(0.40, Math.min(0.95, fpt.winProb));
+  const kellyB    = 0.92; // Deriv payout ratio
+  const kellyQ    = 1 - kellyP;
+  const kellyFull = (kellyP * kellyB - kellyQ) / kellyB;
+  const kellyFrac = kellyFull * 0.25; // 25% Kelly = fractional Kelly
+
+  // OU stake multiplier (larger position when more stretched)
+  const ouMult = best.ouStakeMult || 1.0;
+
+  // Balance-based Kelly stake
+  const balanceNow = await getBalance(token);
+  const kellyStake = kellyFrac > 0
+    ? Math.max(cfg.minStake || 1, Math.min(
+        cfg.maxStake || 50,
+        balanceNow * kellyFrac * ouMult
+      ))
+    : 0; // Kelly says skip (negative fraction = don't trade)
+
+  // If Kelly says don't trade, respect it
+  if (kellyFull <= 0) {
+    console.log(`🚫 Kelly skip: ${best.symbol} f*=${kellyFull.toFixed(3)} winProb=${(kellyP*100).toFixed(1)}%`);
+    return new Response(JSON.stringify({
+      status: "kelly_skip",
+      symbol: best.symbol,
+      kelly_fraction: kellyFull,
+      win_prob: kellyP,
+      scan_log: scanLog,
+    }), { headers: CORS });
+  }
+
+  // Use Kelly stake but cap at Monte Carlo safe stake
+  const finalStakeToUse = Math.min(kellyStake, stake);
+  console.log(`💰 Kelly: f*=${kellyFull.toFixed(3)} frac=${kellyFrac.toFixed(3)} stake=$${finalStakeToUse.toFixed(2)} (Kelly=$${kellyStake.toFixed(2)} MC=$${stake.toFixed(2)}) OU_mult=${ouMult.toFixed(2)}`);
+
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
-  const result: any = await placeTrade(token, best.symbol, best.action, stake, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
+  const result: any = await placeTrade(token, best.symbol, best.action, finalStakeToUse, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
   const success = result && !result.error;
 
   // Log trade with extra fields for AI Brain to learn from
