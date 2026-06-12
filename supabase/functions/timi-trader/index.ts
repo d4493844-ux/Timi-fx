@@ -3357,12 +3357,31 @@ Deno.serve(async (req) => {
         name:          ogdResult.name,
         tradable:      ogdResult.tradable,
         allowedAction: ogdResult.allowedAction,
+        // ── New HMM fields from upgraded Viterbi ──
+        regimeConfidence: hmmResult.regimeConfidence || 0.5,
+        transitionRisk:   hmmResult.transitionRisk   || 0.5,
+        expectedDuration: hmmResult.expectedDuration || 5,
+        regimeMature:     hmmResult.regimeMature     || false,
+        entropy:          hmmResult.entropy          || 1.0,
+        stateProbs:       hmmResult.stateProbs       || [],
+      };
+
+      // ── HMM Full Exploitation ──────────────────────────────────
+      // Apply entropy/confidence/transition adjustments to signal confidence
+      // (will be applied after signal is generated below)
+      const hmmMeta = {
+        entropy:      regime.entropy,
+        transRisk:    regime.transitionRisk,
+        mature:       regime.regimeMature,
+        confidence:   regime.regimeConfidence,
+        expectedDur:  regime.expectedDuration,
       };
 
       // Log ensemble decision
       if (ogdResult.name !== hmmResult.name) {
         console.log(`⚖️ ${symbol}: HMM=${hmmResult.name} → OGD=${ogdResult.name} (conf=${ogdResult.confidence.toFixed(2)})`);
       }
+      console.log(`🔬 HMM meta: entropy=${hmmMeta.entropy.toFixed(2)} transRisk=${hmmMeta.transRisk.toFixed(2)} mature=${hmmMeta.mature} regimeConf=${(hmmMeta.confidence*100).toFixed(0)}%`);
 
       const isSpikeSym = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
 
@@ -3774,6 +3793,33 @@ Deno.serve(async (req) => {
           if (spikeMeta.highConviction) {
             console.log(`⚡ ${symbol}: HIGH CONVICTION — Poisson overdue + Topo compressed`);
           }
+        }
+
+        // ── Apply HMM meta adjustments to signal confidence ─────────
+        if (hmmMeta.entropy > 0.85) {
+          sig.confidence = Math.max(10, sig.confidence - 15);
+          scanLog.push(`${symbol}: HMM_entropy_penalty entropy=${hmmMeta.entropy.toFixed(2)} conf-=15`);
+        } else if (hmmMeta.entropy < 0.40) {
+          sig.confidence = Math.min(95, sig.confidence + 8);
+          scanLog.push(`${symbol}: HMM_entropy_bonus entropy=${hmmMeta.entropy.toFixed(2)} conf+=8`);
+        }
+        if (hmmMeta.transRisk > 0.40 && !isSpikeSym) {
+          sig.confidence = Math.max(10, sig.confidence - 12);
+          scanLog.push(`${symbol}: HMM_transRisk_penalty=${hmmMeta.transRisk.toFixed(2)} conf-=12`);
+        } else if (hmmMeta.transRisk < 0.15) {
+          sig.confidence = Math.min(95, sig.confidence + 6);
+          scanLog.push(`${symbol}: HMM_stable_bonus transRisk=${hmmMeta.transRisk.toFixed(2)} conf+=6`);
+        }
+        if (hmmMeta.mature && !isSpikeSym) {
+          sig.confidence = Math.max(10, sig.confidence - 10);
+          scanLog.push(`${symbol}: HMM_mature_penalty expDur=${hmmMeta.expectedDur} conf-=10`);
+        }
+        if (hmmMeta.confidence > 0.80) {
+          sig.confidence = Math.min(95, sig.confidence + 5);
+          scanLog.push(`${symbol}: HMM_conf_bonus=${(hmmMeta.confidence*100).toFixed(0)}% conf+=5`);
+        } else if (hmmMeta.confidence < 0.45) {
+          sig.confidence = Math.max(10, sig.confidence - 8);
+          scanLog.push(`${symbol}: HMM_conf_penalty=${(hmmMeta.confidence*100).toFixed(0)}% conf-=8`);
         }
 
         // ── Per-symbol RSI threshold check for synthetics ──────────
