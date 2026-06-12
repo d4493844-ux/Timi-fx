@@ -4235,30 +4235,56 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── Bayesian Sequential Update (candle confirmation) ─────────
-        // P(win|c1,c2,c3) updated as each confirming candle forms
-        // Only enter when 2+ consecutive confirming candles
-        if (isMeanRev || symbol.startsWith("frx")) {
-          const lastCandles = c1m.slice(-5);
+        // ── Bayesian Sequential Update ────────────────────────────────
+        // IMPORTANT: Logic differs by strategy type
+        // TREND signals: confirming candles = good (momentum continuation)
+        // MEAN REVERSION: opposing candles = NORMAL (we are fading the move)
+        //   For mean reversion, we look for a REVERSAL CANDLE after the trend
+        //   i.e. last candle should be in signal direction (first reversal sign)
+        const isForexTrend = symbol.startsWith("frx") &&
+          !["frxXAUUSD","frxXAGUSD","frxUSDJPY"].includes(symbol);
+
+        if (isForexTrend) {
+          // Trend strategy: need consecutive confirming candles
+          const lastCandles = c1m.slice(-4);
           const direction   = sig.action === "BUY" ? 1 : -1;
-          let confirmCount  = 0;
-          let conflictCount = 0;
+          let confirmCount = 0;
           for (let ci = lastCandles.length-1; ci >= 0; ci--) {
             const candleDir = parseFloat(lastCandles[ci].close) >
                               parseFloat(lastCandles[ci].open) ? 1 : -1;
             if (candleDir === direction) confirmCount++;
-            else { conflictCount++; break; }
+            else break;
           }
           if (confirmCount >= 3) {
             sig.confidence = Math.min(95, sig.confidence + 10);
-            scanLog.push(`${symbol}: SEQ_BAYES ${confirmCount} confirming candles conf+=10`);
+            scanLog.push(`${symbol}: SEQ_BAYES_TREND ${confirmCount} confirming conf+=10`);
           } else if (confirmCount >= 2) {
             sig.confidence = Math.min(95, sig.confidence + 5);
-            scanLog.push(`${symbol}: SEQ_BAYES ${confirmCount} confirming candles conf+=5`);
-          } else if (conflictCount >= 2) {
-            sig.confidence = Math.max(10, sig.confidence - 10);
-            scanLog.push(`${symbol}: SEQ_BAYES ${conflictCount} conflicting candles conf-=10`);
+            scanLog.push(`${symbol}: SEQ_BAYES_TREND ${confirmCount} confirming conf+=5`);
+          } else if (confirmCount === 0) {
+            sig.confidence = Math.max(10, sig.confidence - 8);
+            scanLog.push(`${symbol}: SEQ_BAYES_TREND no momentum conf-=8`);
           }
+        } else if (isMeanRev || ["frxXAUUSD","frxXAGUSD","frxUSDJPY"].includes(symbol)) {
+          // Mean reversion strategy: look for FIRST reversal candle
+          // The last candle should be moving toward our direction (reversal sign)
+          const lastCandles = c1m.slice(-3);
+          const direction   = sig.action === "BUY" ? 1 : -1;
+          const lastCandleDir = parseFloat(lastCandles[lastCandles.length-1].close) >
+                                parseFloat(lastCandles[lastCandles.length-1].open) ? 1 : -1;
+          const prevCandleDir = parseFloat(lastCandles[lastCandles.length-2].close) >
+                                parseFloat(lastCandles[lastCandles.length-2].open) ? 1 : -1;
+
+          if (lastCandleDir === direction && prevCandleDir !== direction) {
+            // Perfect: just reversed — first green candle after red streak (BUY) or vice versa
+            sig.confidence = Math.min(95, sig.confidence + 12);
+            scanLog.push(`${symbol}: SEQ_BAYES_REVERT reversal_candle confirmed conf+=12`);
+          } else if (lastCandleDir === direction) {
+            // Good: last candle in signal direction
+            sig.confidence = Math.min(95, sig.confidence + 5);
+            scanLog.push(`${symbol}: SEQ_BAYES_REVERT signal_dir_candle conf+=5`);
+          }
+          // No penalty for opposing candles in mean reversion — that's expected
         }
 
         // ── Apply HMM meta adjustments to signal confidence ─────────
