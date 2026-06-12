@@ -311,6 +311,77 @@ function garchVolatility(returns: number[], omega=1e-6, alpha=0.1, beta=0.85): n
   return variance.map(v => Math.sqrt(Math.max(v, 1e-12)));
 }
 
+function garchFull(returns: number[], omega=1e-6, alpha=0.1, beta=0.85): {
+  currentVol: number; forecastVol: number; volRegime: string;
+  persistence: number; var95: number; stakeMult: number;
+  slMult: number; isHighVol: boolean; isLowVol: boolean;
+  volRatio: number; volTrend: string;
+} {
+  if (returns.length < 20) return {
+    currentVol:0.003, forecastVol:0.003, volRegime:"normal",
+    persistence:0.85, var95:0.005, stakeMult:1.0, slMult:1.0,
+    isHighVol:false, isLowVol:false, volRatio:1.0, volTrend:"stable"
+  };
+
+  // GARCH variance series
+  const n = returns.length;
+  const variance = new Array(n).fill(0);
+  const warmup = returns.slice(0, Math.min(20, n));
+  variance[0] = warmup.reduce((a,b) => a + b*b, 0) / warmup.length;
+  for (let i=1; i<n; i++)
+    variance[i] = omega + alpha * returns[i-1]**2 + beta * variance[i-1];
+
+  const currentVar = variance[n-1];
+  const currentVol = Math.sqrt(Math.max(currentVar, 1e-12));
+
+  // ── 1-step ahead GARCH forecast ─────────────────────────────
+  // σ²_{t+1} = ω + α·ε²_t + β·σ²_t
+  const forecastVar = omega + alpha * returns[n-1]**2 + beta * currentVar;
+  const forecastVol = Math.sqrt(Math.max(forecastVar, 1e-12));
+
+  // ── Persistence = α + β (how long shocks last) ───────────────
+  // Close to 1 = vol shocks persist long time
+  const persistence = alpha + beta;
+
+  // ── Long-run variance = ω / (1 - α - β) ─────────────────────
+  const longRunVar = (1 - persistence) > 0.001
+    ? omega / (1 - persistence)
+    : variance[0];
+  const longRunVol = Math.sqrt(Math.max(longRunVar, 1e-12));
+
+  // ── Volatility ratio: current vs long-run ────────────────────
+  const volRatio = currentVol / (longRunVol + 1e-12);
+
+  // ── Volatility regime ─────────────────────────────────────────
+  const isHighVol = volRatio > 1.8;
+  const isLowVol  = volRatio < 0.6;
+  const volRegime = isHighVol ? "high" : isLowVol ? "low" : "normal";
+
+  // ── Volatility trend (last 5 vs last 20 vols) ────────────────
+  const recent5  = Math.sqrt(variance.slice(-5).reduce((a,b)=>a+b,0)/5);
+  const recent20 = Math.sqrt(variance.slice(-20).reduce((a,b)=>a+b,0)/20);
+  const volTrend = recent5 > recent20 * 1.2 ? "rising"
+                 : recent5 < recent20 * 0.8 ? "falling"
+                 : "stable";
+
+  // ── 95% VaR = 1.645 × current vol ────────────────────────────
+  const var95 = 1.645 * currentVol;
+
+  // ── Stake multiplier: reduce in high vol, increase in low vol ─
+  // target_vol = 0.003 (0.3% per candle baseline)
+  const targetVol = 0.003;
+  const stakeMult = Math.max(0.3, Math.min(2.0, targetVol / (currentVol + 1e-10)));
+
+  // ── SL multiplier: wider SL in high vol, tighter in low vol ──
+  const slMult = Math.max(0.5, Math.min(3.0, currentVol / (targetVol + 1e-10)));
+
+  return {
+    currentVol, forecastVol, volRegime, persistence,
+    var95, stakeMult, slMult, isHighVol, isLowVol,
+    volRatio, volTrend
+  };
+}
+
 // ─────────────────────────────────────────────
 // ORNSTEIN-UHLENBECK — mean reversion features
 // ─────────────────────────────────────────────
@@ -3726,6 +3797,69 @@ Deno.serve(async (req) => {
             scanLog.push(`${symbol}: BB_conflict conf-=10`);
           }
         }
+
+        // ── GARCH Full Exploitation ──────────────────────────────────
+        const garchReturns = closes4ofi.slice(1).map((v:number,i:number) =>
+          (v - closes4ofi[i]) / (closes4ofi[i] + 1e-10));
+        const garch = garchFull(garchReturns);
+
+        // Volatility regime adjustments
+        if (garch.isHighVol) {
+          sig.confidence = Math.max(10, sig.confidence - 15);
+          scanLog.push(`${symbol}: GARCH_high_vol ratio=${garch.volRatio.toFixed(2)} trend=${garch.volTrend} conf-=15`);
+        } else if (garch.isLowVol) {
+          sig.confidence = Math.min(95, sig.confidence + 8);
+          scanLog.push(`${symbol}: GARCH_low_vol ratio=${garch.volRatio.toFixed(2)} conf+=8 — ideal entry conditions`);
+        }
+        // Rising volatility warning
+        if (garch.volTrend === "rising") {
+          sig.confidence = Math.max(10, sig.confidence - 8);
+          scanLog.push(`${symbol}: GARCH_vol_rising forecast=${(garch.forecastVol*100).toFixed(3)}% conf-=8`);
+        } else if (garch.volTrend === "falling") {
+          sig.confidence = Math.min(95, sig.confidence + 5);
+          scanLog.push(`${symbol}: GARCH_vol_falling — calming market conf+=5`);
+        }
+        // Store GARCH stake/SL multipliers on signal
+        sig.garchStakeMult = garch.stakeMult;
+        sig.garchSLMult    = garch.slMult;
+
+        // ── KALMAN Full Exploitation ──────────────────────────────────
+        const kalman = kalmanFull(closes4ofi);
+
+        // Structural break detection
+        if (kalman.structuralBreak) {
+          sig.confidence = Math.max(10, sig.confidence - 20);
+          scanLog.push(`${symbol}: KALMAN_structural_break innZ=${kalman.innovationZscore.toFixed(2)} conf-=20`);
+        }
+        // Signal quality from Kalman
+        if (kalman.signalQuality > 0.7) {
+          sig.confidence = Math.min(95, sig.confidence + 8);
+          scanLog.push(`${symbol}: KALMAN_high_quality=${kalman.signalQuality.toFixed(2)} vel=${kalman.velocity.toFixed(5)} conf+=8`);
+        } else if (kalman.signalQuality < 0.25) {
+          sig.confidence = Math.max(10, sig.confidence - 8);
+          scanLog.push(`${symbol}: KALMAN_low_quality=${kalman.signalQuality.toFixed(2)} conf-=8`);
+        }
+        // Velocity alignment check
+        const kalmanDirMatch = (sig.action==="BUY" && kalman.velocity > 0) ||
+                               (sig.action==="SELL" && kalman.velocity < 0);
+        if (!kalmanDirMatch && Math.abs(kalman.velocity) > 0.0001) {
+          sig.confidence = Math.max(10, sig.confidence - 10);
+          scanLog.push(`${symbol}: KALMAN_vel_conflict vel=${kalman.velocity.toFixed(5)} conf-=10`);
+        } else if (kalmanDirMatch && kalman.trendStrength > 0.5) {
+          sig.confidence = Math.min(95, sig.confidence + 6);
+          scanLog.push(`${symbol}: KALMAN_vel_confirmed strength=${kalman.trendStrength.toFixed(2)} conf+=6`);
+        }
+        // Acceleration check — decelerating trend = exhaustion
+        if (kalmanDirMatch && kalman.acceleration !== 0) {
+          const decelerating = (sig.action==="BUY"  && kalman.acceleration < 0) ||
+                               (sig.action==="SELL" && kalman.acceleration > 0);
+          if (decelerating && Math.abs(kalman.acceleration) > Math.abs(kalman.velocity)*0.3) {
+            sig.confidence = Math.max(10, sig.confidence - 8);
+            scanLog.push(`${symbol}: KALMAN_deceleration acc=${kalman.acceleration.toFixed(6)} — trend exhausting conf-=8`);
+          }
+        }
+        // Store Kalman dynamic SL
+        sig.kalmanDynamicSL = kalman.dynamicSL;
 
         // ── Signal Longevity ─────────────────────────────────────────
         const longevity  = calcSignalHalfLife(closes4ofi);
