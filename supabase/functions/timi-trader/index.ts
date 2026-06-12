@@ -4263,15 +4263,38 @@ Deno.serve(async (req) => {
           const rsiThresh = SYNTH_RSI_THRESHOLDS[symbol];
           if (rsiThresh) {
             const rsiNow = features[2] * 100;
-            const rsiOK = (sig.action === "BUY"  && rsiNow <= rsiThresh.buy) ||
-                          (sig.action === "SELL" && rsiNow >= rsiThresh.sell);
+
+            // ── Regime-specific RSI adjustment ─────────────────
+            // Each regime changes how we interpret RSI extremes:
+            // Trending:    RSI stays extreme longer → widen threshold
+            // Ranging:     RSI extremes very reliable → tighten
+            // HighVol:     RSI unreliable → widen + penalize conf
+            const regimeP    = REGIME_SIGNAL_PARAMS[regime.name] || REGIME_SIGNAL_PARAMS["Ranging"];
+            const regimeMult = regimeP.rsiMultiplier;
+
+            // Adjusted thresholds
+            const adjBuy  = Math.round(rsiThresh.buy  * regimeMult);
+            const adjSell = Math.round(100 - (100 - rsiThresh.sell) * regimeMult);
+
+            const rsiOK = (sig.action === "BUY"  && rsiNow <= adjBuy) ||
+                          (sig.action === "SELL" && rsiNow >= adjSell);
+
             if (!rsiOK) {
               sig.confidence = Math.max(10, sig.confidence - 25);
-              scanLog.push(`${symbol}: rsi_thresh_miss RSI=${rsiNow.toFixed(1)} need<=${rsiThresh.buy}/>${rsiThresh.sell} conf-=25`);
+              scanLog.push(`${symbol}: rsi_thresh_miss RSI=${rsiNow.toFixed(1)} need<=${adjBuy}/>${adjSell} (${regime.name}×${regimeMult}) conf-=25`);
             } else {
               sig.confidence = Math.min(95, sig.confidence + 8);
-              scanLog.push(`${symbol}: rsi_thresh_ok RSI=${rsiNow.toFixed(1)} conf+=8`);
+              scanLog.push(`${symbol}: rsi_thresh_ok RSI=${rsiNow.toFixed(1)} adj=${adjBuy}/${adjSell} regime=${regime.name} conf+=8`);
             }
+
+            // Regime minimum confidence gate
+            if (sig.confidence < regimeP.minConf) {
+              scanLog.push(`${symbol}: regime_conf_gate ${regime.name} min=${regimeP.minConf} current=${sig.confidence}`);
+            }
+
+            // Store regime stake multiplier for position sizing
+            sig.regimeStakeMult = regimeP.stakeMultiplier;
+
             if (BELOW_BREAKEVEN.includes(symbol)) {
               sig.confidence = Math.max(10, sig.confidence - 8);
             }
