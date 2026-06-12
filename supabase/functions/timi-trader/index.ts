@@ -3779,6 +3779,37 @@ Deno.serve(async (req) => {
             };
 
             scanLog.push(`${symbol}: spike_gate_passed prob=${(poissonResult.probability*100).toFixed(1)}% compress=${(topoResult.compressionScore*100).toFixed(0)}%`);
+
+            // ── Hawkes Process: self-exciting spike intensity ──────
+            // Each recent spike increases probability of another soon
+            // λ(t) = μ + α × Σ exp(-β(t-t_i)) for previous spikes
+            const hawkesLambda  = hawkesIntensity(rawTicks, symbol);
+            const baseLambda    = 0.001;
+            const excitation    = hawkesLambda / (baseLambda + 1e-10);
+
+            // Also get adaptive lambda from recent spike history
+            const adaptiveAvgGap = getAdaptiveLambda(symbol, rawTicks);
+            const baseAvgGap     = BOOM_CRASH_AVG_TICKS[symbol] || 600;
+            const lambdaShift    = adaptiveAvgGap / (baseAvgGap + 1e-10);
+
+            if (excitation > 2.0) {
+              // Spike cluster forming — boost confidence
+              scanLog.push(`${symbol}: HAWKES_excited excitation=${excitation.toFixed(1)}x → spike cluster forming`);
+              (globalThis as any)[`${symbol}_spike_meta`].confidenceBoost += 8;
+            } else if (excitation > 1.3) {
+              scanLog.push(`${symbol}: HAWKES_elevated excitation=${excitation.toFixed(1)}x`);
+              (globalThis as any)[`${symbol}_spike_meta`].confidenceBoost += 4;
+            }
+
+            // Adaptive lambda: if spikes happening faster than historical → more opportunity
+            if (lambdaShift < 0.8) {
+              scanLog.push(`${symbol}: ADAPTIVE_LAMBDA faster spikes gap=${adaptiveAvgGap.toFixed(0)} vs base=${baseAvgGap}`);
+              (globalThis as any)[`${symbol}_spike_meta`].confidenceBoost += 5;
+            } else if (lambdaShift > 1.3) {
+              scanLog.push(`${symbol}: ADAPTIVE_LAMBDA slower spikes gap=${adaptiveAvgGap.toFixed(0)} vs base=${baseAvgGap}`);
+              (globalThis as any)[`${symbol}_spike_meta`].confidenceBoost -= 3;
+            }
+
           } else {
             console.log(`⚠️  ${symbol}: insufficient ticks for Poisson/Topo (${rawTicks.length})`);
           }
