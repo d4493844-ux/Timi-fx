@@ -4631,9 +4631,20 @@ Deno.serve(async (req) => {
     }), { headers: CORS });
   }
 
-  // Use Kelly stake but cap at Monte Carlo safe stake
-  const finalStakeToUse = Math.min(kellyStake, stake);
-  console.log(`💰 Kelly: f*=${kellyFull.toFixed(3)} frac=${kellyFrac.toFixed(3)} stake=$${finalStakeToUse.toFixed(2)} (Kelly=$${kellyStake.toFixed(2)} MC=$${stake.toFixed(2)}) OU_mult=${ouMult.toFixed(2)}`);
+  // ── Combine all stake multipliers ───────────────────────────
+  // Kelly base × OU stretch × Regime × GARCH (all capped at 2.5x)
+  const regimeMult2  = best.regimeStakeMult || 1.0;
+  const garchMult2   = best.garchStakeMult  || 1.0;
+  const combinedMult = Math.min(2.5, ouMult * regimeMult2 * garchMult2);
+
+  // Final stake = Kelly × combined multiplier, capped at Monte Carlo safe stake
+  const kellyWithMults = kellyFrac > 0
+    ? Math.max(cfg.minStake || 1, Math.min(cfg.maxStake || 50,
+        balanceNow * kellyFrac * combinedMult))
+    : 0;
+  const finalStakeToUse = Math.min(kellyWithMults, stake);
+
+  console.log(`💰 Kelly: f*=${kellyFull.toFixed(3)} frac=${kellyFrac.toFixed(3)} OU×${ouMult.toFixed(2)} regime×${regimeMult2.toFixed(2)} garch×${garchMult2.toFixed(2)} combined×${combinedMult.toFixed(2)} → $${finalStakeToUse.toFixed(2)}`);
 
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
   const result: any = await placeTrade(token, best.symbol, best.action, finalStakeToUse, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
