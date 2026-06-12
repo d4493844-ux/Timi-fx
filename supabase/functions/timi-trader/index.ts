@@ -827,6 +827,54 @@ function kalmanFilter(prices: number[], processNoise = 1e-5, measurementNoise = 
   return { filtered, velocity };
 }
 
+function kalmanFull(prices: number[]): {
+  filteredPrice: number; velocity: number; acceleration: number;
+  uncertainty: number; innovation: number; innovationZscore: number;
+  structuralBreak: boolean; trendStrength: number; dynamicSL: number;
+  signalQuality: number;
+} {
+  if (prices.length < 10) return {
+    filteredPrice: prices[prices.length-1]||0, velocity:0, acceleration:0,
+    uncertainty:1, innovation:0, innovationZscore:0,
+    structuralBreak:false, trendStrength:0, dynamicSL:0.003, signalQuality:0.5
+  };
+
+  const kf        = kalmanFilter(prices, 1e-5, 1e-2);
+  const filtered  = kf.filtered;
+  const velocities = kf.velocity;
+  const last      = filtered[filtered.length-1];
+  const vel       = velocities[velocities.length-1];
+  const velPrev   = velocities[velocities.length-2] || vel;
+  const acceleration = vel - velPrev;
+
+  // Innovation sequence
+  const innovations: number[] = [];
+  for (let i=1; i<prices.length; i++)
+    innovations.push(prices[i] - filtered[i-1]);
+  const innMean = innovations.reduce((a,b)=>a+b,0)/innovations.length;
+  const innStd  = Math.sqrt(innovations.reduce((a,b)=>a+(b-innMean)**2,0)/innovations.length)+1e-10;
+  const lastInn = innovations[innovations.length-1];
+  const innovationZscore = lastInn / innStd;
+
+  // Structural break: last 3 innovations all large same direction
+  const last3 = innovations.slice(-3);
+  const structuralBreak = last3.every(x=>x>innStd) || last3.every(x=>x<-innStd);
+
+  // Uncertainty and trend strength
+  const uncertainty   = innStd / (Math.abs(last) + 1e-10);
+  const trendStrength = Math.min(1, Math.abs(vel) / (uncertainty * Math.abs(last) + 1e-10));
+  const dynamicSL     = Math.min(0.02, Math.max(0.001, 2 * uncertainty));
+  const signalQuality = Math.max(0, Math.min(1,
+    trendStrength * (1 - Math.min(1, Math.abs(innovationZscore)/3))
+  ));
+
+  return {
+    filteredPrice: last, velocity: vel, acceleration,
+    uncertainty, innovation: lastInn, innovationZscore,
+    structuralBreak, trendStrength, dynamicSL, signalQuality,
+  };
+}
+
 function buildFeatures(candles1m: any[], candles5m: any[]): number[] {
   const c = candles1m.map((x: any) => parseFloat(x.close));
   const h = candles1m.map((x: any) => parseFloat(x.high));
