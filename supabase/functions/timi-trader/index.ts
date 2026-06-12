@@ -3554,9 +3554,40 @@ Deno.serve(async (req) => {
           const ouTP       = ouData.tpTarget;
           const ouContract = ouData.contractMinutes;
 
-          // ── R² gate: if OU model doesn't fit, don't use it ──
+          // ── R² gate: if OU model doesn't fit, check regime ──
           if (ouR2 < 0.15) {
-            scanLog.push(`${symbol}: OU_poor_fit R²=${ouR2.toFixed(2)} — random walk, skipping OU`);
+            // Low R² means one of two things:
+            // 1. True random walk → skip (Hurst ~0.5)
+            // 2. Trending market → OU doesn't apply but trend does (Hurst > 0.55)
+            const hurstNow = ((): number => {
+              const c = closes4ofi.slice(-40);
+              if (c.length < 20) return 0.5;
+              const n = c.length; const hm = c.reduce((a:number,b:number)=>a+b,0)/n;
+              const dev = c.map((x:number)=>x-hm);
+              const cum = dev.map((_:number,i:number)=>dev.slice(0,i+1).reduce((a:number,b:number)=>a+b,0));
+              const R = Math.max(...cum)-Math.min(...cum);
+              const S = Math.sqrt(c.reduce((a:number,b:number)=>a+(b-hm)**2,0)/n)+1e-10;
+              return R>0 ? Math.log(R/S)/Math.log(n) : 0.5;
+            })();
+
+            if (hurstNow > 0.58) {
+              // Trending market — OU doesn't apply, but note the trend direction
+              scanLog.push(`${symbol}: OU_trending_market R²=${ouR2.toFixed(2)} H=${hurstNow.toFixed(2)} — routing to trend mode`);
+              // Don't adjust confidence here — let EMA/ML handle it
+            } else if (hurstNow < 0.42) {
+              // Mean-reverting but OU doesn't fit well — still use z-score weakly
+              scanLog.push(`${symbol}: OU_weak_revert R²=${ouR2.toFixed(2)} H=${hurstNow.toFixed(2)} z=${ouZ.toFixed(2)} — weak signal`);
+              if (Math.abs(ouZ) >= 2.5) {
+                const ouAction = ouZ > 0 ? "SELL" : "BUY";
+                if (ouAction === sig.action) {
+                  sig.confidence = Math.min(95, sig.confidence + 5);
+                  scanLog.push(`${symbol}: OU_extreme_override z=${ouZ.toFixed(2)} conf+=5`);
+                }
+              }
+            } else {
+              // True random walk — skip OU entirely
+              scanLog.push(`${symbol}: OU_random_walk R²=${ouR2.toFixed(2)} H=${hurstNow.toFixed(2)} — no OU edge`);
+            }
           } else {
             // ── Direction signal from z-score ──
             const ouAction = ouZ > 0 ? "SELL" : "BUY"; // above mean=SELL, below=BUY
