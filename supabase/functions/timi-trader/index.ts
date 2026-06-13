@@ -3649,6 +3649,19 @@ function getStrategySignal(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  try {
+    return await handleRequest(req);
+  } catch (err: any) {
+    console.error("🔥 FATAL:", err?.message, err?.stack);
+    return new Response(JSON.stringify({
+      status: "error",
+      error: err?.message || String(err),
+      stack: (err?.stack || "").split("\n").slice(0,5),
+    }), { headers: CORS, status: 200 });
+  }
+});
+
+async function handleRequest(req: Request): Promise<Response> {
 
   // ── News API proxy endpoint ─────────────────────────────────
   const url = new URL(req.url);
@@ -5158,4 +5171,4 @@ Deno.serve(async (req) => {
     scan_log:        scanLog,
     hmm_regimes:     scanLog.filter(l => l.includes("HMM")),
   }), { headers: CORS });
-});
+}
