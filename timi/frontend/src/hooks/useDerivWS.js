@@ -20,7 +20,51 @@ function pGetSync(key, fallback = null) {
   return fallback;
 }
 
-const APP_ID = "36544";
+const APP_ID = "33xokz5qd9oF7SmLaom7n";  // NEW Deriv API app ID (PAT-based)
+const DERIV_API_BASE = "https://api.derivws.com";
+
+// NEW DERIV API (2025): get account IDs from PAT token
+async function fetchDerivAccounts(token) {
+  try {
+    const resp = await fetch(`${DERIV_API_BASE}/trading/v1/options/accounts`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Deriv-App-ID": APP_ID,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!resp.ok) { console.error("fetchDerivAccounts HTTP", resp.status); return null; }
+    const data = await resp.json();
+    const accounts = data.data || [];
+    let real = "", demo = "";
+    for (const a of accounts) {
+      if (a.account_type === "real" && !real) real = a.account_id;
+      if (a.account_type === "demo" && !demo) demo = a.account_id;
+    }
+    return { real, demo, accounts };
+  } catch (e) { console.error("fetchDerivAccounts error", e); return null; }
+}
+
+// Get authenticated WebSocket URL via OTP
+async function fetchDerivWsUrl(token, accountId) {
+  try {
+    const resp = await fetch(
+      `${DERIV_API_BASE}/trading/v1/options/accounts/${accountId}/otp`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Deriv-App-ID": APP_ID,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    if (!resp.ok) { console.error("fetchDerivWsUrl HTTP", resp.status); return null; }
+    const data = await resp.json();
+    return data.data?.url || null;
+  } catch (e) { console.error("fetchDerivWsUrl error", e); return null; }
+}
 const MAX_TRADES = 3;
 // Risk params loaded from localStorage
 function loadRiskParams() {
@@ -857,15 +901,41 @@ export default function useDerivWS({ ai } = {}) {
     return () => clearInterval(pollTimer);
   }, [ai]);
 
-  const connectAccount = (account) => {
+  const connectAccount = async (account) => {
     wsConnections.current[account.id]?.close();
-    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=" + APP_ID);
+
+    // NEW DERIV API (2025): PAT tokens need REST+OTP flow, not authorize message
+    if (!account.token) {
+      setTimiStatus("⚠️ No token configured");
+      return;
+    }
+    setTimiStatus("Authenticating...");
+    const accts = await fetchDerivAccounts(account.token);
+    if (!accts) {
+      setTimiStatus("⚠️ [" + (account.name || "Primary") + "] The token is invalid.");
+      return;
+    }
+    // Use real account if it exists, else demo
+    const acctId = accts.real || accts.demo;
+    if (!acctId) {
+      setTimiStatus("⚠️ No tradeable account found");
+      return;
+    }
+    const wsUrl = await fetchDerivWsUrl(account.token, acctId);
+    if (!wsUrl) {
+      setTimiStatus("⚠️ Could not get WebSocket URL");
+      return;
+    }
+
+    const ws = new WebSocket(wsUrl);
     wsConnections.current[account.id] = ws;
 
     let pingInterval = null;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ authorize: account.token }));
+      // NEW API: OTP URL is pre-authenticated — no authorize message needed
+      // Trigger data loading directly
+      ws.send(JSON.stringify({ balance: 1, account: "current", subscribe: 1 }));
       // Keep WebSocket alive with ping every 30 seconds
       pingInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -873,16 +943,10 @@ export default function useDerivWS({ ai } = {}) {
           console.log("🏓 WebSocket ping sent");
         }
       }, 30000);
-    };
 
-    ws.onmessage = (e) => {
-      const d = JSON.parse(e.data);
-
-      if (d.msg_type === "authorize" && !d.error) {
-        ws.send(JSON.stringify({ balance: 1, account: "current", subscribe: 1 }));
-        if (account.id === "primary") {
-          setTimiStatus("Authorized! Loading data...");
-          const allSyms = activeSymbolsRef.current;
+      if (account.id === "primary") {
+        setTimiStatus("Authorized! Loading data...");
+        const allSyms = activeSymbolsRef.current;
           // Subscribe to ticks for all symbols (lightweight)
           allSyms.forEach((sym, i) => {
             setTimeout(() => {
@@ -918,7 +982,14 @@ export default function useDerivWS({ ai } = {}) {
           };
           // Start loading after tick subscriptions settle
           setTimeout(() => loadBatch(0), 3000);
-        }
+      }
+    };
+
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+
+      if (d.error && !d.error.message?.includes("already subscribed")) {
+        setTimiStatus("⚠️ [" + (account.name || "Primary") + "] " + d.error.message);
       }
 
       if (d.msg_type === "balance" && d.balance) {
