@@ -4953,6 +4953,16 @@ async function handleRequest(req: Request): Promise<Response> {
   const best = correlatedSignals[0];
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
+  // FPT computed here (early) so MT5 signal can carry hold-aligned SL/TP.
+  // Pure function — only needs best + features, all available now.
+  const bestFeats = best.features || new Array(41).fill(0);
+  const fpt = firstPassageTime(
+    [], best.action, best.symbol,
+    bestFeats[27] || 0.003,  // garch_vol
+    bestFeats[29] || 0,      // ou_zscore
+    best.confidence
+  );
+
   // ════════════════════════════════════════════════════════════════
   // MT5-PRIMARY: write MT5 signal + Telegram FIRST, before Deriv logic
   // MT5 is the primary execution target. The signal must reach MT5 and
@@ -4982,6 +4992,7 @@ async function handleRequest(req: Request): Promise<Response> {
       try {
         const { error: _e } = await supabase.from("mt5_signals").insert({
           symbol: _mt5Sym, action: best.action, confidence: best.confidence, status: "pending",
+          sl_pct: fpt.slPct, tp_pct: fpt.tpPct, optimal_hold_mins: best.optimalHoldMins || 5,
         });
         if (_e) console.log(`⚠️  MT5 signal write error: ${_e.message}`);
         else console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${best.action} conf:${best.confidence}%`);
@@ -5009,15 +5020,7 @@ async function handleRequest(req: Request): Promise<Response> {
     } catch(e) { console.log(`Telegram error: ${e}`); }
   }
 
-  // ── FIX 3: Reuse already-fetched features from scan (no double fetch) ──
-  // best.features stored during signal scan below
-  const bestFeats = best.features || new Array(41).fill(0);
-  const fpt = firstPassageTime(
-    [], best.action, best.symbol,
-    bestFeats[27] || 0.003,  // garch_vol
-    bestFeats[29] || 0,      // ou_zscore
-    best.confidence
-  );
+  // (FPT moved up — see top of signal-found block)
 
   const isJumpIdx = best.symbol.startsWith("JD");
   const dynMult = isJumpIdx ? 10 : selectMultiplier(
