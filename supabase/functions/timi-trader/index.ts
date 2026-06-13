@@ -2259,19 +2259,108 @@ function getTradingSession(): { active: boolean; name: string } {
 // ─────────────────────────────────────────────
 // PLACE TRADE
 // ─────────────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// NEW DERIV API (2025) — REST + OTP WebSocket flow
+// Old { authorize: token } no longer works with pat_ tokens
+// New flow: REST call with PAT → get OTP WS URL → connect directly
+// ════════════════════════════════════════════════════════════════
+const DERIV_API_BASE = "https://api.derivws.com";
+const DERIV_APP_ID   = Deno.env.get("DERIV_APP_ID") || "33xokz5qd9oF7SmLaom7n";
+
+// Cache account IDs per token (avoid repeated lookups)
+const _derivAccountCache: Record<string, { real: string; demo: string; ts: number }> = {};
+
+// Get account IDs (real + demo) for a PAT token
+async function getDerivAccounts(token: string): Promise<{ real: string; demo: string } | null> {
+  // Use cache if fresh (5 min)
+  const cached = _derivAccountCache[token];
+  if (cached && Date.now() - cached.ts < 300000) {
+    return { real: cached.real, demo: cached.demo };
+  }
+  try {
+    const resp = await fetch(`${DERIV_API_BASE}/trading/v1/options/accounts`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Deriv-App-ID": DERIV_APP_ID,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!resp.ok) {
+      console.log(`❌ getDerivAccounts HTTP ${resp.status}`);
+      return null;
+    }
+    const data = await resp.json();
+    const accounts = data.data || [];
+    let real = "", demo = "";
+    for (const a of accounts) {
+      if (a.account_type === "real" && !real) real = a.account_id;
+      if (a.account_type === "demo" && !demo) demo = a.account_id;
+    }
+    _derivAccountCache[token] = { real, demo, ts: Date.now() };
+    console.log(`✅ Deriv accounts: real=${real} demo=${demo}`);
+    return { real, demo };
+  } catch (e) {
+    console.log(`❌ getDerivAccounts error: ${e}`);
+    return null;
+  }
+}
+
+// Get an authenticated WebSocket URL via OTP for a given account
+async function getDerivWsUrl(token: string, accountId: string): Promise<string | null> {
+  try {
+    const resp = await fetch(
+      `${DERIV_API_BASE}/trading/v1/options/accounts/${accountId}/otp`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Deriv-App-ID": DERIV_APP_ID,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    if (!resp.ok) {
+      console.log(`❌ getDerivWsUrl HTTP ${resp.status} for ${accountId}`);
+      return null;
+    }
+    const data = await resp.json();
+    return data.data?.url || null;
+  } catch (e) {
+    console.log(`❌ getDerivWsUrl error: ${e}`);
+    return null;
+  }
+}
+
+// Resolve the authenticated WS URL for trading (real account by default)
+// useDemo=true routes to demo account for testing
+async function getTradingWsUrl(token: string, useDemo: boolean = false): Promise<string | null> {
+  const accts = await getDerivAccounts(token);
+  if (!accts) return null;
+  const acctId = useDemo ? accts.demo : accts.real;
+  if (!acctId) {
+    console.log(`❌ No ${useDemo ? "demo" : "real"} account found`);
+    return null;
+  }
+  return await getDerivWsUrl(token, acctId);
+}
+
+
 async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65, dynMultiplier: number = 100, fptTpPct: number = 0, fptSlPct: number = 0) {
+  // NEW DERIV API: get authenticated WS URL via OTP (real account)
+  const wsUrl = await getTradingWsUrl(token, false);
+  if (!wsUrl) {
+    console.log(`❌ placeTrade: could not get authenticated WS URL`);
+    return { error: "auth_failed: could not get OTP WebSocket URL" };
+  }
   return new Promise((resolve) => {
-    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const ws = new WebSocket(wsUrl);
     const timeout = setTimeout(() => { ws.close(); resolve({ error: "timeout" }); }, 25000);
-    let authed = false;
     let contractId: number | null = null;
 
-    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-    ws.onmessage = async (e) => {
-      const d = JSON.parse(e.data);
-
-      if (d.authorize && !authed) {
-        authed = true;
+    // New API: OTP URL is pre-authenticated — fire trade on open
+    ws.onopen = () => {
         let contractType: string;
         if (symbol.startsWith("BOOM"))       contractType = "MULTUP";
         else if (symbol.startsWith("CRASH")) contractType = "MULTDOWN";
@@ -2324,18 +2413,22 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
         if (isMult) {
           ws.send(JSON.stringify({
             buy: 1, price: adjStake,
-            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", symbol, multiplier: dynMultiplier }
+            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", underlying_symbol: symbol, multiplier: dynMultiplier }
           }));
           (ws as any)._tp = takeProfit;
           (ws as any)._sl = stopLoss;
           (ws as any)._adjStake = adjStake;
         } else {
+          (ws as any)._adjStake = adjStake;
           ws.send(JSON.stringify({
             buy: 1, price: adjStake,
-            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", duration: 5, duration_unit: "m", symbol }
+            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", duration: 5, duration_unit: "m", underlying_symbol: symbol }
           }));
         }
-      }
+    };
+
+    ws.onmessage = async (e) => {
+      const d = JSON.parse(e.data);
 
       if (d.buy && !contractId) {
         contractId = d.buy.contract_id;
@@ -2872,10 +2965,10 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
     console.log(`🔄 Checking ${openTrades.length} open trades...`);
 
     // Fetch statement from Deriv
-    const transactions: any[] = await new Promise((resolve) => {
-      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const _wsUrlStmt = await getTradingWsUrl(token, false);
+    const transactions: any[] = _wsUrlStmt ? await new Promise((resolve) => {
+      const ws = new WebSocket(_wsUrlStmt);
       const timeout = setTimeout(() => { ws.close(); resolve([]); }, 20000);
-      let authed = false;
       let allTx: any[] = [];
       let pending = 2;
 
@@ -2888,14 +2981,13 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
         }
       };
 
-      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+      // New API: OTP URL pre-authenticated — send calls directly on open
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ statement: 1, description: 1, limit: 200 }));
+        ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
+      };
       ws.onmessage = (e: any) => {
         const d = JSON.parse(e.data);
-        if (d.authorize && !authed) {
-          authed = true;
-          ws.send(JSON.stringify({ statement: 1, description: 1, limit: 200 }));
-          ws.send(JSON.stringify({ profit_table: 1, description: 1, limit: 100, sort: "DESC" }));
-        }
         if (d.statement) {
           allTx = allTx.concat(d.statement.transactions || []);
           done();
@@ -2907,7 +2999,7 @@ async function updateOpenTradeResults(supabase: any, token: string): Promise<voi
         if (d.error) { done(); }
       };
       ws.onerror = () => { clearTimeout(timeout); resolve([]); };
-    });
+    }) : [];
 
     console.log(`📊 Got ${transactions.length} transactions from Deriv`);
 
@@ -3610,28 +3702,32 @@ Deno.serve(async (req) => {
   const riskPct = cfg.risk_pct || 2;
 
   // ── Auto-sync real balance from Deriv every cycle ──
+  // NEW API: balance comes directly from the accounts REST endpoint
   let balance = cfg.balance_cache || 10;
   try {
-    const realBalance = await new Promise<number>((resolve) => {
-      const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      const t = setTimeout(() => { ws.close(); resolve(balance); }, 8000);
-      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-      ws.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.authorize) {
-          clearTimeout(t); ws.close();
-          resolve(parseFloat(d.authorize.balance || balance));
-        }
-        if (d.error) { clearTimeout(t); ws.close(); resolve(balance); }
-      };
-      ws.onerror = () => { clearTimeout(t); resolve(balance); };
+    const acctResp = await fetch(`${DERIV_API_BASE}/trading/v1/options/accounts`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Deriv-App-ID": DERIV_APP_ID,
+        "Content-Type": "application/json",
+      },
     });
-    if (realBalance > 0 && Math.abs(realBalance - balance) > 0.01) {
-      balance = realBalance;
-      await supabase.from("bot_config")
-        .update({ balance_cache: realBalance })
-        .eq("active", true);
-      console.log(`💰 Balance synced: $${realBalance}`);
+    if (acctResp.ok) {
+      const acctData = await acctResp.json();
+      const accounts = acctData.data || [];
+      // Use the real account balance
+      const realAcct = accounts.find((a: any) => a.account_type === "real");
+      const realBalance = realAcct ? parseFloat(realAcct.balance) : 0;
+      if (realBalance > 0 && Math.abs(realBalance - balance) > 0.01) {
+        balance = realBalance;
+        await supabase.from("bot_config")
+          .update({ balance_cache: realBalance })
+          .eq("active", true);
+        console.log(`💰 Balance synced: $${realBalance}`);
+      }
+    } else {
+      console.log(`⚠️ Balance sync HTTP ${acctResp.status}, using cache: $${balance}`);
     }
   } catch(e) {
     console.log(`⚠️ Balance sync failed, using cache: $${balance}`);
