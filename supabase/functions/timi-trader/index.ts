@@ -2347,7 +2347,7 @@ async function getTradingWsUrl(token: string, useDemo: boolean = false): Promise
 }
 
 
-async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65, dynMultiplier: number = 100, fptTpPct: number = 0, fptSlPct: number = 0) {
+async function placeTrade(token: string, symbol: string, action: string, stake: number, confidence: number = 65, dynMultiplier: number = 100, fptTpPct: number = 0, fptSlPct: number = 0, holdMins: number = 5) {
   // NEW DERIV API: get authenticated WS URL via OTP (real account)
   const wsUrl = await getTradingWsUrl(token, false);
   if (!wsUrl) {
@@ -2422,7 +2422,7 @@ async function placeTrade(token: string, symbol: string, action: string, stake: 
           (ws as any)._adjStake = adjStake;
           ws.send(JSON.stringify({
             buy: 1, price: adjStake,
-            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", duration: 5, duration_unit: "m", underlying_symbol: symbol }
+            parameters: { amount: adjStake, basis: "stake", contract_type: contractType, currency: "USD", duration: Math.max(1, Math.min(60, holdMins)), duration_unit: "m", underlying_symbol: symbol }
           }));
         }
     };
@@ -5064,7 +5064,7 @@ Deno.serve(async (req) => {
   console.log(`💰 Kelly: f*=${kellyFull.toFixed(3)} frac=${kellyFrac.toFixed(3)} OU×${ouMult.toFixed(2)} regime×${regimeMult2.toFixed(2)} garch×${garchMult2.toFixed(2)} combined×${combinedMult.toFixed(2)} → $${finalStakeToUse.toFixed(2)}`);
 
   console.log(`📐 FPT: tpPct=${(fpt.tpPct*100).toFixed(3)}% slPct=${(fpt.slPct*100).toFixed(3)}% winProb=${(fpt.winProb*100).toFixed(1)}% mult:x${dynMult}`);
-  const result: any = await placeTrade(token, best.symbol, best.action, finalStakeToUse, best.confidence, dynMult, fpt.tpPct, fpt.slPct);
+  const result: any = await placeTrade(token, best.symbol, best.action, finalStakeToUse, best.confidence, dynMult, fpt.tpPct, fpt.slPct, best.optimalHoldMins || 5);
   const success = result && !result.error;
 
   // Log trade with extra fields for AI Brain to learn from
