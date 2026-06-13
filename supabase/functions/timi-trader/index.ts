@@ -4940,6 +4940,62 @@ Deno.serve(async (req) => {
   const best = correlatedSignals[0];
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
+  // ════════════════════════════════════════════════════════════════
+  // MT5-PRIMARY: write MT5 signal + Telegram FIRST, before Deriv logic
+  // MT5 is the primary execution target. The signal must reach MT5 and
+  // Telegram regardless of Deriv balance, Kelly sizing, or trade success.
+  // ════════════════════════════════════════════════════════════════
+  {
+    // Deriv → MT5 symbol mapping (full 29-pair coverage)
+    const DERIV_TO_MT5_PRIMARY: Record<string,string> = {
+      "frxEURUSD":"EURUSD","frxGBPUSD":"GBPUSD","frxUSDJPY":"USDJPY","frxAUDUSD":"AUDUSD",
+      "frxUSDCAD":"USDCAD","frxUSDCHF":"USDCHF","frxEURGBP":"EURGBP","frxEURJPY":"EURJPY",
+      "frxGBPJPY":"GBPJPY","frxNZDUSD":"NZDUSD","frxAUDJPY":"AUDJPY",
+      "frxXAUUSD":"XAUUSD","frxXAGUSD":"XAGUSD","cryBTCUSD":"BTCUSD","cryETHUSD":"ETHUSD",
+      "BOOM1000":"Boom 1000 Index","BOOM500":"Boom 500 Index",
+      "CRASH1000":"Crash 1000 Index","CRASH500":"Crash 500 Index",
+      "R_10":"Volatility 10 Index","R_25":"Volatility 25 Index","R_50":"Volatility 50 Index",
+      "R_75":"Volatility 75 Index","R_100":"Volatility 100 Index",
+      "JD10":"Jump 10 Index","JD25":"Jump 25 Index","JD50":"Jump 50 Index",
+      "JD75":"Jump 75 Index","JD100":"Jump 100 Index",
+    };
+    const _mt5Sym = DERIV_TO_MT5_PRIMARY[best.symbol];
+    // Market-hours guard for forex/crypto
+    const _d = new Date().getUTCDay(); const _h = new Date().getUTCHours();
+    const _wknd = _d === 0 || _d === 6;
+    const _fx = best.symbol.startsWith("frx") || best.symbol.startsWith("cry");
+    const _fxClosed = _wknd || (_d === 5 && _h >= 21);
+    if (_mt5Sym && !(_fx && _fxClosed)) {
+      try {
+        const { error: _e } = await supabase.from("mt5_signals").insert({
+          symbol: _mt5Sym, action: best.action, confidence: best.confidence, status: "pending",
+        });
+        if (_e) console.log(`⚠️  MT5 signal write error: ${_e.message}`);
+        else console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${best.action} conf:${best.confidence}%`);
+      } catch(ex) { console.log(`⚠️  MT5 signal exception: ${ex}`); }
+    } else if (_fx && _fxClosed) {
+      console.log(`🕒 MT5 signal skipped — forex/crypto market closed`);
+    }
+
+    // Telegram — send the signal immediately
+    try {
+      const tgToken = cfg.telegram_token; const tgChatId = cfg.telegram_chat_id;
+      if (tgToken && tgChatId) {
+        const optHold = best.optimalHoldMins ? `\nHold: ${best.optimalHoldMins}min` : "";
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId,
+            text: `🤖 TIMI SIGNAL\nSymbol: ${best.symbol}\nAction: ${best.action}\nConfidence: ${best.confidence}%${optHold}`})
+        });
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId, text: `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`})
+        });
+        console.log(`📱 Telegram sent: ${best.symbol} ${best.action} ${best.confidence}%`);
+      }
+    } catch(e) { console.log(`Telegram error: ${e}`); }
+  }
+
   // ── FIX 3: Reuse already-fetched features from scan (no double fetch) ──
   // best.features stored during signal scan below
   const bestFeats = best.features || new Array(41).fill(0);
@@ -5090,85 +5146,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── MT5 Signal Writer ─────────────────────────────────────────────────
-  // Writes to mt5_signals table so MT5 EA can poll and execute on Deriv MT5
-  // EA flow: poll pending → map symbol name → mark executed → confirm on Telegram
-  if (success) {
-    // Deriv → MT5 symbol mapping
-    const DERIV_TO_MT5: Record<string,string> = {
-      // Forex — Deriv MT5 uses standard names
-      "frxEURUSD": "EURUSD",   "frxGBPUSD": "GBPUSD",
-      "frxUSDJPY": "USDJPY",   "frxAUDUSD": "AUDUSD",
-      "frxUSDCAD": "USDCAD",   "frxUSDCHF": "USDCHF",
-      "frxEURGBP": "EURGBP",   "frxEURJPY": "EURJPY",
-      "frxGBPJPY": "GBPJPY",   "frxNZDUSD": "NZDUSD",
-      // Metals — Deriv MT5 uses "Gold Index" not "XAUUSD"
-      "frxXAUUSD": "XAUUSD",
-      "frxXAGUSD": "XAGUSD",
-      // Crypto
-      "cryBTCUSD": "BTCUSD",   "cryETHUSD": "ETHUSD",
-      // Boom & Crash
-      "BOOM1000":  "Boom 1000 Index",
-      "BOOM500":   "Boom 500 Index",
-      "CRASH1000": "Crash 1000 Index",
-      "CRASH500":  "Crash 500 Index",
-      // Volatility indices
-      "R_10":      "Volatility 10 Index",
-      "R_25":      "Volatility 25 Index",
-      "R_50":      "Volatility 50 Index",
-      "R_75":      "Volatility 75 Index",
-      "R_100":     "Volatility 100 Index",
-      // Jump indices
-      "JD10":      "Jump 10 Index",
-      "JD25":      "Jump 25 Index",
-      "JD50":      "Jump 50 Index",
-      "JD75":      "Jump 75 Index",
-      "JD100":     "Jump 100 Index",
-    };
-    const mt5Symbol = DERIV_TO_MT5[best.symbol];
-    // Block forex/gold/crypto MT5 signals when market is closed
-    const _mt5Day  = new Date().getUTCDay();
-    const _mt5Hour = new Date().getUTCHours();
-    const _isWeekend = _mt5Day === 0 || _mt5Day === 6;
-    const _isFxAsset = best.symbol.startsWith("frx") || best.symbol.startsWith("cry");
-    // Forex market hours: Mon 00:00 UTC to Fri 21:00 UTC
-    const _forexClosed = _isWeekend || (_mt5Day === 5 && _mt5Hour >= 21);
-    const _skipMT5 = _isFxAsset && _forexClosed;
-    if (mt5Symbol && !_skipMT5) {
-      try {
-        const { error: mt5Err } = await supabase.from("mt5_signals").insert({
-          symbol:     mt5Symbol,
-          action:     best.action,
-          confidence: best.confidence,
-          status:     "pending",
-        });
-        if (mt5Err) console.log(`⚠️  MT5 signal write error: ${mt5Err.message}`);
-        else console.log(`📡 MT5 signal written: ${mt5Symbol} ${best.action} conf:${best.confidence}%`);
-      } catch(mt5Ex) {
-        console.log(`⚠️  MT5 signal exception: ${mt5Ex}`);
-      }
-    }
-  }
-
-  // Telegram
-  if (success && best) {
-    try {
-      const tgToken  = cfg.telegram_token;
-      const tgChatId = cfg.telegram_chat_id;
-      if (tgToken && tgChatId) {
-        const msg = `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`;
-        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-          method: "POST", headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({chat_id: tgChatId, text: msg})
-        });
-        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-          method: "POST", headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({chat_id: tgChatId, text: `🤖 TIMI\nSymbol: ${best.symbol}\nAction: ${best.action}\nConf: ${best.confidence}%\nStake: $${stake}\nPayout: $${result?.payout||0}`})
-        });
-        console.log(`📱 Telegram: ${msg}`);
-      }
-    } catch(e) { console.log(`Telegram error: ${e}`); }
-  }
 
   return new Response(JSON.stringify({
     status:          success ? "trade_placed" : "trade_failed",
