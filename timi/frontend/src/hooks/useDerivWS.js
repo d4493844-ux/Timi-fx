@@ -935,7 +935,7 @@ export default function useDerivWS({ ai } = {}) {
     ws.onopen = () => {
       // NEW API: OTP URL is pre-authenticated — no authorize message needed
       // Trigger data loading directly
-      ws.send(JSON.stringify({ balance: 1, account: "current", subscribe: 1 }));
+      ws.send(JSON.stringify({ balance: 1, subscribe: 1 }));
       // Keep WebSocket alive with ping every 30 seconds
       pingInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -1103,7 +1103,7 @@ export default function useDerivWS({ ai } = {}) {
           }
           setTimiStatus((pnl > 0 ? "🟢 WIN" : "🔴 LOSS") + " $" + Math.abs(pnl).toFixed(2) + " [" + account.name + "]");
           sendNotification(pnl > 0 ? "🟢 WIN!" : "🔴 LOSS", "$" + Math.abs(pnl).toFixed(2) + " — " + poc.underlying, pnl > 0 ? "win" : "loss");
-          ws.send(JSON.stringify({ balance: 1, account: "current" }));
+          ws.send(JSON.stringify({ balance: 1 }));
         }
       }
 
