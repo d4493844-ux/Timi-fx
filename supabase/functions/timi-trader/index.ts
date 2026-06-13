@@ -3376,6 +3376,185 @@ const REGIME_SIGNAL_PARAMS: Record<string, {
   "WeakDowntrend":{ rsiMultiplier:1.1, ouWeight:0.9, bbWeight:1.0, minConf:78, stakeMultiplier:0.9 },
 };
 
+
+// ── Per-Symbol Strategy Map ───────────────────────────────────────
+// Derived from 60-combination discovery engine (20 strategies × 3 holds)
+// Each pair routes to the methodology that actually fits its market structure
+const SYMBOL_STRATEGY_MAP: Record<string, {
+  strategy: string;    // which signal generator to use
+  holdMins: number;    // optimal contract duration in minutes
+  rsiThresh: number;   // RSI extreme threshold (20 = very extreme)
+  winRate: number;     // backtested win rate (reference only)
+}> = {
+  // BOOM/CRASH — drift structure between spikes (74-90% WR)
+  "BOOM1000":  { strategy:"bb_fade",           holdMins:3,  rsiThresh:20, winRate:90.0 },
+  "CRASH1000": { strategy:"burst_follow",      holdMins:3,  rsiThresh:20, winRate:85.7 },
+  "CRASH500":  { strategy:"spike_drift_rsi",   holdMins:3,  rsiThresh:25, winRate:79.0 },
+  "BOOM500":   { strategy:"burst_follow",      holdMins:3,  rsiThresh:25, winRate:74.3 },
+  // Crypto — RSI extreme fade (64-73% WR)
+  "cryBTCUSD": { strategy:"rsi_extreme_fade",  holdMins:10, rsiThresh:20, winRate:73.2 },
+  "cryETHUSD": { strategy:"hybrid_bot",        holdMins:3,  rsiThresh:30, winRate:64.5 },
+  // Forex majors — various (56-74% WR)
+  "frxXAGUSD": { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:35, winRate:74.1 },
+  "frxXAUUSD": { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:35, winRate:63.6 },
+  "frxEURJPY": { strategy:"hybrid_bot",        holdMins:10, rsiThresh:20, winRate:68.1 },
+  "frxAUDUSD": { strategy:"rsi_extreme_fade",  holdMins:10, rsiThresh:20, winRate:67.4 },
+  "frxGBPJPY": { strategy:"rsi_extreme_fade",  holdMins:5,  rsiThresh:20, winRate:66.7 },
+  "frxAUDJPY": { strategy:"rsi_extreme_fade",  holdMins:10, rsiThresh:20, winRate:65.7 },
+  "frxNZDUSD": { strategy:"rsi_extreme_fade",  holdMins:5,  rsiThresh:20, winRate:64.1 },
+  "frxUSDCAD": { strategy:"bb_breakout",       holdMins:10, rsiThresh:20, winRate:63.9 },
+  "frxEURUSD": { strategy:"bb_fade",           holdMins:5,  rsiThresh:20, winRate:59.8 },
+  "frxUSDCHF": { strategy:"hybrid_bot",        holdMins:5,  rsiThresh:20, winRate:58.5 },
+  "frxEURGBP": { strategy:"rsi_extreme_fade",  holdMins:3,  rsiThresh:20, winRate:57.4 },
+  "frxGBPUSD": { strategy:"kalman_reversal",   holdMins:5,  rsiThresh:20, winRate:56.9 },
+  "frxUSDJPY": { strategy:"ou_momentum",       holdMins:10, rsiThresh:30, winRate:57.0 },
+  // Synthetics (VIX/JD) — OFI and hybrid (57-69% WR)
+  "R_100":     { strategy:"ofi_follow",        holdMins:10, rsiThresh:20, winRate:69.0 },
+  "JD25":      { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:20, winRate:68.3 },
+  "R_10":      { strategy:"hybrid_bot",        holdMins:5,  rsiThresh:35, winRate:61.7 },
+  "JD75":      { strategy:"kalman_reversal",   holdMins:5,  rsiThresh:25, winRate:61.8 },
+  "JD10":      { strategy:"rsi_extreme_fade",  holdMins:10, rsiThresh:20, winRate:59.5 },
+  "R_25":      { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:30, winRate:62.5 },
+  "R_50":      { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:30, winRate:58.1 },
+  "R_75":      { strategy:"garch_calm_revert", holdMins:3,  rsiThresh:35, winRate:57.9 },
+  "JD50":      { strategy:"ofi_follow",        holdMins:5,  rsiThresh:35, winRate:57.1 },
+  "JD100":     { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:30, winRate:57.1 },
+};
+
+// ── Strategy Signal Generators ────────────────────────────────────
+// Each function returns { action: "BUY"|"SELL"|null, conf: number, reason: string }
+function getStrategySignal(
+  strategy: string,
+  candles1m: any[],
+  features: number[],
+  symbol: string,
+): { action: string | null; conf: number; reason: string } {
+  const closes = candles1m.map((c:any) => parseFloat(c.close));
+  const price   = closes[closes.length-1];
+  const rsiVal  = features[2] * 100;  // RSI from features[2]
+  const thresh  = SYMBOL_STRATEGY_MAP[symbol]?.rsiThresh || 30;
+
+  // ── OFI signals ──────────────────────────────────────────────
+  const ofiData = calcOFIEnhanced(candles1m, 20);
+  const bbu_bb = closes.slice(-20); const bbMid = bbu_bb.reduce((a:number,b:number)=>a+b,0)/20;
+  const bbStd  = Math.sqrt(bbu_bb.reduce((s:number,v:number)=>s+(v-bbMid)**2,0)/20);
+  const bbUpper = bbMid + 2*bbStd; const bbLower = bbMid - 2*bbStd;
+
+  switch(strategy) {
+
+    case "rsi_extreme_fade": {
+      // RSI very extreme (<thresh or >100-thresh) + mean reversion
+      if (rsiVal <= thresh) return { action:"BUY",  conf:78, reason:`rsi_extreme_fade RSI=${rsiVal.toFixed(1)}<=${thresh}` };
+      if (rsiVal >= 100-thresh) return { action:"SELL", conf:78, reason:`rsi_extreme_fade RSI=${rsiVal.toFixed(1)}>=${100-thresh}` };
+      return { action:null, conf:0, reason:"rsi_extreme_fade: RSI not extreme" };
+    }
+
+    case "ofi_follow": {
+      // Volume-weighted OFI in clear direction + no divergence
+      if (ofiData.divergence) return { action:null, conf:0, reason:"ofi_follow: divergence present" };
+      if (ofiData.volumeWeighted > 0.68 && ofiData.cumulativeDelta > 0.3)
+        return { action:"BUY",  conf:76, reason:`ofi_follow vwOFI=${ofiData.volumeWeighted.toFixed(2)} Δ=${ofiData.cumulativeDelta.toFixed(2)}` };
+      if (ofiData.volumeWeighted < 0.32 && ofiData.cumulativeDelta < -0.3)
+        return { action:"SELL", conf:76, reason:`ofi_follow vwOFI=${ofiData.volumeWeighted.toFixed(2)} Δ=${ofiData.cumulativeDelta.toFixed(2)}` };
+      return { action:null, conf:0, reason:"ofi_follow: no clear flow direction" };
+    }
+
+    case "ofi_div_fade": {
+      // Price moves one way, volume flow moves the other — fade the price
+      if (!ofiData.divergence) return { action:null, conf:0, reason:"ofi_div_fade: no divergence" };
+      const priceUp = price > closes[closes.length-20];
+      if (priceUp && ofiData.volumeWeighted < 0.45)
+        return { action:"SELL", conf:80, reason:`ofi_div_fade price↑ but flow↓ vwOFI=${ofiData.volumeWeighted.toFixed(2)}` };
+      if (!priceUp && ofiData.volumeWeighted > 0.55)
+        return { action:"BUY",  conf:80, reason:`ofi_div_fade price↓ but flow↑ vwOFI=${ofiData.volumeWeighted.toFixed(2)}` };
+      return { action:null, conf:0, reason:"ofi_div_fade: divergence unclear" };
+    }
+
+    case "bb_fade": {
+      // Price outside BB → snap back inside
+      if (price > bbUpper) return { action:"SELL", conf:76, reason:`bb_fade price ${price.toFixed(4)} > upper ${bbUpper.toFixed(4)}` };
+      if (price < bbLower) return { action:"BUY",  conf:76, reason:`bb_fade price ${price.toFixed(4)} < lower ${bbLower.toFixed(4)}` };
+      return { action:null, conf:0, reason:"bb_fade: price inside bands" };
+    }
+
+    case "bb_breakout": {
+      // Price closes outside BB → momentum continuation
+      const prevPrice = closes[closes.length-2];
+      if (prevPrice <= bbUpper && price > bbUpper)
+        return { action:"BUY",  conf:75, reason:`bb_breakout close above upper=${bbUpper.toFixed(4)}` };
+      if (prevPrice >= bbLower && price < bbLower)
+        return { action:"SELL", conf:75, reason:`bb_breakout close below lower=${bbLower.toFixed(4)}` };
+      return { action:null, conf:0, reason:"bb_breakout: no breakout" };
+    }
+
+    case "burst_follow": {
+      // 3 consecutive same-direction candles → follow momentum
+      const last3 = candles1m.slice(-3);
+      const allBull = last3.every((c:any) => parseFloat(c.close) > parseFloat(c.open));
+      const allBear = last3.every((c:any) => parseFloat(c.close) < parseFloat(c.open));
+      if (allBull) return { action:"BUY",  conf:77, reason:"burst_follow 3 bull candles" };
+      if (allBear) return { action:"SELL", conf:77, reason:"burst_follow 3 bear candles" };
+      return { action:null, conf:0, reason:"burst_follow: no burst" };
+    }
+
+    case "spike_drift_rsi": {
+      // BOOM drifts DOWN between spikes, CRASH drifts UP — with RSI gate
+      const isBoom = symbol.startsWith("BOOM");
+      if (isBoom && rsiVal > 25)  return { action:"SELL", conf:78, reason:`spike_drift_rsi BOOM drift RSI=${rsiVal.toFixed(1)}` };
+      if (!isBoom && rsiVal < 75) return { action:"BUY",  conf:78, reason:`spike_drift_rsi CRASH drift RSI=${rsiVal.toFixed(1)}` };
+      return { action:null, conf:0, reason:"spike_drift_rsi: RSI gate blocked" };
+    }
+
+    case "kalman_reversal": {
+      // Kalman velocity flip = momentum shift signal
+      const kFull = kalmanFull(closes.slice(-50));
+      const velFlip = (kFull.velocity > 0 && features[23] < 0) ||
+                      (kFull.velocity < 0 && features[23] > 0);
+      if (!velFlip) return { action:null, conf:0, reason:"kalman_reversal: no velocity flip" };
+      if (kFull.velocity > 0) return { action:"BUY",  conf:76, reason:`kalman_reversal vel flip +${kFull.velocity.toFixed(5)}` };
+      if (kFull.velocity < 0) return { action:"SELL", conf:76, reason:`kalman_reversal vel flip ${kFull.velocity.toFixed(5)}` };
+      return { action:null, conf:0, reason:"kalman_reversal: no direction" };
+    }
+
+    case "ou_momentum": {
+      // OU stretched + STILL moving away = momentum continuation (not reversion)
+      const ouD = ouFeatures(closes, 100);
+      if (ouD.zscore >= 1.5 && ouD.ouVelocity > 0)
+        return { action:"BUY",  conf:75, reason:`ou_momentum z=${ouD.zscore.toFixed(2)} vel>0 trending` };
+      if (ouD.zscore <= -1.5 && ouD.ouVelocity < 0)
+        return { action:"SELL", conf:75, reason:`ou_momentum z=${ouD.zscore.toFixed(2)} vel<0 trending` };
+      return { action:null, conf:0, reason:"ou_momentum: not stretched+trending" };
+    }
+
+    case "garch_calm_revert": {
+      // Mean revert ONLY in low-volatility regime (GARCH gate)
+      const returns = closes.slice(1).map((v:number,i:number) => (v-closes[i])/(closes[i]+1e-10));
+      const gData = garchFull(returns.slice(-50));
+      if (!gData.isLowVol) return { action:null, conf:0, reason:"garch_calm_revert: vol not low" };
+      if (rsiVal <= thresh) return { action:"BUY",  conf:77, reason:`garch_calm_revert low vol RSI=${rsiVal.toFixed(1)}` };
+      if (rsiVal >= 100-thresh) return { action:"SELL", conf:77, reason:`garch_calm_revert low vol RSI=${rsiVal.toFixed(1)}` };
+      return { action:null, conf:0, reason:"garch_calm_revert: RSI not extreme enough" };
+    }
+
+    case "hybrid_bot":
+    default: {
+      // Original RSI + OU + BB combination (proven baseline)
+      if (rsiVal > thresh && rsiVal < 100-thresh)
+        return { action:null, conf:0, reason:"hybrid_bot: RSI not extreme" };
+      const action = rsiVal <= thresh ? "BUY" : "SELL";
+      let conf = 72;
+      const ouD = ouFeatures(closes, 100);
+      if (ouD.rSquared >= 0.10) {
+        const ouAction = ouD.zscore > 0 ? "SELL" : "BUY";
+        conf += ouAction === action ? 8 : -8;
+      }
+      if (action==="BUY" && price < bbLower) conf += 8;
+      if (action==="SELL" && price > bbUpper) conf += 8;
+      return { action, conf, reason:`hybrid_bot RSI=${rsiVal.toFixed(1)} ${action}` };
+    }
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
@@ -3960,6 +4139,35 @@ Deno.serve(async (req) => {
 
         // Apply regime-based confidence adjustment
         sig.confidence = Math.max(10, Math.min(95, sig.confidence + adaptStrat.confidence_boost));
+
+        // ── Per-Symbol Strategy Override ──────────────────────────────
+        // Use data-driven strategy map instead of generic one-size-fits-all
+        // Each symbol routes to the methodology proven to fit its market structure
+        const symStrategy = SYMBOL_STRATEGY_MAP[symbol];
+        if (symStrategy) {
+          const stratSig = getStrategySignal(symStrategy.strategy, c1m, features, symbol);
+          if (stratSig.action) {
+            // Strategy map has a signal — use it to validate or override ML
+            if (stratSig.action === sig.action) {
+              // ML and strategy agree — strong confluence boost
+              sig.confidence = Math.min(95, sig.confidence + 12);
+              scanLog.push(`${symbol}: STRATEGY_CONFIRM ${symStrategy.strategy} agrees with ML conf+=12`);
+            } else {
+              // ML and strategy disagree — strategy wins (it's data-driven per pair)
+              const prevAction = sig.action;
+              sig.action = stratSig.action;
+              sig.confidence = Math.max(55, stratSig.conf);
+              scanLog.push(`${symbol}: STRATEGY_OVERRIDE ${symStrategy.strategy} overrides ML (${prevAction}→${stratSig.action}) conf=${stratSig.conf}`);
+            }
+            scanLog.push(`${symbol}: ${stratSig.reason}`);
+          } else {
+            // Strategy has no signal — penalize confidence (wrong conditions)
+            sig.confidence = Math.max(10, sig.confidence - 15);
+            scanLog.push(`${symbol}: STRATEGY_NOSIGNAL ${symStrategy.strategy}: ${stratSig.reason} conf-=15`);
+          }
+          // Apply optimal hold duration from strategy map
+          sig.optimalHoldMins = symStrategy.holdMins;
+        }
 
         // ── OU Z-Score Override for VIX/JD ──────────────────────────
         // When z-score > 2.0 → price is 2σ above mean → statistically MUST revert
