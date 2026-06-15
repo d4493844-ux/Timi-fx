@@ -2661,8 +2661,20 @@ function firstPassageTime(
   symbol: string,
   garchVol: number,
   ouZscore: number,
-  confidence: number
+  confidence: number,
+  holdMins: number = 5
 ): { tpPct: number; slPct: number; winProb: number; tpMultiplier: number } {
+
+  // ── HOLD-ALIGNED TP REACHABILITY ──────────────────────────────
+  // The bot's hold time predicts when the move dies. Observed: price
+  // peaks at ~80-85% of the hold (2-2.5min on a 3min call, 8-9.5min on
+  // a 10min call), then reverts. So TP must sit where price actually
+  // reaches WITHIN the hold — not at open-ended volatility distance.
+  // Expected travel scales with sqrt(time) (random-walk / first-passage).
+  // tpPct = perMinuteVol * sqrt(holdMins) * REACH_FACTOR
+  // REACH_FACTOR < 1 targets the peak zone so TP is hit before reversion.
+  const REACH_FACTOR = 0.55;   // tunable: lower = nearer TP, hit more often
+  const holdScale = Math.sqrt(Math.max(1, holdMins)) * REACH_FACTOR;
 
   // Known synthetic volatility per symbol (Deriv specification)
   const KNOWN_VOL: Record<string, number> = {
@@ -2704,24 +2716,23 @@ function firstPassageTime(
   // Use OU-based TP if it gives better R:R than vol-based TP
   // Vol-based: tpPct = adjVol * 1.5
   // OU-based:  tpPct = distance to mean
-  let tpPct = adjVol * 1.5;
-  if (ouTPPct > 0 && ouTPPct < adjVol * 4) {
-    // OU target is reasonable — use weighted average
-    tpPct = ouTPPct * 0.6 + adjVol * 1.5 * 0.4;
+  // Base TP = expected travel within the hold window (sqrt-time scaled).
+  let tpPct = adjVol * holdScale;
+
+  // If OU gives a nearer mean-reversion target inside the window, prefer
+  // the closer one — a nearer TP is hit more reliably before reversion.
+  if (ouTPPct > 0 && ouTPPct < tpPct) {
+    tpPct = ouTPPct * 0.7 + tpPct * 0.3;
   }
 
-  // For mean reversion trades (OU zscore extreme) — tighter TP
-  // Price will snap back quickly
+  // Mean-reversion extreme — snap-back is fast, keep TP tight.
   if (Math.abs(ouZscore) > 1.5) {
     tpPct = Math.min(tpPct, reversionPull * 2);
   }
 
-  // For trend-following trades — wider TP to catch the full move
-  if (confidence >= 85) {
-    tpPct = adjVol * 3.0;  // let strong trends run
-  } else if (confidence >= 75) {
-    tpPct = adjVol * 2.0;
-  }
+  // NOTE: confidence no longer WIDENS the TP. High-confidence signals
+  // still have the same hold window, so a far TP just misses. Confidence
+  // instead nudges the SL ratio (handled below), not the reach distance.
 
   // SL multiplier from diagnostic data:
   // BOOM/CRASH: SL=1.5×ATR (65-74% of losses were SL clips at 1×ATR)
@@ -4185,7 +4196,8 @@ async function handleRequest(req: Request): Promise<Response> {
           [], sig.action, symbol,
           features[27] || 0.003,  // garch_vol
           features[29] || 0,      // ou_zscore
-          sig.confidence
+          sig.confidence,
+          sig.optimalHoldMins || 5   // hold-aligned TP reachability
         );
 
         // ── STEP 6: TRUE Bayesian Win Probability ──
@@ -4960,7 +4972,8 @@ async function handleRequest(req: Request): Promise<Response> {
     [], best.action, best.symbol,
     bestFeats[27] || 0.003,  // garch_vol
     bestFeats[29] || 0,      // ou_zscore
-    best.confidence
+    best.confidence,
+    best.optimalHoldMins || 5   // hold-aligned TP reachability
   );
 
   // ════════════════════════════════════════════════════════════════
