@@ -4963,6 +4963,23 @@ async function handleRequest(req: Request): Promise<Response> {
     return b.confidence - a.confidence;
   });
   const best = correlatedSignals[0];
+
+  // ══ ABSOLUTE FINAL DIRECTION LOCK (spike safety) ══════════════════
+  // Boom indices ONLY spike UP  → a SELL bets against the spike = ruin.
+  // Crash indices ONLY spike DOWN → a BUY bets against the spike = ruin.
+  // Upstream strategy routers (e.g. spike_drift_rsi) can emit the wrong
+  // direction; earlier guards ran too early and got re-flipped. This is
+  // the last statement before the MT5 signal is written — nothing after
+  // it can change best.action, so this is the authoritative lock.
+  if (best.symbol.startsWith("BOOM") && best.action === "SELL") {
+    console.log(`🔒 FINAL LOCK: ${best.symbol} SELL→BUY (Boom spikes up only)`);
+    best.action = "BUY";
+  }
+  if (best.symbol.startsWith("CRASH") && best.action === "BUY") {
+    console.log(`🔒 FINAL LOCK: ${best.symbol} BUY→SELL (Crash spikes down only)`);
+    best.action = "SELL";
+  }
+
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
 
   // FPT computed here (early) so MT5 signal can carry hold-aligned SL/TP.
