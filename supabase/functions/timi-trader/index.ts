@@ -4194,6 +4194,29 @@ async function handleRequest(req: Request): Promise<Response> {
           scanLog.push(`${symbol}: ML→HOLD (${sig.reason})`); continue;
         }
 
+        // ── SPIKE-CAPTURE TIMING GATE (Boom BUY / Crash SELL) ──────────
+        // The spike-direction trade only pays if the spike is DUE. Entering
+        // mid-cycle (the dead zone) is the source of late-entry losses.
+        // Boom spike = UP  → BUY  is the capture trade → needs overdue.
+        // Crash spike = DOWN → SELL is the capture trade → needs overdue.
+        // The DRIFT trade (Boom SELL / Crash BUY) rides between spikes and
+        // does NOT need this gate — it keeps the loose entry.
+        {
+          const _sm = (globalThis as any)[`${symbol}_spike_meta`];
+          if (_sm && typeof _sm.overdueRatio === "number") {
+            const _isCapture =
+              (symbol.startsWith("BOOM")  && sig.action === "BUY") ||
+              (symbol.startsWith("CRASH") && sig.action === "SELL");
+            if (_isCapture && _sm.overdueRatio < 0.85) {
+              scanLog.push(`${symbol}: spike_capture_blocked — ${sig.action} but spike not due (ratio ${_sm.overdueRatio.toFixed(2)}<0.85) — avoiding late entry`);
+              continue;
+            }
+            if (_isCapture) {
+              scanLog.push(`${symbol}: spike_capture_OK — ${sig.action} in overdue window (ratio ${_sm.overdueRatio.toFixed(2)})`);
+            }
+          }
+        }
+
         // ── STEP 4: HMM direction alignment ──
         // Only allow signal if it matches HMM regime direction
         // Exception: weak trends allow both directions if confidence is very high
