@@ -4282,18 +4282,10 @@ async function handleRequest(req: Request): Promise<Response> {
           bayesian_rec: bayesian.recommendation,
           bayesian_factors: bayesian.factors };
 
-        // ── BOOM/CRASH direction lock (ML path) ─────────────────────────
-        // CRASH = always SELL, BOOM = always BUY — no exceptions
-        if (symbol.startsWith("CRASH") && sig.action === "BUY") {
-          console.log(`🔒 ${symbol}: ML said BUY but CRASH must SELL — forcing SELL`);
-          sig.action = "SELL";
-          sig.reason = sig.reason + " [direction_corrected]";
-        }
-        if (symbol.startsWith("BOOM") && sig.action === "SELL") {
-          console.log(`🔒 ${symbol}: ML said SELL but BOOM must BUY — forcing BUY`);
-          sig.action = "BUY";
-          sig.reason = sig.reason + " [direction_corrected]";
-        }
+        // ── Boom/Crash direction: NO forced flip. ───────────────────────
+        // Both drift (Boom SELL / Crash BUY) and spike-capture (Boom BUY /
+        // Crash SELL) are valid. Direction comes from the strategy/ML; risk
+        // is handled by capped SL + the spike-capture timing gate above.
 
         // ── OFI + Rough Volatility + Regime Adaptive ──────────────────
         const closes4ofi = c1m.map((x: any) => parseFloat(x.close));
@@ -4949,18 +4941,7 @@ async function handleRequest(req: Request): Promise<Response> {
           }
         }
 
-        // ── BOOM/CRASH direction lock ──────────────────────────────────
-        // CRASH indices ONLY spike DOWN → always SELL (MULTDOWN profits)
-        // BOOM indices ONLY spike UP   → always BUY  (MULTUP profits)
-        // Any opposite signal = wrong direction = block immediately
-        if (symbol.startsWith("CRASH") && sig.action === "BUY") {
-          scanLog.push(`${symbol}: direction_locked — CRASH must SELL only (got BUY)`);
-          sig.action = "SELL"; // force correct direction
-        }
-        if (symbol.startsWith("BOOM") && sig.action === "SELL") {
-          scanLog.push(`${symbol}: direction_locked — BOOM must BUY only (got SELL)`);
-          sig.action = "BUY"; // force correct direction
-        }
+        // ── Boom/Crash direction: NO forced flip (see note above). ──────
 
         // Fallback also respects HMM
         if (regime.allowedAction !== "NONE" && regime.allowedAction !== "ANY" &&
