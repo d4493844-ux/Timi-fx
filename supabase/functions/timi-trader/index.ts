@@ -2749,8 +2749,15 @@ function firstPassageTime(
   let slMult: number;
   let finalTpPct: number;
   if (isBoomCrashSymbol) {
-    slMult = 0.7;                              // tight SL — cap the spike
-    finalTpPct = tpPct;                        // near TP — do NOT inflate
+    // TP is left UNCHANGED for both directions (user-confirmed: manageable
+    // profit over chasing bigger wins that reverse before TP).
+    finalTpPct = tpPct;
+    // SELL = drift scalp → 0.7 SL works well live (consistently profitable).
+    // BUY  = spike capture → loses frequently/small, wins occasionally big.
+    //        Tighter SL (0.45) cuts the frequent small losses faster so the
+    //        occasional wins net ahead. TP untouched. Tune 0.45 live if it
+    //        stops out too often before the spike fires.
+    slMult = (action === "BUY") ? 0.45 : 0.7;
   } else {
     slMult = isVIXSymbol ? 0.4 : 0.5;
     // Non-spike symbols keep the min 2:1 TP/SL protection.
