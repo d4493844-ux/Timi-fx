@@ -3621,10 +3621,29 @@ function getStrategySignal(
     }
 
     case "spike_drift_rsi": {
-      // BOOM drifts DOWN between spikes, CRASH drifts UP — with RSI gate
+      // BOOM drifts DOWN between spikes, CRASH drifts UP — with RSI gate.
+      // CRITICAL FIX: the OLD code SELL'd Boom on RSI>25 alone (true ~95% of
+      // the time) with NO check that price was actually drifting down. That
+      // fired SELLs straight into Boom UP-runs and took large losses. Now we
+      // CONFIRM the drift premise: only SELL Boom when price is genuinely
+      // drifting down/flat, only BUY Crash when drifting up/flat. Selling
+      // into a rising market is exactly the trade that must be refused.
       const isBoom = symbol.startsWith("BOOM");
-      if (isBoom && rsiVal > 25)  return { action:"SELL", conf:78, reason:`spike_drift_rsi BOOM drift RSI=${rsiVal.toFixed(1)}` };
-      if (!isBoom && rsiVal < 75) return { action:"BUY",  conf:78, reason:`spike_drift_rsi CRASH drift RSI=${rsiVal.toFixed(1)}` };
+      const _recent = closes.slice(-5);
+      const _now    = _recent[_recent.length - 1];
+      const _then   = _recent[0];
+      const _driftingDown = _now <= _then;   // price not rising over last 5 bars
+      const _driftingUp   = _now >= _then;   // price not falling over last 5 bars
+      if (isBoom && rsiVal > 25) {
+        if (!_driftingDown)
+          return { action:null, conf:0, reason:`spike_drift_rsi BOOM blocked — price rising (no down-drift), refuse SELL into strength` };
+        return { action:"SELL", conf:78, reason:`spike_drift_rsi BOOM drift-down RSI=${rsiVal.toFixed(1)}` };
+      }
+      if (!isBoom && rsiVal < 75) {
+        if (!_driftingUp)
+          return { action:null, conf:0, reason:`spike_drift_rsi CRASH blocked — price falling (no up-drift), refuse BUY into weakness` };
+        return { action:"BUY", conf:78, reason:`spike_drift_rsi CRASH drift-up RSI=${rsiVal.toFixed(1)}` };
+      }
       return { action:null, conf:0, reason:"spike_drift_rsi: RSI gate blocked" };
     }
 
