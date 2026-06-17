@@ -2757,7 +2757,8 @@ function firstPassageTime(
     //        Tighter SL (0.45) cuts the frequent small losses faster so the
     //        occasional wins net ahead. TP untouched. Tune 0.45 live if it
     //        stops out too often before the spike fires.
-    slMult = (action === "BUY") ? 0.45 : 0.7;
+    // v-fix: SELL SL tightened 0.7→0.4 — smaller loss when a spike gaps it.
+    slMult = (action === "BUY") ? 0.45 : 0.4;
   } else {
     slMult = isVIXSymbol ? 0.4 : 0.5;
     // Non-spike symbols keep the min 2:1 TP/SL protection.
@@ -3629,11 +3630,25 @@ function getStrategySignal(
       // drifting down/flat, only BUY Crash when drifting up/flat. Selling
       // into a rising market is exactly the trade that must be refused.
       const isBoom = symbol.startsWith("BOOM");
-      const _recent = closes.slice(-5);
-      const _now    = _recent[_recent.length - 1];
-      const _then   = _recent[0];
-      const _driftingDown = _now <= _then;   // price not rising over last 5 bars
-      const _driftingUp   = _now >= _then;   // price not falling over last 5 bars
+      // STRICT anti-rising guard: refuse the SELL unless price is clearly
+      // NOT rising on BOTH a short (3-bar) and medium (10-bar) view, AND the
+      // most recent bar isn't green. "Obvious buy" moments (price climbing)
+      // must never produce a SELL — that was the core loss.
+      const _c = closes;
+      const _last = _c[_c.length - 1];
+      const _3ago = _c[_c.length - 4] || _last;
+      const _10ago = _c[_c.length - 11] || _last;
+      const _prev = _c[_c.length - 2] || _last;
+      const _shortRising = _last > _3ago;
+      const _medRising   = _last > _10ago;
+      const _barGreen    = _last > _prev;
+      // drift DOWN only if NOT rising on short or med, and last bar not green
+      const _driftingDown = !_shortRising && !_medRising && !_barGreen;
+      // drift UP (for Crash BUY) is the mirror
+      const _shortFalling = _last < _3ago;
+      const _medFalling   = _last < _10ago;
+      const _barRed       = _last < _prev;
+      const _driftingUp   = !_shortFalling && !_medFalling && !_barRed;
       if (isBoom && rsiVal > 25) {
         if (!_driftingDown)
           return { action:null, conf:0, reason:`spike_drift_rsi BOOM blocked — price rising (no down-drift), refuse SELL into strength` };
