@@ -5090,7 +5090,7 @@ async function handleRequest(req: Request): Promise<Response> {
   const ouMult = best.ouStakeMult || 1.0;
 
   // Balance-based Kelly stake
-  const balanceNow = await getBalance(token);
+  const balanceNow = balance;  // FIX: getBalance() removed in Deriv migration; reuse balance from bot_config/account sync (line ~3750)
   const kellyStake = kellyFrac > 0
     ? Math.max(cfg.minStake || 1, Math.min(
         cfg.maxStake || 50,
