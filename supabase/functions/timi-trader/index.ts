@@ -2739,12 +2739,25 @@ function firstPassageTime(
   // Others: SL=1.0×ATR (standard 2:1 RR)
   const isBoomCrashSymbol = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
   const isVIXSymbol = symbol.startsWith("R_") || symbol.startsWith("1HZ") || symbol.startsWith("JD");
-  // VIX tight SL = 0.4x TP → 2.5:1 ratio (backtested: avg loss was bigger than avg win)
-  // BOOM/CRASH wider SL = 1.5x TP (spike volatility needs room)
-  const slMult = isBoomCrashSymbol ? 1.5 : isVIXSymbol ? 0.4 : 0.5;
-  const rawSlPct = Math.min(tpPct * slMult, 0.90);
-  // Enforce minimum 2:1 TP/SL — never trade with worse ratio
-  const finalTpPct = tpPct < rawSlPct * 2.0 ? rawSlPct * 2.0 : tpPct;
+
+  // ── BOOM/CRASH DRIFT PROFILE (capped-loss SELL) ──────────────────
+  // The drift strategy wins small & often; the danger is the spike.
+  // So we CAP the loss with a TIGHT SL (smaller than TP), and we do NOT
+  // inflate the TP — the TP stays near so the drift reaches it fast.
+  // slMult 0.7 → SL = 0.7×TP, i.e. loss target SMALLER than win target.
+  // This inverts the old 1.5 (which made losses bigger than wins).
+  let slMult: number;
+  let finalTpPct: number;
+  if (isBoomCrashSymbol) {
+    slMult = 0.7;                              // tight SL — cap the spike
+    finalTpPct = tpPct;                        // near TP — do NOT inflate
+  } else {
+    slMult = isVIXSymbol ? 0.4 : 0.5;
+    // Non-spike symbols keep the min 2:1 TP/SL protection.
+    const rawTmp = Math.min(tpPct * slMult, 0.90);
+    finalTpPct = tpPct < rawTmp * 2.0 ? rawTmp * 2.0 : tpPct;
+  }
+  const rawSlPct = Math.min(finalTpPct * slMult, 0.90);
   const slPct = rawSlPct;
 
   // Calculate actual win probability
@@ -4964,20 +4977,12 @@ async function handleRequest(req: Request): Promise<Response> {
   });
   const best = correlatedSignals[0];
 
-  // ══ ABSOLUTE FINAL DIRECTION LOCK (spike safety) ══════════════════
-  // Boom indices ONLY spike UP  → a SELL bets against the spike = ruin.
-  // Crash indices ONLY spike DOWN → a BUY bets against the spike = ruin.
-  // Upstream strategy routers (e.g. spike_drift_rsi) can emit the wrong
-  // direction; earlier guards ran too early and got re-flipped. This is
-  // the last statement before the MT5 signal is written — nothing after
-  // it can change best.action, so this is the authoritative lock.
-  if (best.symbol.startsWith("BOOM") && best.action === "SELL") {
-    console.log(`🔒 FINAL LOCK: ${best.symbol} SELL→BUY (Boom spikes up only)`);
-    best.action = "BUY";
-  }
-  if (best.symbol.startsWith("CRASH") && best.action === "BUY") {
-    console.log(`🔒 FINAL LOCK: ${best.symbol} BUY→SELL (Crash spikes down only)`);
-    best.action = "SELL";
+  // ── Boom/Crash: SELL drift is allowed again (it was profitable). ──
+  // The spike risk is controlled by a TIGHT capped SL on these symbols
+  // (see firstPassageTime Boom/Crash branch) rather than by blocking SELL.
+  // We only log the direction; we do NOT flip it.
+  if (best.symbol.startsWith("BOOM") || best.symbol.startsWith("CRASH")) {
+    console.log(`📊 ${best.symbol} ${best.action} — spike-capped SL active`);
   }
 
   console.log(`🎯 Best: ${best.symbol} ${best.action} ${best.confidence}% HMM:${best.regime || "n/a"} (ML:${best.is_ml})`);
