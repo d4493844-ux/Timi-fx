@@ -4244,12 +4244,22 @@ async function handleRequest(req: Request): Promise<Response> {
             const _isCapture =
               (symbol.startsWith("BOOM")  && sig.action === "BUY") ||
               (symbol.startsWith("CRASH") && sig.action === "SELL");
-            if (_isCapture && _sm.overdueRatio < 0.85) {
-              scanLog.push(`${symbol}: spike_capture_blocked — ${sig.action} but spike not due (ratio ${_sm.overdueRatio.toFixed(2)}<0.85) — avoiding late entry`);
+            // BUY (Boom) / SELL (Crash) fires if EITHER:
+            //  (a) spike reasonably due: overdueRatio >= 0.55 (loosened from
+            //      0.85 — was starving us of BUYs), OR
+            //  (b) a strong pre-spike pattern is already forming
+            //      (compressionScore high) — catch the burst regardless of
+            //      timing, so big up-moves aren't missed.
+            const _GATE = 0.55;
+            const _overdueEnough = _sm.overdueRatio >= _GATE;
+            const _burstForming  = (_sm.compressionScore || 0) > 0.30;
+            if (_isCapture && !_overdueEnough && !_burstForming) {
+              scanLog.push(`${symbol}: spike_capture_blocked — ${sig.action} (ratio ${_sm.overdueRatio.toFixed(2)}<${_GATE}, compress ${((_sm.compressionScore||0)*100).toFixed(0)}%) — not due, no burst`);
               continue;
             }
             if (_isCapture) {
-              scanLog.push(`${symbol}: spike_capture_OK — ${sig.action} in overdue window (ratio ${_sm.overdueRatio.toFixed(2)})`);
+              const _why = _overdueEnough ? `overdue ${_sm.overdueRatio.toFixed(2)}` : `burst compress ${((_sm.compressionScore||0)*100).toFixed(0)}%`;
+              scanLog.push(`${symbol}: spike_capture_OK — ${sig.action} (${_why})`);
             }
           }
         }
