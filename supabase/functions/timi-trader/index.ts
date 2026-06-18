@@ -2761,7 +2761,11 @@ function firstPassageTime(
     // stop, so the closer the stop sits, the less the gap costs. Tradeoff:
     // more frequent small stop-outs on normal drift wiggle, but the rare
     // spike loss is bounded much tighter (no more 5× wipeouts).
-    slMult = (action === "BUY") ? 0.45 : 0.25;
+    // SELL SL loosened 0.25→0.6: the v9 EA hedge-lock now carries spike
+    // protection, so the SL no longer needs to be brutally tight (which
+    // over-stopped on normal drift wiggle). SL's job is now ordinary risk
+    // control; the hedge handles the spike.
+    slMult = (action === "BUY") ? 0.45 : 0.6;
   } else {
     slMult = isVIXSymbol ? 0.4 : 0.5;
     // Non-spike symbols keep the min 2:1 TP/SL protection.
