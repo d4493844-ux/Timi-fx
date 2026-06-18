@@ -2757,8 +2757,11 @@ function firstPassageTime(
     //        Tighter SL (0.45) cuts the frequent small losses faster so the
     //        occasional wins net ahead. TP untouched. Tune 0.45 live if it
     //        stops out too often before the spike fires.
-    // v-fix: SELL SL tightened 0.7→0.4 — smaller loss when a spike gaps it.
-    slMult = (action === "BUY") ? 0.45 : 0.4;
+    // v-fix: SELL SL tightened hard to 0.25×TP — a mid-trade spike gaps the
+    // stop, so the closer the stop sits, the less the gap costs. Tradeoff:
+    // more frequent small stop-outs on normal drift wiggle, but the rare
+    // spike loss is bounded much tighter (no more 5× wipeouts).
+    slMult = (action === "BUY") ? 0.45 : 0.25;
   } else {
     slMult = isVIXSymbol ? 0.4 : 0.5;
     // Non-spike symbols keep the min 2:1 TP/SL protection.
