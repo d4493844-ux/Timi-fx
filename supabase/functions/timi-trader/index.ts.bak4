@@ -5521,8 +5521,8 @@ async function handleRequest(req: Request): Promise<Response> {
     if (!dcfg || !dcfg.auto_trade) return new Response(JSON.stringify({ status:"disabled" }), { headers: CORS });
     const dtoken = dcfg.token;
     let dbal = dcfg.balance_cache || 10;
-    const origin = "https://pedbupgjxlcumidwoktc.supabase.co/functions/v1/timi-trader";
-    const auth = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMjc0NTIsImV4cCI6MjA4NzkwMzQ1Mn0.lscyzf9JN82ZihHLD0VC4broyMMfm7WL9MIvXRmwZG8";
+    const origin = `${url.protocol}//${url.host}${url.pathname}`;
+    const auth = req.headers.get("apikey") || req.headers.get("authorization") || "";
     async function getSignal(action){
       try {
         const r = await fetch(`${origin}?action=${action}`, { headers: { apikey: auth, Authorization: `Bearer ${auth}` } });

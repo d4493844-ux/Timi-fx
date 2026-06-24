@@ -5511,69 +5511,6 @@ async function handleRequest(req: Request): Promise<Response> {
     return new Response(JSON.stringify(payload, null, 2), { headers: { "Content-Type":"application/json" } });
   }
 
-  if (url.searchParams.get("action") === "daily_run") {
-    const BASE_RISK_PCT = 1.5;
-    const MAX_TOTAL_PCT = 5.0;
-    const CRYPTO = { cryBTCUSD:"BTCUSDT", cryDOGEUSD:"DOGEUSDT", cryBCHUSD:"BCHUSDT", cryLINKUSD:"LINKUSDT", cryTRXUSD:"TRXUSDT" };
-    const CARRY  = ["frxAUDJPY","frxUSDJPY","frxGBPJPY","frxCADJPY","frxNZDJPY"];
-    const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
-    const { data: dcfg } = await sb.from("bot_config").select("*").eq("active", true).single();
-    if (!dcfg || !dcfg.auto_trade) return new Response(JSON.stringify({ status:"disabled" }), { headers: CORS });
-    const dtoken = dcfg.token;
-    let dbal = dcfg.balance_cache || 10;
-    const origin = "https://pedbupgjxlcumidwoktc.supabase.co/functions/v1/timi-trader";
-    const auth = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMjc0NTIsImV4cCI6MjA4NzkwMzQ1Mn0.lscyzf9JN82ZihHLD0VC4broyMMfm7WL9MIvXRmwZG8";
-    async function getSignal(action){
-      try {
-        const r = await fetch(`${origin}?action=${action}`, { headers: { apikey: auth, Authorization: `Bearer ${auth}` } });
-        return await r.json();
-      } catch(e){ return { error:String(e) }; }
-    }
-    const book  = await getSignal("book_signal");
-    const carry = await getSignal("carry_signal");
-    const cryptoBudget = dbal * (BASE_RISK_PCT/100);
-    const carryBudget  = dbal * (BASE_RISK_PCT/100);
-    const maxTotal     = dbal * (MAX_TOTAL_PCT/100);
-    let deployed = 0;
-    const plans = [];
-    if (book && book.legs){
-      const wt = book.bookWeight || 0.2;
-      for (const leg of book.legs){
-        const derivSym = Object.keys(CRYPTO).find((k)=>CRYPTO[k]===leg.sym);
-        if (!derivSym || leg.error) continue;
-        const exp = leg.targetExposure || 0;
-        const action = exp>0 ? "BUY" : exp<0 ? "SELL" : "FLAT";
-        let stake = cryptoBudget * wt * Math.abs(exp);
-        plans.push({ symbol:derivSym, action, stake, book:"crypto", exposure:exp });
-      }
-    }
-    if (carry && carry.legs){
-      const wt = 0.2, mult = carry.basketSizeMult || 0;
-      for (const leg of carry.legs){
-        if (leg.error || !CARRY.includes(leg.sym)) continue;
-        let stake = carryBudget * wt * Math.min(1, mult/3);
-        plans.push({ symbol:leg.sym, action:"BUY", stake, book:"carry", exposure:1 });
-      }
-    }
-    const results = [];
-    for (const p of plans){
-      if (p.action === "FLAT") { results.push({ ...p, executed:false, reason:"flat" }); continue; }
-      if (deployed + p.stake > maxTotal) { results.push({ ...p, executed:false, reason:"max_total_cap" }); continue; }
-      const stakeClamped = Math.min(9, Math.max(1, p.stake));
-      try {
-        const r = await placeTrade(dtoken, p.symbol, p.action, stakeClamped, 65, 100, 0, 0, 1440);
-        const ok = r && !r.error;
-        if (ok) deployed += stakeClamped;
-        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "placed" : (r && r.error) });
-      } catch(e){ results.push({ ...p, executed:false, result:String(e) }); }
-    }
-    const payload = { ts:new Date().toISOString(), runner:"daily_validated_10", balance:dbal,
-                      cryptoBudget:+cryptoBudget.toFixed(2), carryBudget:+carryBudget.toFixed(2),
-                      maxTotal:+maxTotal.toFixed(2), deployed:+deployed.toFixed(2), results };
-    try { await sb.from("signal_log").insert({ created_at: payload.ts, strategy:"daily_validated_10", payload }); } catch(_e){}
-    return new Response(JSON.stringify(payload, null, 2), { headers: { ...CORS, "Content-Type":"application/json" } });
-  }
-
   const supabase  = createClient(SUPABASE_URL, SUPABASE_KEY);
   const { data: cfg } = await supabase.from("bot_config").select("*").eq("active", true).single();
   if (!cfg || !cfg.auto_trade) return new Response(JSON.stringify({ status: "disabled" }), { headers: CORS });
