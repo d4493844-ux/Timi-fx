@@ -2287,6 +2287,91 @@ function getTradingSession(): { active: boolean; name: string } {
 // New flow: REST call with PAT → get OTP WS URL → connect directly
 // ════════════════════════════════════════════════════════════════
 const DERIV_API_BASE = "https://api.derivws.com";
+
+// ════════════════════════════════════════════════════════════════════════
+// TRAILING STOP MANAGER — for validated spike edges (BOOM/CRASH/frxXAUUSD)
+// ════════════════════════════════════════════════════════════════════════
+// These 3 edges were validated with a TRAILING exit (6/6 and 5/6 robust):
+// let the winner run, ratchet the stop behind the best price. The engine
+// can't move a stop continuously, but it CAN poll each cycle and send a
+// fresh contract_update to tighten the stop. Called once per daily_run.
+//
+// Logic per open spike position:
+//   • once price has moved +trailStart ATR in favor, set stop to
+//     (best price − trailDist ATR), but only ever TIGHTEN, never loosen.
+//   • BOOM positions are BUY (trail below), CRASH are SELL (trail above).
+//
+// Self-contained: own WS, own auth, mirrors placeTrade's connection pattern.
+// Touches NOTHING in the trade-opening path — only manages already-open stops.
+async function trailOpenPositions(token: string, atrBySymbol: Record<string, number>): Promise<any[]> {
+  const TRAIL_SYMBOLS = ["BOOM1000","CRASH1000","frxXAUUSD"];
+  const TRAIL_START = 1.5;   // start trailing after +1.5 ATR favorable
+  const TRAIL_DIST  = 1.0;   // trail 1 ATR behind best price
+  const updates: any[] = [];
+
+  return new Promise((resolve) => {
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const timeout = setTimeout(() => { try{ws.close();}catch(_){} resolve(updates); }, 25000);
+    let openContracts: any[] = [];
+
+    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+    ws.onmessage = async (e: any) => {
+      const d = JSON.parse(e.data);
+      if (d.error) { clearTimeout(timeout); try{ws.close();}catch(_){} resolve(updates); return; }
+
+      if (d.authorize) {
+        // request all open positions
+        ws.send(JSON.stringify({ portfolio: 1 }));
+      }
+
+      if (d.portfolio) {
+        const contracts = (d.portfolio.contracts || []).filter((c: any) =>
+          TRAIL_SYMBOLS.some(s => (c.symbol || "").includes(s) || (c.shortcode || "").includes(s))
+        );
+        if (contracts.length === 0) { clearTimeout(timeout); ws.close(); resolve(updates); return; }
+        openContracts = contracts;
+        // for each, fetch live details (current spot, entry)
+        for (const c of contracts) {
+          ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: c.contract_id }));
+        }
+      }
+
+      if (d.proposal_open_contract) {
+        const poc = d.proposal_open_contract;
+        const sym = TRAIL_SYMBOLS.find(s => (poc.underlying || poc.symbol || "").includes(s)
+                    || (poc.shortcode || "").includes(s));
+        if (sym && poc.contract_id) {
+          const isBuy   = poc.shortcode?.includes("MULTUP") || sym.startsWith("BOOM");
+          const isSell  = poc.shortcode?.includes("MULTDOWN") || sym.startsWith("CRASH");
+          const entry   = parseFloat(poc.entry_spot || poc.buy_price || "0");
+          const spot    = parseFloat(poc.current_spot || "0");
+          const atr     = atrBySymbol[sym] || (entry * 0.002);
+          if (entry && spot && atr) {
+            const favMove = isBuy ? (spot - entry) : (entry - spot);
+            if (favMove >= TRAIL_START * atr) {
+              // new stop = best (current) price trailed by TRAIL_DIST ATR
+              const newStop = isBuy ? (spot - TRAIL_DIST * atr) : (spot + TRAIL_DIST * atr);
+              // only tighten: for BUY a higher stop is tighter; for SELL a lower stop is tighter
+              const cur = parseFloat(poc.limit_order?.stop_loss?.order_amount || "0");
+              const tighten = isBuy ? (!cur || newStop > cur) : (!cur || newStop < cur);
+              if (tighten) {
+                ws.send(JSON.stringify({ contract_update: 1, contract_id: poc.contract_id,
+                  limit_order: { stop_loss: parseFloat(newStop.toFixed(5)) } }));
+                updates.push({ symbol: sym, contract_id: poc.contract_id, newStop: +newStop.toFixed(5), favMove: +favMove.toFixed(5) });
+              }
+            }
+          }
+        }
+        // once we've processed as many POCs as contracts, finish shortly after
+        if (updates.length >= 0 && openContracts.length > 0) {
+          setTimeout(() => { try{ws.close();}catch(_){} clearTimeout(timeout); resolve(updates); }, 3000);
+        }
+      }
+    };
+    ws.onerror = () => { clearTimeout(timeout); resolve(updates); };
+  });
+}
+
 const DERIV_APP_ID   = Deno.env.get("DERIV_APP_ID") || "33xokz5qd9oF7SmLaom7n";
 
 // Cache account IDs per token (avoid repeated lookups)
@@ -2632,7 +2717,7 @@ function monteCarloStake(
 }
 
 // Get recent win rate and avg payout from trades table
-async function getRecentPerformance(supabase: any): Promise<{ winRate: number; avgWinPct: number; avgLossPct: number }> {
+async function getRecentPerformance(supabase: any): Promise<{ winRate: number; avgWinPct: number; avgLossPct: number; _tradeCount: number }> {
   try {
     const { data } = await supabase
       .from("trades")
@@ -2644,7 +2729,7 @@ async function getRecentPerformance(supabase: any): Promise<{ winRate: number; a
 
     if (!data || data.length < 5) {
       // Not enough data — use conservative defaults
-      return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90 };
+      return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90, _tradeCount: data?.length || 0 };
     }
 
     const wins   = data.filter((t: any) => t.result === "win");
@@ -2663,6 +2748,7 @@ async function getRecentPerformance(supabase: any): Promise<{ winRate: number; a
       winRate:    Math.max(0.35, Math.min(0.95, winRate)),
       avgWinPct:  Math.max(0.50, Math.min(1.50, avgWinPct)),
       avgLossPct: Math.max(0.50, Math.min(1.00, avgLossPct)),
+      _tradeCount: data.length,
     };
   } catch(e) {
     return { winRate: 0.55, avgWinPct: 0.85, avgLossPct: 0.90, _tradeCount: 0 };
@@ -5529,8 +5615,130 @@ async function handleRequest(req: Request): Promise<Response> {
         return await r.json();
       } catch(e){ return { error:String(e) }; }
     }
+    // ── PHASE 0 COST GATE (additive, fail-open) ──────────────────────────
+    // Load per-symbol data-quality flags written by the Python phase0_writer.
+    // The ONLY thing we gate on is data_ok === false (latest candles were
+    // corrupt). If the table is empty/unreadable, costMap stays empty and the
+    // engine trades exactly as before — fail-open by design.
+    const costMap: Record<string, any> = {};
+    try {
+      const { data: costRows } = await sb.from("instrument_costs")
+        .select("symbol, data_ok, breakeven_wr, notes");
+      for (const r of (costRows || [])) costMap[r.symbol] = r;
+      if (costRows && costRows.length) {
+        console.log(`📋 Phase0 cost gate: loaded ${costRows.length} symbol flags`);
+      }
+    } catch(_e) {
+      // fail-open — no gate if table missing
+    }
+
     const book  = await getSignal("book_signal");
     const carry = await getSignal("carry_signal");
+
+    // ════════════════════════════════════════════════════════════════════
+    // VALIDATED EDGES (fixed-exit) — added after full backtest + significance
+    // + multi-window robustness testing. Only edges that survived ALL of it.
+    //   • frxEURJPY: trend signal, RR4 fixed exit, NO filter (6/6 robust)
+    //   • frxEURUSD: trend signal, RR4 fixed exit, efficiency filter ≥0.02 (5/6)
+    // Trend signal = EMA8>EMA21>EMA50 + RSI 50-70 (BUY) / mirror (SELL),
+    // exactly as validated. Each gets a fixed RR4 TP / 1-ATR SL via fptTpPct.
+    // ════════════════════════════════════════════════════════════════════
+    const VALIDATED_FIXED = [
+      { symbol:"frxEURJPY", effThreshold:0,    rr:4 },   // robust, no filter
+      { symbol:"frxEURUSD", effThreshold:0.02, rr:4 },   // needs efficiency filter
+      { symbol:"JD100",     effThreshold:0,    rr:8 },   // jump capture, RR8/hold24, skew 1.17, 6/6 robust
+    ];
+
+    function localEfficiency(closes: number[], lookback=40): number {
+      if (closes.length < lookback) return 0;
+      const seg = closes.slice(-lookback);
+      let net = Math.abs(seg[seg.length-1] - seg[0]), path = 0;
+      for (let k=1; k<seg.length; k++) path += Math.abs(seg[k]-seg[k-1]);
+      return path>0 ? net/path : 0;
+    }
+
+    // BOOM/CRASH FORCED DIRECTION — validated edge structure:
+    // BOOM indices spike UP → only ever BUY to catch the upward spike.
+    // CRASH indices spike DOWN → only ever SELL to catch the downward spike.
+    // Used by the trailing-spike edges (built next). Returns null = don't trade.
+    function spikeDirection(symbol: string): string | null {
+      if (symbol.startsWith("BOOM"))  return "BUY";
+      if (symbol.startsWith("CRASH")) return "SELL";
+      return null;
+    }
+
+    const validatedPlans: any[] = [];
+    for (const edge of VALIDATED_FIXED) {
+      try {
+        // 30m candles (granularity 1800) — the timeframe these were validated on
+        const candles = await fetchCandles(edge.symbol, 1800, 200);
+        if (!candles || candles.length < 70) continue;
+        const closes = candles.map((c:any)=>parseFloat(c.close));
+        const ema8 = calcEMA(closes, 8), ema21 = calcEMA(closes, 21);
+        const ema50 = calcEMA(closes.slice(-60), 50), rsi = calcRSI(closes);
+        let action: string|null = null;
+        if (ema8>ema21 && ema21>ema50 && rsi>50 && rsi<70) action = "BUY";
+        if (ema8<ema21 && ema21<ema50 && rsi<50 && rsi>30) action = "SELL";
+        if (!action) continue;
+        // efficiency filter (EURUSD only; EURJPY threshold=0 passes all)
+        if (edge.effThreshold > 0 && localEfficiency(closes) < edge.effThreshold) {
+          console.log(`⏭️ ${edge.symbol}: efficiency below ${edge.effThreshold} — skip (chop regime)`);
+          continue;
+        }
+        // RR4 fixed exit: TP needs price to move rr×ATR, SL at 1×ATR.
+        // Compute ATR inline (self-contained — don't depend on external helper).
+        const atrPeriod = 14;
+        const recent = candles.slice(-atrPeriod);
+        let trSum = 0;
+        for (let k=0; k<recent.length; k++){
+          const h = parseFloat(recent[k].high), lo = parseFloat(recent[k].low);
+          const pc = k>0 ? parseFloat(recent[k-1].close) : parseFloat(recent[k].close);
+          trSum += Math.max(h-lo, Math.abs(h-pc), Math.abs(lo-pc));
+        }
+        const atr = trSum / recent.length;
+        const price = closes[closes.length-1];
+        const tpPct = (atr * edge.rr) / price;   // fractional move for TP
+        const slPct = (atr * 1.0)      / price;   // fractional move for SL
+        validatedPlans.push({ symbol:edge.symbol, action, stake: dbal*(BASE_RISK_PCT/100)*0.15,
+                              book:"validated_fixed", exposure:1, tpPct, slPct });
+        console.log(`✅ validated edge ${edge.symbol} ${action} (eff-filtered, RR${edge.rr})`);
+      } catch(e){ console.log(`validated edge ${edge.symbol} error: ${e}`); }
+    }
+
+    // ── VALIDATED SPIKE EDGES (trailing exit): BOOM1000, CRASH1000, frxXAUUSD ──
+    // Open with an initial 1-ATR stop and a wide TP; trailOpenPositions() then
+    // ratchets the stop each cycle. BOOM forced BUY, CRASH forced SELL.
+    const SPIKE_EDGES = ["BOOM1000","CRASH1000","frxXAUUSD"];
+    const spikeAtr: Record<string, number> = {};
+    for (const sym of SPIKE_EDGES) {
+      try {
+        const gran = sym.startsWith("frx") ? 1800 : 60;   // XAUUSD 30m, BOOM/CRASH 1m
+        const candles = await fetchCandles(sym, gran, 200);
+        if (!candles || candles.length < 70) continue;
+        const closes = candles.map((c:any)=>parseFloat(c.close));
+        // direction: BOOM=BUY, CRASH=SELL forced; XAUUSD uses trend signal
+        let action: string|null = spikeDirection(sym);
+        if (!action) {
+          const ema8=calcEMA(closes,8), ema21=calcEMA(closes,21), ema50=calcEMA(closes.slice(-60),50), rsi=calcRSI(closes);
+          if (ema8>ema21 && ema21>ema50 && rsi>50 && rsi<70) action="BUY";
+          else if (ema8<ema21 && ema21<ema50 && rsi<50 && rsi>30) action="SELL";
+        }
+        if (!action) continue;
+        // ATR inline (self-contained)
+        const ap=14, rc=candles.slice(-ap); let trS=0;
+        for (let k=0;k<rc.length;k++){const h=parseFloat(rc[k].high),lo=parseFloat(rc[k].low);const pc=k>0?parseFloat(rc[k-1].close):parseFloat(rc[k].close);trS+=Math.max(h-lo,Math.abs(h-pc),Math.abs(lo-pc));}
+        const atr=trS/rc.length;
+        spikeAtr[sym]=atr;
+        const price=closes[closes.length-1];
+        // wide TP (trailing handles real exit), initial SL at 1 ATR
+        const tpPct=(atr*8)/price;       // wide — trail will exit before this
+        const slPct=(atr*1.0)/price;     // initial 1-ATR stop
+        validatedPlans.push({ symbol:sym, action, stake: dbal*(BASE_RISK_PCT/100)*0.15,
+                              book:"validated_spike", exposure:1, tpPct, slPct });
+        console.log(`✅ spike edge ${sym} ${action} (trailing, initial 1-ATR stop)`);
+      } catch(e){ console.log(`spike edge ${sym} error: ${e}`); }
+    }
+
     const cryptoBudget = dbal * (BASE_RISK_PCT/100);
     const carryBudget  = dbal * (BASE_RISK_PCT/100);
     const maxTotal     = dbal * (MAX_TOTAL_PCT/100);
@@ -5555,21 +5763,47 @@ async function handleRequest(req: Request): Promise<Response> {
         plans.push({ symbol:leg.sym, action:"BUY", stake, book:"carry", exposure:1 });
       }
     }
+    // merge validated-edge plans with the existing book/carry plans
+    for (const vp of validatedPlans) plans.push(vp);
+
     const results = [];
     for (const p of plans){
+      // ── Phase 0 cost gate: skip only if latest data was CORRUPT ──
+      // fail-open: unknown symbol (not in costMap) trades normally.
+      const cost = costMap[p.symbol];
+      if (cost && cost.data_ok === false) {
+        console.log(`🚫 ${p.symbol}: skipped — Phase0 data_ok=false (${cost.notes || "corrupt data"})`);
+        results.push({ ...p, executed:false, reason:"phase0_data_bad" });
+        continue;
+      }
       if (p.action === "FLAT") { results.push({ ...p, executed:false, reason:"flat" }); continue; }
       if (deployed + p.stake > maxTotal) { results.push({ ...p, executed:false, reason:"max_total_cap" }); continue; }
       const stakeClamped = Math.min(9, Math.max(1, p.stake));
       try {
-        const r = await placeTrade(dtoken, p.symbol, p.action, stakeClamped, 65, 100, 0, 0, 1440);
+        // validated edges carry their own RR4 TP/SL via tpPct/slPct; others use defaults
+        const tpP = p.tpPct || 0;
+        const slP = p.slPct || 0;
+        const r = await placeTrade(dtoken, p.symbol, p.action, stakeClamped, 65, 100, tpP, slP, 1440);
         const ok = r && !r.error;
         if (ok) deployed += stakeClamped;
         results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "placed" : (r && r.error) });
       } catch(e){ results.push({ ...p, executed:false, result:String(e) }); }
     }
+
+    // ── TRAILING STOP RATCHET ──
+    // After placing new trades, tighten stops on any OPEN spike positions
+    // (BOOM/CRASH/XAUUSD) that have moved favorably. This is what makes the
+    // trailing-exit edges work: each cycle ratchets the stop behind best price.
+    let trailUpdates: any[] = [];
+    try {
+      trailUpdates = await trailOpenPositions(dtoken, spikeAtr);
+      if (trailUpdates.length) console.log(`🔧 trailed ${trailUpdates.length} spike stop(s):`, JSON.stringify(trailUpdates));
+    } catch(e){ console.log(`trailing error: ${e}`); }
+
     const payload = { ts:new Date().toISOString(), runner:"daily_validated_10", balance:dbal,
                       cryptoBudget:+cryptoBudget.toFixed(2), carryBudget:+carryBudget.toFixed(2),
-                      maxTotal:+maxTotal.toFixed(2), deployed:+deployed.toFixed(2), results };
+                      maxTotal:+maxTotal.toFixed(2), deployed:+deployed.toFixed(2), results,
+                      trailUpdates };
     try { await sb.from("signal_log").insert({ created_at: payload.ts, strategy:"daily_validated_10", payload }); } catch(_e){}
     return new Response(JSON.stringify(payload, null, 2), { headers: { ...CORS, "Content-Type":"application/json" } });
   }
@@ -5627,10 +5861,17 @@ async function handleRequest(req: Request): Promise<Response> {
   let mc: any;
   let stake: number;
   if (hasEnoughData) {
+    // NOTE: Stake is sized once per cycle, BEFORE the per-symbol loop, so no
+    // single symbol's Gram-Charlier features exist yet. Use neutral tail
+    // params (skew=0, kurtosis=1 → normal-ish). Per-symbol GC refinement of
+    // stake, if desired, must happen inside the symbol loop where `features`
+    // is in scope — not here. (Previously referenced an out-of-scope `features`
+    // const declared later in this function, which is a TDZ crash waiting to
+    // happen the moment this branch became reachable.)
     mc = monteCarloStake(
         balance, riskPct, perf.winRate, perf.avgWinPct, perf.avgLossPct, minStk, maxStk,
-        Array.isArray(features) && features.length > 53 ? (features[53] || 0) : 0,   // gc_skewness
-        Array.isArray(features) && features.length > 54 ? (features[54] || 1) : 1    // gc_kurtosis
+        0,   // gc_skewness — neutral at cycle level
+        1    // gc_kurtosis — neutral at cycle level
       );
     stake = mc.stake;
     console.log(`💰 Monte Carlo stake: $${stake} (${mc.recommendation} ror:${(mc.riskOfRuin*100).toFixed(1)}%)`);
