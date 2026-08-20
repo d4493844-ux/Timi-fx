@@ -6982,6 +6982,7 @@ async function handleRequest(req: Request): Promise<Response> {
             continue;
           }
           sig = ictSig;
+          sig.optimalHoldMins = SYMBOL_STRATEGY_MAP[symbol]?.holdMins;
 
           // Apply news caution penalty
           if (newsChk.reduced) {
@@ -7055,6 +7056,13 @@ async function handleRequest(req: Request): Promise<Response> {
         scanLog.push(`${symbol}: Fallback4S→${sig.action} ${sig.confidence}% (${sig.reason}) HMM:${regime.name}`);
       }
 
+      // Safety net: any path that didn't explicitly set optimalHoldMins
+      // (e.g. Fallback4S for symbols outside the ICT forex list) still gets
+      // its real per-symbol edge duration instead of silently defaulting to 5.
+      if (sig && sig.optimalHoldMins === undefined) {
+        sig.optimalHoldMins = SYMBOL_STRATEGY_MAP[symbol]?.holdMins;
+      }
+
       if (sig && sig.action !== "HOLD" && sig.confidence >= minConf) {
         signals.push({ symbol, ...sig, is_ml: !!ML_MODELS[symbol] });
       }
@@ -7085,10 +7093,10 @@ async function handleRequest(req: Request): Promise<Response> {
   // Boosts signals confirmed by correlated symbols, penalises conflicting ones
   const correlatedSignals = applyCorrelationScoring(signals);
 
-  // Pick best signal — ML > fallback, then by correlation-adjusted confidence
+  // Pick best signal — confidence is primary; is_ml only breaks exact ties
   correlatedSignals.sort((a, b) => {
-    if (a.is_ml !== b.is_ml) return a.is_ml ? -1 : 1;
-    return b.confidence - a.confidence;
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return (b.is_ml ? 1 : 0) - (a.is_ml ? 1 : 0);
   });
   const best = correlatedSignals[0];
 
@@ -7132,23 +7140,56 @@ async function handleRequest(req: Request): Promise<Response> {
       "JD10":"Jump 10 Index","JD25":"Jump 25 Index","JD50":"Jump 50 Index",
       "JD75":"Jump 75 Index","JD100":"Jump 100 Index",
     };
-    const _mt5Sym = DERIV_TO_MT5_PRIMARY[best.symbol];
     // Market-hours guard for forex/crypto
     const _d = new Date().getUTCDay(); const _h = new Date().getUTCHours();
     const _wknd = _d === 0 || _d === 6;
-    const _fx = best.symbol.startsWith("frx") || best.symbol.startsWith("cry");
     const _fxClosed = _wknd || (_d === 5 && _h >= 21);
-    if (_mt5Sym && !(_fx && _fxClosed)) {
+
+    // Dedup guard: daily_run's validated book writes its own legs to
+    // mt5_signals independently of this intraday loop. Since both engines
+    // can now target the same table in the same cycle, skip any symbol that
+    // already has a pending row so the EA never gets conflicting signals
+    // (e.g. intraday SELL vs daily_run BUY) on the same instrument.
+    let _pendingSymbols = new Set<string>();
+    try {
+      const { data: _pendingRows } = await supabase.from("mt5_signals")
+        .select("symbol").eq("status", "pending");
+      _pendingSymbols = new Set((_pendingRows || []).map((r: any) => r.symbol));
+    } catch (ex) { console.log(`⚠️  MT5 pending-symbol lookup failed: ${ex}`); }
+
+    // Intraday engine: write EVERY qualifying signal (already passed
+    // minConf when pushed into `signals[]`), not just the single `best`.
+    // One insert per qualifying symbol per cycle.
+    for (const _cand of correlatedSignals) {
+      const _mt5Sym = DERIV_TO_MT5_PRIMARY[_cand.symbol];
+      if (!_mt5Sym) continue;
+      const _fx = _cand.symbol.startsWith("frx") || _cand.symbol.startsWith("cry");
+      if (_fx && _fxClosed) {
+        console.log(`🕒 MT5 signal skipped — ${_cand.symbol} forex/crypto market closed`);
+        continue;
+      }
+      if (_pendingSymbols.has(_mt5Sym)) {
+        console.log(`⏭️  MT5 signal skipped — ${_mt5Sym} already has a pending row (dedup guard)`);
+        continue;
+      }
+      const _candFpt = _cand === best ? fpt : firstPassageTime(
+        [], _cand.action, _cand.symbol,
+        (_cand.features && _cand.features[27]) || 0.003,  // garch_vol
+        (_cand.features && _cand.features[29]) || 0,      // ou_zscore
+        _cand.confidence,
+        _cand.optimalHoldMins || 5   // hold-aligned TP reachability
+      );
       try {
         const { error: _e } = await supabase.from("mt5_signals").insert({
-          symbol: _mt5Sym, action: best.action, confidence: best.confidence, status: "pending",
-          sl_pct: fpt.slPct, tp_pct: fpt.tpPct, optimal_hold_mins: best.optimalHoldMins || 5,
+          symbol: _mt5Sym, action: _cand.action, confidence: _cand.confidence, status: "pending",
+          sl_pct: _candFpt.slPct, tp_pct: _candFpt.tpPct, optimal_hold_mins: _cand.optimalHoldMins || 5,
         });
-        if (_e) console.log(`⚠️  MT5 signal write error: ${_e.message}`);
-        else console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${best.action} conf:${best.confidence}%`);
-      } catch(ex) { console.log(`⚠️  MT5 signal exception: ${ex}`); }
-    } else if (_fx && _fxClosed) {
-      console.log(`🕒 MT5 signal skipped — forex/crypto market closed`);
+        if (_e) console.log(`⚠️  MT5 signal write error (${_mt5Sym}): ${_e.message}`);
+        else {
+          _pendingSymbols.add(_mt5Sym);
+          console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${_cand.action} conf:${_cand.confidence}%`);
+        }
+      } catch(ex) { console.log(`⚠️  MT5 signal exception (${_mt5Sym}): ${ex}`); }
     }
 
     // Telegram — send the signal immediately
