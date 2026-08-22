@@ -5779,14 +5779,15 @@ async function handleRequest(req: Request): Promise<Response> {
       if (p.action === "FLAT") { results.push({ ...p, executed:false, reason:"flat" }); continue; }
       if (deployed + p.stake > maxTotal) { results.push({ ...p, executed:false, reason:"max_total_cap" }); continue; }
       const stakeClamped = Math.min(9, Math.max(1, p.stake));
+      const _d=new Date().getUTCDay(), _h=new Date().getUTCHours();
+      const _fxCry = p.symbol.startsWith("frx") || p.symbol.startsWith("cry");
+      if (_fxCry && (_d===0 || _d===6 || (_d===5 && _h>=21))) { results.push({ ...p, executed:false, reason:"market_closed" }); continue; }
+      const _hold = (p.book==="crypto"||p.book==="carry") ? 1440 : (p.symbol==="JD100" ? 1440 : 120);
       try {
-        // validated edges carry their own RR4 TP/SL via tpPct/slPct; others use defaults
-        const tpP = p.tpPct || 0;
-        const slP = p.slPct || 0;
-        const r = await placeTrade(dtoken, p.symbol, p.action, stakeClamped, 65, 100, tpP, slP, 1440);
-        const ok = r && !r.error;
+        const { error:_me } = await sb.from("mt5_signals").insert({ symbol: p.symbol, action: p.action, confidence: 75, sl_pct: p.slPct || 0, tp_pct: p.tpPct || 0, optimal_hold_mins: _hold, status: "pending", created_at: new Date().toISOString() });
+        const ok = !_me;
         if (ok) deployed += stakeClamped;
-        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "placed" : (r && r.error) });
+        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "mt5_queued" : _me.message });
       } catch(e){ results.push({ ...p, executed:false, result:String(e) }); }
     }
 
