@@ -7145,16 +7145,24 @@ async function handleRequest(req: Request): Promise<Response> {
     const _wknd = _d === 0 || _d === 6;
     const _fxClosed = _wknd || (_d === 5 && _h >= 21);
 
-    // Dedup guard: daily_run's validated book writes its own legs to
-    // mt5_signals independently of this intraday loop. Since both engines
-    // can now target the same table in the same cycle, skip any symbol that
-    // already has a pending row so the EA never gets conflicting signals
-    // (e.g. intraday SELL vs daily_run BUY) on the same instrument.
-    let _pendingSymbols = new Set<string>();
+    // Dedup / rate-limit guard: daily_run's validated book writes its own
+    // legs to mt5_signals independently of this intraday loop. Since both
+    // engines can now target the same table in the same cycle, skip any
+    // symbol that already has a pending row created within its own
+    // holdMins window — this both prevents conflicting signals (e.g.
+    // intraday SELL vs daily_run BUY) on the same instrument AND stops
+    // stale pending rows piling up when the EA is offline: once a pending
+    // row ages past its hold window, the symbol is free to signal again.
+    let _pendingBySymbol: Record<string, string> = {};
     try {
       const { data: _pendingRows } = await supabase.from("mt5_signals")
-        .select("symbol").eq("status", "pending");
-      _pendingSymbols = new Set((_pendingRows || []).map((r: any) => r.symbol));
+        .select("symbol, created_at").eq("status", "pending");
+      for (const r of (_pendingRows || [])) {
+        // keep the most recent created_at per symbol
+        if (!_pendingBySymbol[r.symbol] || r.created_at > _pendingBySymbol[r.symbol]) {
+          _pendingBySymbol[r.symbol] = r.created_at;
+        }
+      }
     } catch (ex) { console.log(`⚠️  MT5 pending-symbol lookup failed: ${ex}`); }
 
     // Intraday engine: write EVERY qualifying signal (already passed
@@ -7168,26 +7176,36 @@ async function handleRequest(req: Request): Promise<Response> {
         console.log(`🕒 MT5 signal skipped — ${_cand.symbol} forex/crypto market closed`);
         continue;
       }
-      if (_pendingSymbols.has(_mt5Sym)) {
-        console.log(`⏭️  MT5 signal skipped — ${_mt5Sym} already has a pending row (dedup guard)`);
-        continue;
+      // Real per-symbol edge duration — SYMBOL_STRATEGY_MAP first (source of
+      // truth), optimalHoldMins as a pre-resolved fallback, 5 as last resort.
+      const _holdMins = SYMBOL_STRATEGY_MAP[_cand.symbol]?.holdMins || _cand.optimalHoldMins || 5;
+      const _lastCreated = _pendingBySymbol[_mt5Sym];
+      if (_lastCreated) {
+        const _ageMins = (Date.now() - new Date(_lastCreated).getTime()) / 60000;
+        if (_ageMins < _holdMins) {
+          console.log(`⏭️  MT5 signal skipped — ${_mt5Sym} pending signal is ${_ageMins.toFixed(1)}min old (< ${_holdMins}min hold window)`);
+          continue;
+        }
       }
       const _candFpt = _cand === best ? fpt : firstPassageTime(
         [], _cand.action, _cand.symbol,
         (_cand.features && _cand.features[27]) || 0.003,  // garch_vol
         (_cand.features && _cand.features[29]) || 0,      // ou_zscore
         _cand.confidence,
-        _cand.optimalHoldMins || 5   // hold-aligned TP reachability
+        _holdMins   // hold-aligned TP reachability
       );
+      const _nowIso = new Date().toISOString();
+      const _expiresAt = new Date(Date.now() + _holdMins * 60 * 1000).toISOString();
       try {
         const { error: _e } = await supabase.from("mt5_signals").insert({
           symbol: _mt5Sym, action: _cand.action, confidence: _cand.confidence, status: "pending",
-          sl_pct: _candFpt.slPct, tp_pct: _candFpt.tpPct, optimal_hold_mins: _cand.optimalHoldMins || 5,
+          sl_pct: _candFpt.slPct, tp_pct: _candFpt.tpPct, optimal_hold_mins: _holdMins,
+          expires_at: _expiresAt,
         });
         if (_e) console.log(`⚠️  MT5 signal write error (${_mt5Sym}): ${_e.message}`);
         else {
-          _pendingSymbols.add(_mt5Sym);
-          console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${_cand.action} conf:${_cand.confidence}%`);
+          _pendingBySymbol[_mt5Sym] = _nowIso;
+          console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${_cand.action} conf:${_cand.confidence}% hold:${_holdMins}min`);
         }
       } catch(ex) { console.log(`⚠️  MT5 signal exception (${_mt5Sym}): ${ex}`); }
     }
