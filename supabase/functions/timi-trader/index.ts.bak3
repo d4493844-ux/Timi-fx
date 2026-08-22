@@ -5779,15 +5779,14 @@ async function handleRequest(req: Request): Promise<Response> {
       if (p.action === "FLAT") { results.push({ ...p, executed:false, reason:"flat" }); continue; }
       if (deployed + p.stake > maxTotal) { results.push({ ...p, executed:false, reason:"max_total_cap" }); continue; }
       const stakeClamped = Math.min(9, Math.max(1, p.stake));
-      const _d=new Date().getUTCDay(), _h=new Date().getUTCHours();
-      const _fxCry = p.symbol.startsWith("frx") || p.symbol.startsWith("cry");
-      if (_fxCry && (_d===0 || _d===6 || (_d===5 && _h>=21))) { results.push({ ...p, executed:false, reason:"market_closed" }); continue; }
-      const _hold = (p.book==="crypto"||p.book==="carry") ? 1440 : (p.symbol==="JD100" ? 1440 : 120);
       try {
-        const { error:_me } = await sb.from("mt5_signals").insert({ symbol: p.symbol, action: p.action, confidence: 75, sl_pct: p.slPct || 0, tp_pct: p.tpPct || 0, optimal_hold_mins: _hold, status: "pending", created_at: new Date().toISOString() });
-        const ok = !_me;
+        // validated edges carry their own RR4 TP/SL via tpPct/slPct; others use defaults
+        const tpP = p.tpPct || 0;
+        const slP = p.slPct || 0;
+        const r = await placeTrade(dtoken, p.symbol, p.action, stakeClamped, 65, 100, tpP, slP, 1440);
+        const ok = r && !r.error;
         if (ok) deployed += stakeClamped;
-        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "mt5_queued" : _me.message });
+        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "placed" : (r && r.error) });
       } catch(e){ results.push({ ...p, executed:false, result:String(e) }); }
     }
 
@@ -7215,39 +7214,11 @@ async function handleRequest(req: Request): Promise<Response> {
     try {
       const tgToken = cfg.telegram_token; const tgChatId = cfg.telegram_chat_id;
       if (tgToken && tgChatId) {
-        const holdMins = best.optimalHoldMins || 5;
-        const optHold = `\nHold: ${holdMins}min`;
-
-        // TP/SL detail block — current price isn't already on `best`/`bestFeats`
-        // (features are normalized indicators, not raw price), so fetch one
-        // small candle set just for the alert. Fails open: if the fetch or
-        // the sl_pct/tp_pct math comes up empty, the message still sends
-        // with just symbol/action/confidence/hold, same as before.
-        let tpSlBlock = "";
-        try {
-          const _priceCandles = await fetchCandles(best.symbol, 60, 2);
-          const _entryPrice = _priceCandles.length
-            ? parseFloat(_priceCandles[_priceCandles.length - 1].close)
-            : 0;
-          if (_entryPrice > 0 && fpt.slPct > 0 && fpt.tpPct > 0) {
-            const _slPrice = best.action === "BUY"
-              ? _entryPrice - fpt.slPct * _entryPrice
-              : _entryPrice + fpt.slPct * _entryPrice;
-            const _tpPrice = best.action === "BUY"
-              ? _entryPrice + fpt.tpPct * _entryPrice
-              : _entryPrice - fpt.tpPct * _entryPrice;
-            const _rrRatio = (fpt.tpPct / fpt.slPct).toFixed(1);
-            tpSlBlock = `\nEntry: ${_entryPrice.toFixed(5)}` +
-              `\nSL: ${_slPrice.toFixed(5)} | -${(fpt.slPct * 100).toFixed(2)}%` +
-              `\nTP: ${_tpPrice.toFixed(5)} | +${(fpt.tpPct * 100).toFixed(2)}%` +
-              `\nRR: 1:${_rrRatio}`;
-          }
-        } catch (ex) { console.log(`⚠️  Telegram TP/SL detail fetch failed: ${ex}`); }
-
+        const optHold = best.optimalHoldMins ? `\nHold: ${best.optimalHoldMins}min` : "";
         await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
           method:"POST", headers:{"Content-Type":"application/json"},
           body: JSON.stringify({chat_id: tgChatId,
-            text: `🤖 TIMI SIGNAL\nSymbol: ${best.symbol}\nAction: ${best.action}\nConfidence: ${best.confidence}%${tpSlBlock}${optHold}`})
+            text: `🤖 TIMI SIGNAL\nSymbol: ${best.symbol}\nAction: ${best.action}\nConfidence: ${best.confidence}%${optHold}`})
         });
         await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
           method:"POST", headers:{"Content-Type":"application/json"},
