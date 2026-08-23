@@ -5779,15 +5779,14 @@ async function handleRequest(req: Request): Promise<Response> {
       if (p.action === "FLAT") { results.push({ ...p, executed:false, reason:"flat" }); continue; }
       if (deployed + p.stake > maxTotal) { results.push({ ...p, executed:false, reason:"max_total_cap" }); continue; }
       const stakeClamped = Math.min(9, Math.max(1, p.stake));
-      const _d=new Date().getUTCDay(), _h=new Date().getUTCHours();
-      const _fxCry = p.symbol.startsWith("frx") || p.symbol.startsWith("cry");
-      if (_fxCry && (_d===0 || _d===6 || (_d===5 && _h>=21))) { results.push({ ...p, executed:false, reason:"market_closed" }); continue; }
-      const _hold = (p.book==="crypto"||p.book==="carry") ? 1440 : (p.symbol==="JD100" ? 1440 : 120);
       try {
-        const { error:_me } = await sb.from("mt5_signals").insert({ symbol: p.symbol, action: p.action, confidence: 75, sl_pct: p.slPct || 0, tp_pct: p.tpPct || 0, optimal_hold_mins: _hold, status: "pending", created_at: new Date().toISOString() });
-        const ok = !_me;
+        // validated edges carry their own RR4 TP/SL via tpPct/slPct; others use defaults
+        const tpP = p.tpPct || 0;
+        const slP = p.slPct || 0;
+        const r = await placeTrade(dtoken, p.symbol, p.action, stakeClamped, 65, 100, tpP, slP, 1440);
+        const ok = r && !r.error;
         if (ok) deployed += stakeClamped;
-        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "mt5_queued" : _me.message });
+        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "placed" : (r && r.error) });
       } catch(e){ results.push({ ...p, executed:false, result:String(e) }); }
     }
 
@@ -7170,23 +7169,6 @@ async function handleRequest(req: Request): Promise<Response> {
       }
     } catch (ex) { console.log(`⚠️  MT5 pending-symbol lookup failed: ${ex}`); }
 
-    // Telegram destinations resolved once, used per-candidate below so an
-    // alert only ever fires for a signal that actually clears the dedup
-    // guard and gets written — never for a symbol that was duplicate_blocked.
-    const tgToken = cfg.telegram_token; const tgChatId = cfg.telegram_chat_id;
-    const tgChannelId = cfg.telegram_channel_id;
-    const tgDestinations = tgChatId ? [tgChatId, ...(tgChannelId ? [tgChannelId] : [])] : [];
-    const sendTg = async (text: string) => {
-      for (const dest of tgDestinations) {
-        try {
-          await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({chat_id: dest, text})
-          });
-        } catch (ex) { console.log(`⚠️  Telegram send failed (${dest}): ${ex}`); }
-      }
-    };
-
     // Intraday engine: write EVERY qualifying signal (already passed
     // minConf when pushed into `signals[]`), not just the single `best`.
     // One insert per qualifying symbol per cycle.
@@ -7206,7 +7188,7 @@ async function handleRequest(req: Request): Promise<Response> {
       if (_lastCreated) {
         const _ageMins = (Date.now() - new Date(_lastCreated).getTime()) / 60000;
         if (_ageMins < _holdMins) {
-          console.log(`⏭️  MT5 signal skipped — ${_mt5Sym} pending signal is ${_ageMins.toFixed(1)}min old (< ${_holdMins}min hold window) — duplicate_blocked, no Telegram`);
+          console.log(`⏭️  MT5 signal skipped — ${_mt5Sym} pending signal is ${_ageMins.toFixed(1)}min old (< ${_holdMins}min hold window)`);
           continue;
         }
       }
@@ -7229,45 +7211,63 @@ async function handleRequest(req: Request): Promise<Response> {
         else {
           _pendingBySymbol[_mt5Sym] = _nowIso;
           console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${_cand.action} conf:${_cand.confidence}% hold:${_holdMins}min`);
-
-          // Telegram fires here — only after the dedup guard passed AND the
-          // mt5_signals write actually succeeded.
-          if (tgToken && tgDestinations.length) {
-            try {
-              // TP/SL detail block — current price isn't already on `_cand`
-              // (features are normalized indicators, not raw price), so
-              // fetch one small candle set just for the alert. Fails open:
-              // if the fetch or the sl_pct/tp_pct math comes up empty, the
-              // message still sends with just symbol/action/confidence/hold.
-              let tpSlBlock = "";
-              try {
-                const _priceCandles = await fetchCandles(_cand.symbol, 60, 2);
-                const _entryPrice = _priceCandles.length
-                  ? parseFloat(_priceCandles[_priceCandles.length - 1].close)
-                  : 0;
-                if (_entryPrice > 0 && _candFpt.slPct > 0 && _candFpt.tpPct > 0) {
-                  const _slPrice = _cand.action === "BUY"
-                    ? _entryPrice - _candFpt.slPct * _entryPrice
-                    : _entryPrice + _candFpt.slPct * _entryPrice;
-                  const _tpPrice = _cand.action === "BUY"
-                    ? _entryPrice + _candFpt.tpPct * _entryPrice
-                    : _entryPrice - _candFpt.tpPct * _entryPrice;
-                  const _rrRatio = (_candFpt.tpPct / _candFpt.slPct).toFixed(1);
-                  tpSlBlock = `\nEntry: ${_entryPrice.toFixed(5)}` +
-                    `\nSL: ${_slPrice.toFixed(5)} | -${(_candFpt.slPct * 100).toFixed(2)}%` +
-                    `\nTP: ${_tpPrice.toFixed(5)} | +${(_candFpt.tpPct * 100).toFixed(2)}%` +
-                    `\nRR: 1:${_rrRatio}`;
-                }
-              } catch (ex) { console.log(`⚠️  Telegram TP/SL detail fetch failed (${_mt5Sym}): ${ex}`); }
-
-              await sendTg(`🤖 TIMI SIGNAL\nSymbol: ${_cand.symbol}\nAction: ${_cand.action}\nConfidence: ${_cand.confidence}%${tpSlBlock}\nHold: ${_holdMins}min`);
-              await sendTg(`SIGNAL:${_cand.symbol}:${_cand.action}:${_cand.confidence}`);
-              console.log(`📱 Telegram sent to ${tgDestinations.length} destination(s): ${_mt5Sym} ${_cand.action} conf:${_cand.confidence}%`);
-            } catch (e) { console.log(`Telegram error (${_mt5Sym}): ${e}`); }
-          }
         }
       } catch(ex) { console.log(`⚠️  MT5 signal exception (${_mt5Sym}): ${ex}`); }
     }
+
+    // Telegram — send the signal immediately
+    try {
+      const tgToken = cfg.telegram_token; const tgChatId = cfg.telegram_chat_id;
+      if (tgToken && tgChatId) {
+        const holdMins = best.optimalHoldMins || 5;
+        const optHold = `\nHold: ${holdMins}min`;
+
+        // TP/SL detail block — current price isn't already on `best`/`bestFeats`
+        // (features are normalized indicators, not raw price), so fetch one
+        // small candle set just for the alert. Fails open: if the fetch or
+        // the sl_pct/tp_pct math comes up empty, the message still sends
+        // with just symbol/action/confidence/hold, same as before.
+        let tpSlBlock = "";
+        try {
+          const _priceCandles = await fetchCandles(best.symbol, 60, 2);
+          const _entryPrice = _priceCandles.length
+            ? parseFloat(_priceCandles[_priceCandles.length - 1].close)
+            : 0;
+          if (_entryPrice > 0 && fpt.slPct > 0 && fpt.tpPct > 0) {
+            const _slPrice = best.action === "BUY"
+              ? _entryPrice - fpt.slPct * _entryPrice
+              : _entryPrice + fpt.slPct * _entryPrice;
+            const _tpPrice = best.action === "BUY"
+              ? _entryPrice + fpt.tpPct * _entryPrice
+              : _entryPrice - fpt.tpPct * _entryPrice;
+            const _rrRatio = (fpt.tpPct / fpt.slPct).toFixed(1);
+            tpSlBlock = `\nEntry: ${_entryPrice.toFixed(5)}` +
+              `\nSL: ${_slPrice.toFixed(5)} | -${(fpt.slPct * 100).toFixed(2)}%` +
+              `\nTP: ${_tpPrice.toFixed(5)} | +${(fpt.tpPct * 100).toFixed(2)}%` +
+              `\nRR: 1:${_rrRatio}`;
+          }
+        } catch (ex) { console.log(`⚠️  Telegram TP/SL detail fetch failed: ${ex}`); }
+
+        // Fan out to personal chat + channel (if configured). Fail-open per
+        // destination: a bad/unset channel id never blocks the personal send.
+        const tgChannelId = cfg.telegram_channel_id;
+        const tgDestinations = [tgChatId, ...(tgChannelId ? [tgChannelId] : [])];
+        const sendTg = async (text: string) => {
+          for (const dest of tgDestinations) {
+            try {
+              await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+                method:"POST", headers:{"Content-Type":"application/json"},
+                body: JSON.stringify({chat_id: dest, text})
+              });
+            } catch (ex) { console.log(`⚠️  Telegram send failed (${dest}): ${ex}`); }
+          }
+        };
+
+        await sendTg(`🤖 TIMI SIGNAL\nSymbol: ${best.symbol}\nAction: ${best.action}\nConfidence: ${best.confidence}%${tpSlBlock}${optHold}`);
+        await sendTg(`SIGNAL:${best.symbol}:${best.action}:${best.confidence}`);
+        console.log(`📱 Telegram sent to ${tgDestinations.length} destination(s): ${best.symbol} ${best.action} ${best.confidence}%`);
+      }
+    } catch(e) { console.log(`Telegram error: ${e}`); }
   }
 
   // (FPT moved up — see top of signal-found block)
