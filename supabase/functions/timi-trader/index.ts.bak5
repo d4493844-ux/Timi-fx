@@ -5779,15 +5779,14 @@ async function handleRequest(req: Request): Promise<Response> {
       if (p.action === "FLAT") { results.push({ ...p, executed:false, reason:"flat" }); continue; }
       if (deployed + p.stake > maxTotal) { results.push({ ...p, executed:false, reason:"max_total_cap" }); continue; }
       const stakeClamped = Math.min(9, Math.max(1, p.stake));
-      const _d=new Date().getUTCDay(), _h=new Date().getUTCHours();
-      const _fxCry = p.symbol.startsWith("frx") || p.symbol.startsWith("cry");
-      if (_fxCry && (_d===0 || _d===6 || (_d===5 && _h>=21))) { results.push({ ...p, executed:false, reason:"market_closed" }); continue; }
-      const _hold = (p.book==="crypto"||p.book==="carry") ? 1440 : (p.symbol==="JD100" ? 1440 : 120);
       try {
-        const { error:_me } = await sb.from("mt5_signals").insert({ symbol: p.symbol, action: p.action, confidence: 75, sl_pct: p.slPct || 0, tp_pct: p.tpPct || 0, optimal_hold_mins: _hold, status: "pending", created_at: new Date().toISOString() });
-        const ok = !_me;
+        // validated edges carry their own RR4 TP/SL via tpPct/slPct; others use defaults
+        const tpP = p.tpPct || 0;
+        const slP = p.slPct || 0;
+        const r = await placeTrade(dtoken, p.symbol, p.action, stakeClamped, 65, 100, tpP, slP, 1440);
+        const ok = r && !r.error;
         if (ok) deployed += stakeClamped;
-        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "mt5_queued" : _me.message });
+        results.push({ ...p, stakeClamped:+stakeClamped.toFixed(2), executed:ok, result: ok ? "placed" : (r && r.error) });
       } catch(e){ results.push({ ...p, executed:false, result:String(e) }); }
     }
 
@@ -7249,24 +7248,16 @@ async function handleRequest(req: Request): Promise<Response> {
           }
         } catch (ex) { console.log(`⚠️  Telegram TP/SL detail fetch failed: ${ex}`); }
 
-        // Fan out to personal chat + channel (if configured). Fail-open per
-        // destination: a bad/unset channel id never blocks the personal send.
-        const tgChannelId = cfg.telegram_channel_id;
-        const tgDestinations = [tgChatId, ...(tgChannelId ? [tgChannelId] : [])];
-        const sendTg = async (text: string) => {
-          for (const dest of tgDestinations) {
-            try {
-              await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-                method:"POST", headers:{"Content-Type":"application/json"},
-                body: JSON.stringify({chat_id: dest, text})
-              });
-            } catch (ex) { console.log(`⚠️  Telegram send failed (${dest}): ${ex}`); }
-          }
-        };
-
-        await sendTg(`🤖 TIMI SIGNAL\nSymbol: ${best.symbol}\nAction: ${best.action}\nConfidence: ${best.confidence}%${tpSlBlock}${optHold}`);
-        await sendTg(`SIGNAL:${best.symbol}:${best.action}:${best.confidence}`);
-        console.log(`📱 Telegram sent to ${tgDestinations.length} destination(s): ${best.symbol} ${best.action} ${best.confidence}%`);
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId,
+            text: `🤖 TIMI SIGNAL\nSymbol: ${best.symbol}\nAction: ${best.action}\nConfidence: ${best.confidence}%${tpSlBlock}${optHold}`})
+        });
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({chat_id: tgChatId, text: `SIGNAL:${best.symbol}:${best.action}:${best.confidence}`})
+        });
+        console.log(`📱 Telegram sent: ${best.symbol} ${best.action} ${best.confidence}%`);
       }
     } catch(e) { console.log(`Telegram error: ${e}`); }
   }
