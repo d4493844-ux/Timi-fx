@@ -7140,14 +7140,10 @@ async function handleRequest(req: Request): Promise<Response> {
       "JD10":"Jump 10 Index","JD25":"Jump 25 Index","JD50":"Jump 50 Index",
       "JD75":"Jump 75 Index","JD100":"Jump 100 Index",
     };
-    // Market-hours guard — forex only. Crypto (cry*) trades 24/7 and
-    // Deriv synthetics (BOOM/CRASH/JD/R_*) trade 24/7, so neither is gated
-    // here; only "frx"-prefixed symbols close on the forex weekend.
-    const utcDay  = new Date().getUTCDay();
-    const utcHour = new Date().getUTCHours();
-    const isWeekend    = utcDay === 0 || utcDay === 6;
-    const isFridayClose = utcDay === 5 && utcHour >= 21;
-    const _fxClosed = isWeekend || isFridayClose;
+    // Market-hours guard for forex/crypto
+    const _d = new Date().getUTCDay(); const _h = new Date().getUTCHours();
+    const _wknd = _d === 0 || _d === 6;
+    const _fxClosed = _wknd || (_d === 5 && _h >= 21);
 
     // Dedup / rate-limit guard: daily_run's validated book writes its own
     // legs to mt5_signals independently of this intraday loop. Since both
@@ -7175,10 +7171,9 @@ async function handleRequest(req: Request): Promise<Response> {
     for (const _cand of correlatedSignals) {
       const _mt5Sym = DERIV_TO_MT5_PRIMARY[_cand.symbol];
       if (!_mt5Sym) continue;
-      // Forex-only weekend/Friday-close gate — crypto and synthetics are
-      // intentionally excluded (24/7 markets).
-      if (_cand.symbol.startsWith("frx") && _fxClosed) {
-        console.log(`🕒 MT5 signal skipped — ${_cand.symbol} forex market closed (weekend/Friday-close)`);
+      const _fx = _cand.symbol.startsWith("frx") || _cand.symbol.startsWith("cry");
+      if (_fx && _fxClosed) {
+        console.log(`🕒 MT5 signal skipped — ${_cand.symbol} forex/crypto market closed`);
         continue;
       }
       // Real per-symbol edge duration — SYMBOL_STRATEGY_MAP first (source of
