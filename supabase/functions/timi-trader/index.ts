@@ -3661,6 +3661,15 @@ const SYMBOL_STRATEGY_MAP: Record<string, {
   "JD100":     { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:30, winRate:57.1 },
 };
 
+// ── Regime + MTF filter scope — every forex/gold pair listed, exempting
+// BOOM/CRASH/JD/R_ synthetics and cry* crypto (those trade on different
+// dynamics — spike structure / 24-7 flow — that ER/ADX/EMA-trend don't model).
+const REGIME_FILTER_SYMBOLS = [
+  "frxEURUSD","frxGBPUSD","frxUSDJPY","frxAUDUSD","frxNZDUSD",
+  "frxUSDCAD","frxUSDCHF","frxEURGBP","frxEURJPY","frxGBPJPY",
+  "frxAUDJPY","frxXAUUSD","frxXAGUSD",
+];
+
 // ── Regime filter helpers (used to gate bb_fade on EURUSD — see the
 // Per-Symbol Strategy Override block below) ────────────────────────
 // Kaufman Efficiency Ratio over the given closes: net directional move
@@ -3686,6 +3695,48 @@ function adxProxy(closes: number[], period: number = 14): number {
     trS += Math.abs(d);
   }
   return trS > 0 ? Math.abs(dmP - dmM) / trS : 0;
+}
+
+// ── Multi-Timeframe Confluence (MTF) ────────────────────────────────
+// EMA20 vs EMA50 on each of M15/M30/H1/H4, vote BULLISH/BEARISH/NEUTRAL
+// per a volatility-adjusted neutral band, then require 3+ (of a possible
+// 4) votes agreeing before a direction is declared — otherwise CONFLICTED.
+// Cached per symbol per scan cycle by the caller (mtfCache).
+const MTF_TIMEFRAMES = [
+  { key: "M15", gran: 900,   bars: 80 },
+  { key: "M30", gran: 1800,  bars: 80 },
+  { key: "H1",  gran: 3600,  bars: 80 },
+  { key: "H4",  gran: 14400, bars: 80 },
+];
+async function getMTFConfluence(symbol: string, cache: Record<string, any>): Promise<{
+  direction: string; bullVotes: number; bearVotes: number;
+  votes: Record<string, string>; agree4: boolean;
+}> {
+  if (cache[symbol]) return cache[symbol];
+  const neutralBand = (symbol === "frxXAUUSD" || symbol === "frxXAGUSD") ? 0.0015 : 0.0005;
+  const votes: Record<string, string> = {};
+  let bullVotes = 0, bearVotes = 0;
+  for (const tf of MTF_TIMEFRAMES) {
+    try {
+      const candles = await fetchCandles(symbol, tf.gran, tf.bars);
+      const closes = candles.map((c: any) => parseFloat(c.close));
+      if (closes.length < 51) { votes[tf.key] = "NEUTRAL"; bullVotes += 0.5; bearVotes += 0.5; continue; }
+      const ema20 = calcEMA(closes, 20), ema50 = calcEMA(closes, 50);
+      const diffPct = (ema20 - ema50) / (ema50 + 1e-10);
+      if (diffPct > neutralBand) { votes[tf.key] = "BULLISH"; bullVotes += 1; }
+      else if (diffPct < -neutralBand) { votes[tf.key] = "BEARISH"; bearVotes += 1; }
+      else { votes[tf.key] = "NEUTRAL"; bullVotes += 0.5; bearVotes += 0.5; }
+    } catch (e) {
+      // fail toward CONFLICTED, not toward a false directional vote
+      votes[tf.key] = "NEUTRAL"; bullVotes += 0.5; bearVotes += 0.5;
+    }
+  }
+  const direction = bullVotes >= 3 ? "BULLISH" : bearVotes >= 3 ? "BEARISH" : "CONFLICTED";
+  const vals = Object.values(votes);
+  const agree4 = vals.every(v => v === "BULLISH") || vals.every(v => v === "BEARISH");
+  const result = { direction, bullVotes, bearVotes, votes, agree4 };
+  cache[symbol] = result;
+  return result;
 }
 
 // ── Strategy Signal Generators ────────────────────────────────────
@@ -6141,6 +6192,7 @@ async function handleRequest(req: Request): Promise<Response> {
   const signals: any[]  = [];
   const scanLog: string[] = [];
   const session = getTradingSession();
+  const mtfCache: Record<string, any> = {}; // MTF confluence, computed once per symbol per cycle
 
   for (const symbol of allSymbolsList) {
     try {
@@ -6531,26 +6583,7 @@ async function handleRequest(req: Request): Promise<Response> {
         // Each symbol routes to the methodology proven to fit its market structure
         const symStrategy = SYMBOL_STRATEGY_MAP[symbol];
         if (symStrategy) {
-          // Regime filter — bb_fade is a mean-reversion strategy and loses
-          // to a trend (this is what was fighting EURUSD's climb from
-          // 1.16656 to 1.16738 with repeated SELLs). Gate it on 5m-candle
-          // Kaufman ER + the codebase's existing ADX-proxy formula; both
-          // must confirm a ranging market before bb_fade is allowed to fire.
-          let regimeBlocked = false;
-          if (symbol === "frxEURUSD" && symStrategy.strategy === "bb_fade") {
-            const c5mCloses = c5m.map((x: any) => parseFloat(x.close));
-            const er = kaufmanER(c5mCloses, 20);
-            const adx = adxProxy(c5mCloses, 14);
-            if (er >= 0.35 || adx >= 0.25) {
-              regimeBlocked = true;
-              const reason = `frxEURUSD: regime_filter_blocked — ER=${er.toFixed(2)} ADX=${(adx * 100).toFixed(1)} trending market`;
-              scanLog.push(reason);
-              console.log(`🚫 ${reason}`);
-            }
-          }
-          const stratSig = regimeBlocked
-            ? { action: null, conf: 0, reason: "regime_filter_blocked" }
-            : getStrategySignal(symStrategy.strategy, c1m, features, symbol);
+          const stratSig = getStrategySignal(symStrategy.strategy, c1m, features, symbol);
           if (stratSig.action) {
             // Strategy map has a signal — use it to validate or override ML
             if (stratSig.action === sig.action) {
@@ -6565,7 +6598,7 @@ async function handleRequest(req: Request): Promise<Response> {
               scanLog.push(`${symbol}: STRATEGY_OVERRIDE ${symStrategy.strategy} overrides ML (${prevAction}→${stratSig.action}) conf=${stratSig.conf}`);
             }
             scanLog.push(`${symbol}: ${stratSig.reason}`);
-          } else if (!regimeBlocked) {
+          } else {
             // Strategy has no signal — penalize confidence (wrong conditions)
             sig.confidence = Math.max(10, sig.confidence - 15);
             scanLog.push(`${symbol}: STRATEGY_NOSIGNAL ${symStrategy.strategy}: ${stratSig.reason} conf-=15`);
@@ -7208,8 +7241,102 @@ async function handleRequest(req: Request): Promise<Response> {
         sig.optimalHoldMins = SYMBOL_STRATEGY_MAP[symbol]?.holdMins;
       }
 
+      // ── Regime + MTF confluence filter — applies uniformly regardless of
+      // which branch (ML / ICT / Fallback4S) produced `sig`, unlike the
+      // old EURUSD-only check that only ran inside the ML branch.
+      // Step 1: regime filter (ER < 0.35 AND ADX < 0.25 — ranging market)
+      // Step 2: MTF confluence (bullish_votes >= 3 OR bearish_votes >= 3)
+      // Step 3: signal direction must match MTF direction
+      // All three must pass for forex/gold symbols; synthetics/crypto skip
+      // straight through untouched.
+      let auditRow: any = null;
       if (sig && sig.action !== "HOLD" && sig.confidence >= minConf) {
-        signals.push({ symbol, ...sig, is_ml: !!ML_MODELS[symbol] });
+        let passesFilters = true;
+        let blockReason: string | null = null;
+        let erVal: number | null = null, adxVal: number | null = null;
+        let mtf: { direction: string; bullVotes: number; bearVotes: number; votes: Record<string,string>; agree4: boolean } | null = null;
+
+        if (REGIME_FILTER_SYMBOLS.includes(symbol)) {
+          // Step 1 — regime filter
+          const c5mCloses = c5m.map((x: any) => parseFloat(x.close));
+          erVal = kaufmanER(c5mCloses, 20);
+          adxVal = adxProxy(c5mCloses, 14);
+          if (erVal >= 0.35 || adxVal >= 0.25) {
+            passesFilters = false;
+            blockReason = `regime_filter_blocked — ER=${erVal.toFixed(2)} ADX=${(adxVal * 100).toFixed(1)} trending market`;
+          }
+
+          // Steps 2/3 — MTF confluence + direction match (only if regime passed)
+          if (passesFilters) {
+            mtf = await getMTFConfluence(symbol, mtfCache);
+            const votesStr = `M15=${mtf.votes.M15} M30=${mtf.votes.M30} H1=${mtf.votes.H1} H4=${mtf.votes.H4}`;
+            if (mtf.direction === "CONFLICTED") {
+              passesFilters = false;
+              blockReason = `mtf_conflict_blocked — bull=${mtf.bullVotes} bear=${mtf.bearVotes} ${votesStr}`;
+            } else if (mtf.direction === "BULLISH" && sig.action === "SELL") {
+              passesFilters = false;
+              blockReason = `mtf_bias_blocked — MTF=BULLISH signal=SELL ${votesStr}`;
+            } else if (mtf.direction === "BEARISH" && sig.action === "BUY") {
+              passesFilters = false;
+              blockReason = `mtf_bias_blocked — MTF=BEARISH signal=BUY ${votesStr}`;
+            } else if (mtf.agree4) {
+              // All 4 timeframes agree, no neutrals — confidence boost
+              sig.confidence = Math.min(95, sig.confidence + 5);
+            }
+          }
+
+          if (blockReason) {
+            scanLog.push(`${symbol}: ${blockReason}`);
+            console.log(`🚫 ${symbol}: ${blockReason}`);
+          }
+        }
+
+        if (passesFilters) {
+          signals.push({ symbol, ...sig, is_ml: !!ML_MODELS[symbol] });
+        }
+
+        // ── Signal audit — every evaluation that reached this point, fired
+        // or blocked, for later permutation-test / Deflated Sharpe / walk-
+        // forward validation. Fail-open: never let an audit failure block
+        // a real signal (this insert happens after the push above).
+        auditRow = {
+          symbol,
+          action: passesFilters ? sig.action : "blocked",
+          confidence: Math.round(sig.confidence),
+          fired: passesFilters,
+          block_reason: passesFilters ? null : blockReason,
+          er_value: erVal, adx_value: adxVal,
+          m15_vote: mtf?.votes?.M15 ?? null, m30_vote: mtf?.votes?.M30 ?? null,
+          h1_vote: mtf?.votes?.H1 ?? null, h4_vote: mtf?.votes?.H4 ?? null,
+          confluence_score: mtf ? (mtf.direction === "BEARISH" ? mtf.bearVotes : mtf.bullVotes) : null,
+          mtf_direction: mtf?.direction ?? null,
+        };
+      } else if (sig) {
+        // Below min-confidence or HOLD — recorded as a non-fired evaluation.
+        // (Earlier `continue` exits elsewhere in the ML/ICT/Fallback4S
+        // branches — HMM blocks, Poisson gates, "no setup", etc. — are NOT
+        // instrumented here; that would touch dozens of unrelated sites for
+        // decisions that never produced a candidate signal in the first
+        // place, a materially larger change than validating the regime/MTF
+        // filters this table exists for.)
+        auditRow = {
+          symbol,
+          action: sig.action === "HOLD" ? "HOLD" : "blocked",
+          confidence: Math.round(sig.confidence),
+          fired: false,
+          block_reason: sig.action === "HOLD" ? "hold" : "below_min_confidence",
+          er_value: null, adx_value: null,
+          m15_vote: null, m30_vote: null, h1_vote: null, h4_vote: null,
+          confluence_score: null, mtf_direction: null,
+        };
+      }
+
+      if (auditRow) {
+        try {
+          await supabase.from("signal_audit").insert(auditRow);
+        } catch (auditErr) {
+          console.log(`⚠️  signal_audit insert failed (${symbol}): ${auditErr}`);
+        }
       }
 
     } catch (err) {
