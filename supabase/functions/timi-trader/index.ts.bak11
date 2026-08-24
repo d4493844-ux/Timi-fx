@@ -3661,33 +3661,6 @@ const SYMBOL_STRATEGY_MAP: Record<string, {
   "JD100":     { strategy:"ofi_div_fade",      holdMins:10, rsiThresh:30, winRate:57.1 },
 };
 
-// ── Regime filter helpers (used to gate bb_fade on EURUSD — see the
-// Per-Symbol Strategy Override block below) ────────────────────────
-// Kaufman Efficiency Ratio over the given closes: net directional move
-// divided by total path length. Low ER = choppy/ranging, high ER = trending.
-function kaufmanER(closes: number[], period: number = 20): number {
-  if (closes.length < period + 1) return 1; // insufficient data — fail closed (treat as trending)
-  const n = closes.length;
-  const netChange = Math.abs(closes[n - 1] - closes[n - 1 - period]);
-  let pathLength = 0;
-  for (let i = n - period; i < n; i++) pathLength += Math.abs(closes[i] - closes[i - 1]);
-  return pathLength > 0 ? netChange / pathLength : 0;
-}
-// Same DMI-ratio ADX proxy already used by the Fallback4S engine's
-// isRanging/isTrending gate (adxP < 0.25 there == "ADX < 25" here — the
-// existing convention is already a 0-1 fraction, not a 0-100 ADX score).
-function adxProxy(closes: number[], period: number = 14): number {
-  const n = Math.min(period, closes.length - 1);
-  if (n <= 0) return 1; // insufficient data — fail closed (treat as trending)
-  let dmP = 0, dmM = 0, trS = 0;
-  for (let i = closes.length - n; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d > 0) dmP += d; else dmM -= d;
-    trS += Math.abs(d);
-  }
-  return trS > 0 ? Math.abs(dmP - dmM) / trS : 0;
-}
-
 // ── Strategy Signal Generators ────────────────────────────────────
 // Each function returns { action: "BUY"|"SELL"|null, conf: number, reason: string }
 function getStrategySignal(
@@ -6531,26 +6504,7 @@ async function handleRequest(req: Request): Promise<Response> {
         // Each symbol routes to the methodology proven to fit its market structure
         const symStrategy = SYMBOL_STRATEGY_MAP[symbol];
         if (symStrategy) {
-          // Regime filter — bb_fade is a mean-reversion strategy and loses
-          // to a trend (this is what was fighting EURUSD's climb from
-          // 1.16656 to 1.16738 with repeated SELLs). Gate it on 5m-candle
-          // Kaufman ER + the codebase's existing ADX-proxy formula; both
-          // must confirm a ranging market before bb_fade is allowed to fire.
-          let regimeBlocked = false;
-          if (symbol === "frxEURUSD" && symStrategy.strategy === "bb_fade") {
-            const c5mCloses = c5m.map((x: any) => parseFloat(x.close));
-            const er = kaufmanER(c5mCloses, 20);
-            const adx = adxProxy(c5mCloses, 14);
-            if (er >= 0.35 || adx >= 0.25) {
-              regimeBlocked = true;
-              const reason = `frxEURUSD: regime_filter_blocked — ER=${er.toFixed(2)} ADX=${(adx * 100).toFixed(1)} trending market`;
-              scanLog.push(reason);
-              console.log(`🚫 ${reason}`);
-            }
-          }
-          const stratSig = regimeBlocked
-            ? { action: null, conf: 0, reason: "regime_filter_blocked" }
-            : getStrategySignal(symStrategy.strategy, c1m, features, symbol);
+          const stratSig = getStrategySignal(symStrategy.strategy, c1m, features, symbol);
           if (stratSig.action) {
             // Strategy map has a signal — use it to validate or override ML
             if (stratSig.action === sig.action) {
@@ -6565,7 +6519,7 @@ async function handleRequest(req: Request): Promise<Response> {
               scanLog.push(`${symbol}: STRATEGY_OVERRIDE ${symStrategy.strategy} overrides ML (${prevAction}→${stratSig.action}) conf=${stratSig.conf}`);
             }
             scanLog.push(`${symbol}: ${stratSig.reason}`);
-          } else if (!regimeBlocked) {
+          } else {
             // Strategy has no signal — penalize confidence (wrong conditions)
             sig.confidence = Math.max(10, sig.confidence - 15);
             scanLog.push(`${symbol}: STRATEGY_NOSIGNAL ${symStrategy.strategy}: ${stratSig.reason} conf-=15`);
