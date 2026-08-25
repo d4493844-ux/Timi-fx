@@ -281,40 +281,6 @@ export default function Settings({
       });
   },[]);
 
-  // Sync the master kill switch from bot_config.auto_trade on mount. Without
-  // this, the toggle always showed ON after a reload because useDerivWS's
-  // `autoTrade` state defaults to true locally and was never read from the
-  // database — it wasn't actually resetting the DB value, the UI just never
-  // reflected it in the first place.
-  useEffect(()=>{
-    supabase.from("bot_config")
-      .select("auto_trade")
-      .eq("active",true).single()
-      .then(({data})=>{
-        if (data && typeof data.auto_trade === "boolean") setAutoTrade?.(data.auto_trade);
-      });
-  },[]);
-
-  // Toggle: updates local state (still gates useDerivWS's client-side
-  // trading loop) AND persists to bot_config.auto_trade immediately, since
-  // that's the field the cloud edge function (intraday scan + daily_run)
-  // actually reads as its kill switch.
-  const toggleAutoTrade = async () => {
-    const next = !autoTrade;
-    setAutoTrade?.(next);
-    try {
-      const { error } = await supabase.from("bot_config")
-        .update({ auto_trade: next }).eq("active", true);
-      if (error) {
-        console.error("Failed to persist auto_trade:", error.message);
-        setAutoTrade?.(!next); // revert local state — the DB write is the source of truth
-      }
-    } catch (e) {
-      console.error("Failed to persist auto_trade:", e);
-      setAutoTrade?.(!next);
-    }
-  };
-
   const togglePlatformSymbol = (platform, sym) => {
     setPlatformSymbols(prev => {
       const current = prev[platform] || [];
@@ -460,7 +426,7 @@ export default function Settings({
             <div style={c.ct}>TRADING CONTROLS</div>
             <div style={c.row}>
               <div><div style={c.lbl}>Auto Trading</div><div style={c.meta}>TIMI ML engine trades automatically</div></div>
-              <button style={c.toggle(autoTrade)} onClick={toggleAutoTrade}>
+              <button style={c.toggle(autoTrade)} onClick={() => setAutoTrade?.(p => !p)}>
                 <div style={c.knob(autoTrade)} />
               </button>
             </div>

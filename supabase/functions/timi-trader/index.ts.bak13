@@ -3697,18 +3697,6 @@ function adxProxy(closes: number[], period: number = 14): number {
   return trS > 0 ? Math.abs(dmP - dmM) / trS : 0;
 }
 
-// ── Capital gate — caps how many mt5_signals rows may be pending at once,
-// scaled to the real account balance, so a small account doesn't get more
-// simultaneous signals than it can actually fund. Shared by both engines
-// (intraday scan + daily_run) since both write to the same table.
-function maxConcurrentSignals(balance: number): number {
-  if (balance < 10)  return 1;
-  if (balance < 25)  return 2;
-  if (balance < 50)  return 3;
-  if (balance < 100) return 4;
-  return 6;
-}
-
 // ── Multi-Timeframe Confluence (MTF) ────────────────────────────────
 // EMA20 vs EMA50 on each of M15/M30/H1/H4, vote BULLISH/BEARISH/NEUTRAL
 // per a volatility-adjusted neutral band, then require 3+ (of a possible
@@ -5697,34 +5685,6 @@ async function handleRequest(req: Request): Promise<Response> {
     if (!dcfg || !dcfg.auto_trade) return new Response(JSON.stringify({ status:"disabled" }), { headers: CORS });
     const dtoken = dcfg.token;
     let dbal = dcfg.balance_cache || 10;
-
-    // ── Auto-sync real balance from Deriv at the start of every daily_run —
-    // mirrors the intraday engine's sync so the capital gate below (and the
-    // budget/stake math throughout this handler) uses real current balance,
-    // not a cache that may be stale by the time daily_run fires.
-    try {
-      const dAcctResp = await fetch(`${DERIV_API_BASE}/trading/v1/options/accounts`, {
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${dtoken}`,
-          "Deriv-App-ID": DERIV_APP_ID,
-          "Content-Type": "application/json",
-        },
-      });
-      if (dAcctResp.ok) {
-        const dAcctData = await dAcctResp.json();
-        const dAccounts = dAcctData.data || [];
-        const dRealAcct = dAccounts.find((a: any) => a.account_type === "real");
-        const dRealBalance = dRealAcct ? parseFloat(dRealAcct.balance) : 0;
-        if (dRealBalance > 0 && Math.abs(dRealBalance - dbal) > 0.01) {
-          dbal = dRealBalance;
-          await sb.from("bot_config").update({ balance_cache: dRealBalance }).eq("active", true);
-          console.log(`💰 daily_run balance synced: $${dRealBalance}`);
-        }
-      } else {
-        console.log(`⚠️ daily_run balance sync HTTP ${dAcctResp.status}, using cache: $${dbal}`);
-      }
-    } catch (e) { console.log(`⚠️ daily_run balance sync failed, using cache: $${dbal}`); }
     const origin = "https://pedbupgjxlcumidwoktc.supabase.co/functions/v1/timi-trader";
     const auth = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBlZGJ1cGdqeGxjdW1pZHdva3RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMjc0NTIsImV4cCI6MjA4NzkwMzQ1Mn0.lscyzf9JN82ZihHLD0VC4broyMMfm7WL9MIvXRmwZG8";
     async function getSignal(action){
@@ -5884,14 +5844,6 @@ async function handleRequest(req: Request): Promise<Response> {
     // merge validated-edge plans with the existing book/carry plans
     for (const vp of validatedPlans) plans.push(vp);
 
-    // Priority order when the capital gate can't fund every leg this cycle:
-    // validated_spike > validated_fixed > crypto > carry. (No per-leg
-    // confidence score exists in daily_run's plans to sort by — every leg
-    // here uses the same fixed confidence=75 — so book-type is the only
-    // meaningful ranking signal available within this engine.)
-    const BOOK_PRIORITY: Record<string, number> = { validated_spike: 0, validated_fixed: 1, crypto: 2, carry: 3 };
-    plans.sort((a, b) => (BOOK_PRIORITY[a.book] ?? 9) - (BOOK_PRIORITY[b.book] ?? 9));
-
     // Deriv → MT5 symbol mapping for daily_run's books (crypto/carry/validated).
     const DAILY_TO_MT5: Record<string,string> = {
       "frxEURUSD":"EURUSD","frxEURJPY":"EURJPY","frxXAUUSD":"XAUUSD",
@@ -5905,15 +5857,11 @@ async function handleRequest(req: Request): Promise<Response> {
     // that already has a pending row, so daily_run and the intraday scan
     // never queue conflicting signals on the same instrument.
     const _dailyPendingSymbols = new Set<string>();
-    let _dailyPendingTotal = 0;
     try {
       const { data: _dailyPendingRows } = await sb.from("mt5_signals")
         .select("symbol").eq("status", "pending");
-      _dailyPendingTotal = (_dailyPendingRows || []).length;
       for (const r of (_dailyPendingRows || [])) _dailyPendingSymbols.add(r.symbol);
     } catch (ex) { console.log(`⚠️  daily_run MT5 pending-symbol lookup failed: ${ex}`); }
-    // Capital gate — same balance just refreshed above.
-    const _dailyMaxConcurrent = maxConcurrentSignals(dbal);
 
     const dtgToken = dcfg.telegram_token; const dtgChatId = dcfg.telegram_chat_id;
     const dtgChannelId = dcfg.telegram_channel_id;
@@ -5952,9 +5900,6 @@ async function handleRequest(req: Request): Promise<Response> {
       let mt5Sym: string | undefined = DAILY_TO_MT5[p.symbol];
       if (!mt5Sym) {
         mt5Result = "mt5_skipped_unmapped";
-      } else if (_dailyPendingTotal >= _dailyMaxConcurrent) {
-        mt5Result = "capital_gate_blocked";
-        console.log(`💰 capital_gate_blocked — ${_dailyPendingTotal} signals already pending, max=${_dailyMaxConcurrent} for balance=$${dbal.toFixed(2)}`);
       } else if (_dailyPendingSymbols.has(mt5Sym)) {
         mt5Result = "mt5_skipped_duplicate";
         console.log(`⏭️  daily_run MT5 signal skipped — ${mt5Sym} already has a pending row`);
@@ -5971,7 +5916,6 @@ async function handleRequest(req: Request): Promise<Response> {
           } else {
             mt5Result = "mt5_queued";
             _dailyPendingSymbols.add(mt5Sym);
-            _dailyPendingTotal += 1;
             console.log(`📡 daily_run MT5 signal (${p.book}): ${mt5Sym} ${p.action} hold:${holdMins}min`);
           }
         } catch (ex) {
@@ -7486,11 +7430,9 @@ async function handleRequest(req: Request): Promise<Response> {
     // stale pending rows piling up when the EA is offline: once a pending
     // row ages past its hold window, the symbol is free to signal again.
     let _pendingBySymbol: Record<string, string> = {};
-    let _pendingTotal = 0;
     try {
       const { data: _pendingRows } = await supabase.from("mt5_signals")
         .select("symbol, created_at").eq("status", "pending");
-      _pendingTotal = (_pendingRows || []).length;
       for (const r of (_pendingRows || [])) {
         // keep the most recent created_at per symbol
         if (!_pendingBySymbol[r.symbol] || r.created_at > _pendingBySymbol[r.symbol]) {
@@ -7498,9 +7440,6 @@ async function handleRequest(req: Request): Promise<Response> {
         }
       }
     } catch (ex) { console.log(`⚠️  MT5 pending-symbol lookup failed: ${ex}`); }
-    // Capital gate — same live balance already synced at the top of this
-    // handler (real Deriv balance, refreshed every cycle, not stale cache).
-    const _maxConcurrent = maxConcurrentSignals(balance);
 
     // Telegram destinations resolved once, used per-candidate below so an
     // alert only ever fires for a signal that actually clears the dedup
@@ -7542,14 +7481,6 @@ async function handleRequest(req: Request): Promise<Response> {
           continue;
         }
       }
-      // ── Capital gate — block if the account can't fund another
-      // concurrent signal. Checked before insert AND before Telegram, so a
-      // capital-gate-blocked signal produces neither.
-      if (_pendingTotal >= _maxConcurrent) {
-        console.log(`💰 capital_gate_blocked — ${_pendingTotal} signals already pending, max=${_maxConcurrent} for balance=$${balance.toFixed(2)}`);
-        scanLog.push(`${_cand.symbol}: capital_gate_blocked — ${_pendingTotal} signals already pending, max=${_maxConcurrent} for balance=$${balance.toFixed(2)}`);
-        continue;
-      }
       const _candFpt = _cand === best ? fpt : firstPassageTime(
         [], _cand.action, _cand.symbol,
         (_cand.features && _cand.features[27]) || 0.003,  // garch_vol
@@ -7568,7 +7499,6 @@ async function handleRequest(req: Request): Promise<Response> {
         if (_e) console.log(`⚠️  MT5 signal write error (${_mt5Sym}): ${_e.message}`);
         else {
           _pendingBySymbol[_mt5Sym] = _nowIso;
-          _pendingTotal += 1;
           console.log(`📡 MT5 signal (PRIMARY): ${_mt5Sym} ${_cand.action} conf:${_cand.confidence}% hold:${_holdMins}min`);
 
           // Telegram fires here — only after the dedup guard passed AND the
