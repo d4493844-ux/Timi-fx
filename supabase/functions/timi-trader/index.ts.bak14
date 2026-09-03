@@ -5901,32 +5901,17 @@ async function handleRequest(req: Request): Promise<Response> {
       "cryLINKUSD":"LINKUSD","cryTRXUSD":"TRXUSD",
       "BOOM1000":"Boom 1000 Index","CRASH1000":"Crash 1000 Index","JD100":"Jump 100 Index",
     };
-    // Capital gate — how many rows are ACTUALLY still pending right now
-    // (status-filtered; a closed/expired row isn't consuming margin).
+    // Same dedup guard as the intraday engine: skip an MT5 write for a symbol
+    // that already has a pending row, so daily_run and the intraday scan
+    // never queue conflicting signals on the same instrument.
+    const _dailyPendingSymbols = new Set<string>();
     let _dailyPendingTotal = 0;
     try {
       const { data: _dailyPendingRows } = await sb.from("mt5_signals")
         .select("symbol").eq("status", "pending");
       _dailyPendingTotal = (_dailyPendingRows || []).length;
-    } catch (ex) { console.log(`⚠️  daily_run MT5 pending-count lookup failed: ${ex}`); }
-    // Dedup — status-AGNOSTIC and time-windowed (was a plain Set keyed only
-    // on status='pending' with no age check at all). The MT5 EA can flip a
-    // row's status away from "pending" long before its 1440-minute
-    // optimal_hold_mins has actually elapsed by wall-clock time; a
-    // status='pending' filter would then blind this guard to a signal
-    // that's still within its cooldown — which is exactly what let XAUUSD
-    // re-fire every ~12 minutes instead of once per day.
-    const _dailyPendingBySymbol: Record<string, string> = {};
-    try {
-      const _dailyDedupCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: _dailyRecentRows } = await sb.from("mt5_signals")
-        .select("symbol, created_at").gte("created_at", _dailyDedupCutoff);
-      for (const r of (_dailyRecentRows || [])) {
-        if (!_dailyPendingBySymbol[r.symbol] || r.created_at > _dailyPendingBySymbol[r.symbol]) {
-          _dailyPendingBySymbol[r.symbol] = r.created_at;
-        }
-      }
-    } catch (ex) { console.log(`⚠️  daily_run MT5 dedup lookup failed: ${ex}`); }
+      for (const r of (_dailyPendingRows || [])) _dailyPendingSymbols.add(r.symbol);
+    } catch (ex) { console.log(`⚠️  daily_run MT5 pending-symbol lookup failed: ${ex}`); }
     // Capital gate — same balance just refreshed above.
     const _dailyMaxConcurrent = maxConcurrentSignals(dbal);
 
@@ -5970,11 +5955,9 @@ async function handleRequest(req: Request): Promise<Response> {
       } else if (_dailyPendingTotal >= _dailyMaxConcurrent) {
         mt5Result = "capital_gate_blocked";
         console.log(`💰 capital_gate_blocked — ${_dailyPendingTotal} signals already pending, max=${_dailyMaxConcurrent} for balance=$${dbal.toFixed(2)}`);
-      } else if (_dailyPendingBySymbol[mt5Sym] &&
-                 (Date.now() - new Date(_dailyPendingBySymbol[mt5Sym]).getTime()) / 60000 < holdMins) {
+      } else if (_dailyPendingSymbols.has(mt5Sym)) {
         mt5Result = "mt5_skipped_duplicate";
-        const _ageMins = (Date.now() - new Date(_dailyPendingBySymbol[mt5Sym]).getTime()) / 60000;
-        console.log(`⏭️  daily_run MT5 signal skipped — ${mt5Sym} signal is ${_ageMins.toFixed(1)}min old (< ${holdMins}min hold window)`);
+        console.log(`⏭️  daily_run MT5 signal skipped — ${mt5Sym} already has a pending row`);
       } else {
         const expiresAt = new Date(Date.now() + holdMins * 60 * 1000).toISOString();
         try {
@@ -5987,7 +5970,7 @@ async function handleRequest(req: Request): Promise<Response> {
             console.log(`⚠️  daily_run MT5 signal write error (${mt5Sym}): ${mt5Err.message}`);
           } else {
             mt5Result = "mt5_queued";
-            _dailyPendingBySymbol[mt5Sym] = new Date().toISOString();
+            _dailyPendingSymbols.add(mt5Sym);
             _dailyPendingTotal += 1;
             console.log(`📡 daily_run MT5 signal (${p.book}): ${mt5Sym} ${p.action} hold:${holdMins}min`);
           }
@@ -7505,30 +7488,16 @@ async function handleRequest(req: Request): Promise<Response> {
     let _pendingBySymbol: Record<string, string> = {};
     let _pendingTotal = 0;
     try {
-      // Capital gate — how many rows are ACTUALLY still pending right now
-      // (a row the EA has already closed/expired genuinely isn't consuming
-      // margin anymore, so this stays status-filtered).
       const { data: _pendingRows } = await supabase.from("mt5_signals")
         .select("symbol, created_at").eq("status", "pending");
       _pendingTotal = (_pendingRows || []).length;
-    } catch (ex) { console.log(`⚠️  MT5 pending-count lookup failed: ${ex}`); }
-    try {
-      // Dedup — deliberately status-AGNOSTIC. The MT5 EA (outside this repo)
-      // can flip a row's status away from "pending" well before its
-      // optimal_hold_mins has actually elapsed by wall-clock time; a
-      // status='pending' filter here would then blind this guard to a
-      // signal that's still within its cooldown, letting the same symbol
-      // re-fire every cycle instead of once per hold window.
-      const _dedupCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: _recentRows } = await supabase.from("mt5_signals")
-        .select("symbol, created_at").gte("created_at", _dedupCutoff);
-      for (const r of (_recentRows || [])) {
+      for (const r of (_pendingRows || [])) {
         // keep the most recent created_at per symbol
         if (!_pendingBySymbol[r.symbol] || r.created_at > _pendingBySymbol[r.symbol]) {
           _pendingBySymbol[r.symbol] = r.created_at;
         }
       }
-    } catch (ex) { console.log(`⚠️  MT5 dedup lookup failed: ${ex}`); }
+    } catch (ex) { console.log(`⚠️  MT5 pending-symbol lookup failed: ${ex}`); }
     // Capital gate — same live balance already synced at the top of this
     // handler (real Deriv balance, refreshed every cycle, not stale cache).
     const _maxConcurrent = maxConcurrentSignals(balance);
