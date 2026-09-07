@@ -5902,12 +5902,17 @@ async function handleRequest(req: Request): Promise<Response> {
       "BOOM1000":"Boom 1000 Index","CRASH1000":"Crash 1000 Index","JD100":"Jump 100 Index",
     };
     // Capital gate — how many rows are ACTUALLY still pending right now
-    // (status-filtered; a closed/expired row isn't consuming margin).
+    // (status-filtered; a closed/expired row isn't consuming margin), AND
+    // created within the last 2 hours — a stale pending row from when the
+    // EA was offline shouldn't permanently jam the gate.
     let _dailyPendingTotal = 0;
     try {
       const { data: _dailyPendingRows } = await sb.from("mt5_signals")
-        .select("symbol").eq("status", "pending");
-      _dailyPendingTotal = (_dailyPendingRows || []).length;
+        .select("symbol, created_at").eq("status", "pending");
+      _dailyPendingTotal = (_dailyPendingRows || []).filter((r: any) => {
+        const ageMinutes = (Date.now() - new Date(r.created_at).getTime()) / 60000;
+        return ageMinutes < 120;
+      }).length;
     } catch (ex) { console.log(`⚠️  daily_run MT5 pending-count lookup failed: ${ex}`); }
     // Dedup — status-AGNOSTIC and time-windowed (was a plain Set keyed only
     // on status='pending' with no age check at all). The MT5 EA can flip a
@@ -5997,9 +6002,12 @@ async function handleRequest(req: Request): Promise<Response> {
         }
       }
 
-      // Telegram — fires as soon as the signal is queued, independent of
-      // whatever happens with Deriv execution below.
-      if (mt5Result === "mt5_queued" && dtgToken && dtgDestinations.length) {
+      // Telegram — fires whenever a signal was actually generated, whether
+      // it reached mt5_signals or was capital-gate-blocked. Capital gate
+      // blocks the DB write, never the alert — channel members still see
+      // every signal and can trade it manually even when the EA can't.
+      if ((mt5Result === "mt5_queued" || mt5Result === "capital_gate_blocked") &&
+          dtgToken && dtgDestinations.length) {
         try {
           // Entry price: validated_fixed/validated_spike/carry already
           // carry `price`; crypto legs don't (book_signal returns no
@@ -6020,8 +6028,11 @@ async function handleRequest(req: Request): Promise<Response> {
               `\nRR: 1:${rrRatio}`;
           }
           const entryLine = entryPrice > 0 ? `\nEntry: ${entryPrice.toFixed(5)}` : "";
-          await sendDailyTg(`📊 TIMI DAILY SIGNAL\nSymbol: ${p.symbol}\nAction: ${p.action}\nConfidence: 75%${entryLine}${tpSlBlock}\nHold: ${holdMins}min\nBook: ${p.book}`);
-          console.log(`📱 daily_run Telegram sent to ${dtgDestinations.length} destination(s): ${mt5Sym} ${p.action}`);
+          const text = mt5Result === "mt5_queued"
+            ? `📊 TIMI DAILY SIGNAL\nSymbol: ${p.symbol}\nAction: ${p.action}\nConfidence: 75%${entryLine}${tpSlBlock}\nHold: ${holdMins}min\nBook: ${p.book}`
+            : `📊 TIMI SIGNAL (Monitor Only)\nSymbol: ${p.symbol}\nAction: ${p.action}\nConfidence: 75%${entryLine}${tpSlBlock}\nHold: ${holdMins}min\n⚠️ Capital gate active — signal not sent to EA\n   (${_dailyPendingTotal} pending / max ${_dailyMaxConcurrent})`;
+          await sendDailyTg(text);
+          console.log(`📱 daily_run Telegram sent to ${dtgDestinations.length} destination(s): ${mt5Sym} ${p.action} (${mt5Result})`);
         } catch (e) { console.log(`daily_run Telegram error (${mt5Sym}): ${e}`); }
       }
 
@@ -7507,10 +7518,15 @@ async function handleRequest(req: Request): Promise<Response> {
     try {
       // Capital gate — how many rows are ACTUALLY still pending right now
       // (a row the EA has already closed/expired genuinely isn't consuming
-      // margin anymore, so this stays status-filtered).
+      // margin anymore, so this stays status-filtered), AND created within
+      // the last 2 hours — a stale pending row from when the EA was
+      // offline shouldn't permanently jam the gate.
       const { data: _pendingRows } = await supabase.from("mt5_signals")
         .select("symbol, created_at").eq("status", "pending");
-      _pendingTotal = (_pendingRows || []).length;
+      _pendingTotal = (_pendingRows || []).filter((r: any) => {
+        const ageMinutes = (Date.now() - new Date(r.created_at).getTime()) / 60000;
+        return ageMinutes < 120;
+      }).length;
     } catch (ex) { console.log(`⚠️  MT5 pending-count lookup failed: ${ex}`); }
     try {
       // Dedup — deliberately status-AGNOSTIC. The MT5 EA (outside this repo)
@@ -7550,6 +7566,29 @@ async function handleRequest(req: Request): Promise<Response> {
       }
     };
 
+    // TP/SL detail block shared by both the "queued" and "monitor only"
+    // alerts — current price isn't already on a candidate (features are
+    // normalized indicators, not raw price), so fetch one small candle set
+    // just for the alert. Fails open: empty string if fetch/math comes up empty.
+    const _buildTpSlBlock = async (symbol: string, action: string, slPct: number, tpPct: number): Promise<string> => {
+      try {
+        const _priceCandles = await fetchCandles(symbol, 60, 2);
+        const _entryPrice = _priceCandles.length
+          ? parseFloat(_priceCandles[_priceCandles.length - 1].close)
+          : 0;
+        if (_entryPrice > 0 && slPct > 0 && tpPct > 0) {
+          const _slPrice = action === "BUY" ? _entryPrice - slPct * _entryPrice : _entryPrice + slPct * _entryPrice;
+          const _tpPrice = action === "BUY" ? _entryPrice + tpPct * _entryPrice : _entryPrice - tpPct * _entryPrice;
+          const _rrRatio = (tpPct / slPct).toFixed(1);
+          return `\nEntry: ${_entryPrice.toFixed(5)}` +
+            `\nSL: ${_slPrice.toFixed(5)} | -${(slPct * 100).toFixed(2)}%` +
+            `\nTP: ${_tpPrice.toFixed(5)} | +${(tpPct * 100).toFixed(2)}%` +
+            `\nRR: 1:${_rrRatio}`;
+        }
+      } catch (ex) { console.log(`⚠️  Telegram TP/SL detail fetch failed (${symbol}): ${ex}`); }
+      return "";
+    };
+
     // Intraday engine: write EVERY qualifying signal (already passed
     // minConf when pushed into `signals[]`), not just the single `best`.
     // One insert per qualifying symbol per cycle.
@@ -7573,14 +7612,6 @@ async function handleRequest(req: Request): Promise<Response> {
           continue;
         }
       }
-      // ── Capital gate — block if the account can't fund another
-      // concurrent signal. Checked before insert AND before Telegram, so a
-      // capital-gate-blocked signal produces neither.
-      if (_pendingTotal >= _maxConcurrent) {
-        console.log(`💰 capital_gate_blocked — ${_pendingTotal} signals already pending, max=${_maxConcurrent} for balance=$${balance.toFixed(2)}`);
-        scanLog.push(`${_cand.symbol}: capital_gate_blocked — ${_pendingTotal} signals already pending, max=${_maxConcurrent} for balance=$${balance.toFixed(2)}`);
-        continue;
-      }
       const _candFpt = _cand === best ? fpt : firstPassageTime(
         [], _cand.action, _cand.symbol,
         (_cand.features && _cand.features[27]) || 0.003,  // garch_vol
@@ -7588,6 +7619,21 @@ async function handleRequest(req: Request): Promise<Response> {
         _cand.confidence,
         _holdMins   // hold-aligned TP reachability
       );
+
+      // ── Capital gate — blocks the mt5_signals WRITE only. Telegram still
+      // fires (Monitor Only format) so channel members see every signal and
+      // can trade manually even when the EA can't be funded for it.
+      if (_pendingTotal >= _maxConcurrent) {
+        console.log(`💰 capital_gate_blocked — ${_pendingTotal} signals already pending, max=${_maxConcurrent} for balance=$${balance.toFixed(2)}`);
+        scanLog.push(`${_cand.symbol}: capital_gate_blocked — ${_pendingTotal} signals already pending, max=${_maxConcurrent} for balance=$${balance.toFixed(2)}`);
+        if (tgToken && tgDestinations.length) {
+          const tpSlBlock = await _buildTpSlBlock(_cand.symbol, _cand.action, _candFpt.slPct, _candFpt.tpPct);
+          await sendTg(`📊 TIMI SIGNAL (Monitor Only)\nSymbol: ${_cand.symbol}\nAction: ${_cand.action}\nConfidence: ${_cand.confidence}%${tpSlBlock}\nHold: ${_holdMins}min\n⚠️ Capital gate active — signal not sent to EA\n   (${_pendingTotal} pending / max ${_maxConcurrent})`);
+          console.log(`📱 Telegram (Monitor Only) sent to ${tgDestinations.length} destination(s): ${_mt5Sym} ${_cand.action}`);
+        }
+        continue;
+      }
+
       const _nowIso = new Date().toISOString();
       const _expiresAt = new Date(Date.now() + _holdMins * 60 * 1000).toISOString();
       try {
@@ -7606,32 +7652,7 @@ async function handleRequest(req: Request): Promise<Response> {
           // mt5_signals write actually succeeded.
           if (tgToken && tgDestinations.length) {
             try {
-              // TP/SL detail block — current price isn't already on `_cand`
-              // (features are normalized indicators, not raw price), so
-              // fetch one small candle set just for the alert. Fails open:
-              // if the fetch or the sl_pct/tp_pct math comes up empty, the
-              // message still sends with just symbol/action/confidence/hold.
-              let tpSlBlock = "";
-              try {
-                const _priceCandles = await fetchCandles(_cand.symbol, 60, 2);
-                const _entryPrice = _priceCandles.length
-                  ? parseFloat(_priceCandles[_priceCandles.length - 1].close)
-                  : 0;
-                if (_entryPrice > 0 && _candFpt.slPct > 0 && _candFpt.tpPct > 0) {
-                  const _slPrice = _cand.action === "BUY"
-                    ? _entryPrice - _candFpt.slPct * _entryPrice
-                    : _entryPrice + _candFpt.slPct * _entryPrice;
-                  const _tpPrice = _cand.action === "BUY"
-                    ? _entryPrice + _candFpt.tpPct * _entryPrice
-                    : _entryPrice - _candFpt.tpPct * _entryPrice;
-                  const _rrRatio = (_candFpt.tpPct / _candFpt.slPct).toFixed(1);
-                  tpSlBlock = `\nEntry: ${_entryPrice.toFixed(5)}` +
-                    `\nSL: ${_slPrice.toFixed(5)} | -${(_candFpt.slPct * 100).toFixed(2)}%` +
-                    `\nTP: ${_tpPrice.toFixed(5)} | +${(_candFpt.tpPct * 100).toFixed(2)}%` +
-                    `\nRR: 1:${_rrRatio}`;
-                }
-              } catch (ex) { console.log(`⚠️  Telegram TP/SL detail fetch failed (${_mt5Sym}): ${ex}`); }
-
+              const tpSlBlock = await _buildTpSlBlock(_cand.symbol, _cand.action, _candFpt.slPct, _candFpt.tpPct);
               await sendTg(`🤖 TIMI SIGNAL\nSymbol: ${_cand.symbol}\nAction: ${_cand.action}\nConfidence: ${_cand.confidence}%${tpSlBlock}\nHold: ${_holdMins}min`);
               await sendTg(`SIGNAL:${_cand.symbol}:${_cand.action}:${_cand.confidence}`);
               console.log(`📱 Telegram sent to ${tgDestinations.length} destination(s): ${_mt5Sym} ${_cand.action} conf:${_cand.confidence}%`);
